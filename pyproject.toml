@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["alembic*", "eval*", "design*", "fixtures*", "frontend*", "tests*", "scripts*", "docs*"]
+
+[project]
+name = "whisperdocs"
+version = "0.1.0"
+description = "Agentic RAG system with WhatsApp integration"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pgvector>=0.3.6",
+    "python-multipart>=0.0.12",
+    "pdfplumber>=0.11.4",
+    "tiktoken>=0.8",
+    "openai>=1.57",
+    "langgraph>=0.2.60",
+    "langgraph-checkpoint-postgres>=2.0,<3.0",
+    "psycopg[binary,pool]>=3.1",
+    "langchain-core>=0.3.20",
+    "langchain-google-genai>=4.2",
+    "langchain-aws>=0.2",
+    "boto3>=1.35",
+    "tenacity>=9.0",
+    "twilio>=9.3.0",
+    "structlog>=24.4",
+    "langdetect>=1.0.9",
+    "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.8",
+]
+rerank = [
+    "sentence-transformers>=3.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

@@ -1,0 +1,82 @@
+[
+  {
+    "id": 1,
+    "question": "¿Qué métricas de distancia soporta pgvector?",
+    "expected_answer": "pgvector soporta distancia coseno (<=>), distancia euclidiana L2 (<->) y producto interno (<#>).",
+    "difficulty": "easy",
+    "category": "in_scope",
+    "expected_sources": ["pgvector.md"]
+  },
+  {
+    "id": 2,
+    "question": "¿Cuál es la dimensión default del modelo text-embedding-3-small de OpenAI?",
+    "expected_answer": "1536 dimensiones, aunque el modelo soporta configurarlo a dimensiones menores.",
+    "difficulty": "easy",
+    "category": "in_scope",
+    "expected_sources": ["semantic-search-y-embeddings.md"]
+  },
+  {
+    "id": 3,
+    "question": "¿Para qué sirve selectinload en SQLAlchemy async?",
+    "expected_answer": "selectinload es una estrategia de eager loading que carga relationships con una query adicional usando WHERE id IN (...), evitando N+1 queries. Es el default recomendado en async para relationships one-to-many.",
+    "difficulty": "medium",
+    "category": "in_scope",
+    "expected_sources": ["sqlalchemy-async.md"]
+  },
+  {
+    "id": 4,
+    "question": "¿Qué es un checkpointer en LangGraph?",
+    "expected_answer": "Un checkpointer persiste el estado del grafo entre invocaciones, agrupado por thread_id, permitiendo conversaciones multi-turn con memoria automática sin gestionar historial manualmente.",
+    "difficulty": "medium",
+    "category": "in_scope",
+    "expected_sources": ["langgraph-agents.md"]
+  },
+  {
+    "id": 5,
+    "question": "¿Cuándo conviene usar BRIN en vez de B-tree en PostgreSQL?",
+    "expected_answer": "BRIN conviene cuando los datos están naturalmente correlacionados con el orden físico en la tabla (típicamente timestamps en tablas append-only, IDs secuenciales). Es mucho más compacto que B-tree pero menos preciso.",
+    "difficulty": "medium",
+    "category": "in_scope",
+    "expected_sources": ["postgresql-indexing.md"]
+  },
+  {
+    "id": 6,
+    "question": "¿Cuál es la capital de Francia?",
+    "expected_answer": "La pregunta está fuera del scope del sistema — el sistema debe indicar que no tiene información suficiente.",
+    "difficulty": "easy",
+    "category": "out_of_scope",
+    "expected_sources": []
+  },
+  {
+    "id": 7,
+    "question": "¿Cómo configuro Kubernetes ingress con cert-manager?",
+    "expected_answer": "Fuera de scope — el sistema no tiene documentación sobre Kubernetes ni cert-manager.",
+    "difficulty": "medium",
+    "category": "out_of_scope",
+    "expected_sources": []
+  },
+  {
+    "id": 8,
+    "question": "Comparando OpenAI gpt-4o-mini con Claude Haiku 4.5, ¿cuál es más barato y cuál tiene mejor context window?",
+    "expected_answer": "gpt-4o-mini es significativamente más barato (~$0.15/1M input vs ~$1/1M). Claude Haiku tiene mayor context window (200K vs 128K).",
+    "difficulty": "hard",
+    "category": "in_scope",
+    "expected_sources": ["openai-vs-anthropic.md"]
+  },
+  {
+    "id": 9,
+    "question": "¿Qué trade-off tiene el overlap en chunking?",
+    "expected_answer": "Mayor overlap reduce pérdida de información en bordes de chunks pero aumenta storage y costo de embeddings. El rango típico es 10-20% del chunk size.",
+    "difficulty": "medium",
+    "category": "in_scope",
+    "expected_sources": ["chunking-strategies.md", "semantic-search-y-embeddings.md"]
+  },
+  {
+    "id": 10,
+    "question": "¿Cómo evito el error MissingGreenlet en SQLAlchemy async?",
+    "expected_answer": "Usando selectinload o joinedload para eager loading de relationships en la query inicial, en lugar de depender de lazy loading que no funciona en async.",
+    "difficulty": "hard",
+    "category": "in_scope",
+    "expected_sources": ["sqlalchemy-async.md"]
+  }
+]

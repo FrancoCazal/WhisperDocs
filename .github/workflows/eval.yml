@@ -1,0 +1,121 @@
+name: Eval suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "smoke (10 items) or full (50 items)"
+        required: true
+        default: "smoke"
+        type: choice
+        options:
+          - smoke
+          - full
+  schedule:
+    # Nightly full run at 03:00 UTC.
+    - cron: "0 3 * * *"
+  pull_request:
+    paths:
+      - "app/**"
+      - "eval/golden/**"
+      - "fixtures/seed-docs/**"
+      - "scripts/seed_eval.py"
+      - ".github/workflows/eval.yml"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: whisperdocs
+          POSTGRES_PASSWORD: whisperdocs
+          POSTGRES_DB: whisperdocs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U whisperdocs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://whisperdocs:whisperdocs@localhost:5432/whisperdocs
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      GCP_LOCATION: ${{ vars.GCP_LOCATION || 'us-central1' }}
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-sa.json
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      LOG_JSON: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write GCP service account key
+        run: |
+          echo '${{ secrets.GCP_SA_KEY_JSON }}' > "${GOOGLE_APPLICATION_CREDENTIALS}"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Seed eval corpus
+        run: python -m scripts.seed_eval
+
+      - name: Determine run mode
+        id: mode
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          if [ -z "$MODE" ]; then
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              MODE="smoke"
+            else
+              MODE="full"
+            fi
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          if [ "$MODE" = "smoke" ]; then
+            echo "limit=--limit 10" >> "$GITHUB_OUTPUT"
+          else
+            echo "limit=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run eval
+        run: |
+          python -m app.eval.runner run \
+            --collection-name "Eval Golden" \
+            --markdown \
+            ${{ steps.mode.outputs.limit }}
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports-${{ steps.mode.outputs.mode }}
+          path: |
+            eval/results/*.json
+            eval/results/*.md
+
+      - name: Publish badge to gh-pages
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./eval/results
+          publish_branch: gh-pages
+          keep_files: true
+          destination_dir: badges
