@@ -1,0 +1,4 @@
+# Keep language stats focused on the backend: the frontend is a supporting surface.
+frontend/** linguist-vendored
+fixtures/** linguist-vendored
+alembic/versions/** linguist-generated
