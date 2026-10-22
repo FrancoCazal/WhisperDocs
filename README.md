@@ -180,6 +180,24 @@ latency avg/p50/p95, cost USD. Bucketed by difficulty and category.
 
 Dataset: JSONL at `eval/golden/queries.jsonl`.
 
+### Last full run
+
+| Metric | Value |
+|---|---|
+| Answer accuracy (LLM judge) | 96% (48/50) |
+| Hallucination rate | 6% (3/50) |
+| Retrieval precision@k / recall@k | 91.5% / 92.1% (41 in-scope queries) |
+| Out-of-scope queries handled correctly | 9/9 |
+| Latency p50 / p95 | 5.9 s / 9.1 s |
+| Cost | $0.63 for the 50 queries |
+
+Run `b2b0899a` on 2026-04-28, with Claude Sonnet 4.5 on Bedrock for generation. The full
+report, including the five failing cases, is in
+[`eval/reports/2026-04-28_b2b0899a.md`](eval/reports/2026-04-28_b2b0899a.md). Two caveats: it
+is one run of a stochastic pipeline, and the seven full runs that day, made while tuning the
+engine, ranged from 80% to 96% accuracy; and it predates this snapshot by three weeks and has
+not been re-run against it.
+
 ### A/B: measure reranker + MMR lift
 
 ```bash
