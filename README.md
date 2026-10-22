@@ -186,7 +186,7 @@ Dataset: JSONL at `eval/golden/queries.jsonl`.
 |---|---|
 | Answer accuracy (LLM judge) | 96% (48/50) |
 | Hallucination rate | 6% (3/50) |
-| Retrieval precision@k / recall@k | 91.5% / 92.1% (41 in-scope queries) |
+| Retrieval precision@k / recall@k | 91.5% / 92.1% (40 of the 41 in-scope queries) |
 | Out-of-scope queries handled correctly | 9/9 |
 | Latency p50 / p95 | 5.9 s / 9.1 s |
 | Cost | $0.63 for the 50 queries |
@@ -197,6 +197,10 @@ report, including the five failing cases, is in
 is one run of a stochastic pipeline, and the seven full runs that day, made while tuning the
 engine, ranged from 80% to 96% accuracy; and it predates this snapshot by three weeks and has
 not been re-run against it.
+
+The retrieval average skips any query whose precision and recall are both zero
+([`app/eval/metrics.py`](app/eval/metrics.py)). One in-scope query retrieved no chunk from its
+expected source, so the figures above average 40 queries; over all 41 they are 89.3% and 89.8%.
 
 ### A/B: measure reranker + MMR lift
 
