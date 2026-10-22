@@ -11,16 +11,7 @@ on:
         options:
           - smoke
           - full
-  schedule:
-    # Nightly full run at 03:00 UTC.
-    - cron: "0 3 * * *"
-  pull_request:
-    paths:
-      - "app/**"
-      - "eval/golden/**"
-      - "fixtures/seed-docs/**"
-      - "scripts/seed_eval.py"
-      - ".github/workflows/eval.yml"
+  # Manual only: the run calls paid model APIs and needs the provider secrets.
 
 jobs:
   eval:
@@ -47,7 +38,8 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
       GCP_LOCATION: ${{ vars.GCP_LOCATION || 'us-central1' }}
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-sa.json
+      # The runner context is not available at job level, so use a fixed path.
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-sa.json
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
