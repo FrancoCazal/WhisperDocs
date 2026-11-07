@@ -43,6 +43,20 @@ def format_messages(messages: list[BaseMessage]) -> list[dict]:
     return out
 
 
+def drop_leading_assistant(formatted: list[dict]) -> list[dict]:
+    """Drop assistant messages that precede the first user message.
+
+    Providers require the conversation to open with a user turn (Bedrock
+    Converse returns a ValidationException otherwise). `summarize` now aligns
+    `summary_covered_count` to a user message; this guards threads whose
+    checkpoint was compacted before that fix and still has an odd count.
+    """
+    start = 0
+    while start < len(formatted) and formatted[start]["role"] == "assistant":
+        start += 1
+    return formatted[start:]
+
+
 def build_prompt_messages(state: dict[str, Any], *, exclude_last: bool = False) -> list[dict]:
     """Build the message list a generation/classifier node should send to its LLM.
 
@@ -65,7 +79,7 @@ def build_prompt_messages(state: dict[str, Any], *, exclude_last: bool = False) 
     if exclude_last and tail:
         tail = tail[:-1]
 
-    formatted = format_messages(tail)
+    formatted = drop_leading_assistant(format_messages(tail))
     summary = state.get("summary")
     if summary:
         formatted = [

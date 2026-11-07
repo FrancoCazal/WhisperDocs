@@ -12,7 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent.checkpointer import close_checkpointer, init_checkpointer
 from app.agent.graph import build_agent_graph
-from app.logging_config import configure_logging
+from app.config import settings
+from app.logging_config import configure_logging, get_logger
+from app.services.llm import validate_agent_models
 from app.api.v1 import (
     admin,
     agent,
@@ -29,10 +31,23 @@ from app.api.v1.webhooks import whatsapp as webhook_whatsapp
 
 
 configure_logging()
+logger = get_logger(__name__)
+
+
+def _check_agent_models() -> None:
+    """Fail at startup on a model configuration that fails on every call."""
+    errors, warnings = validate_agent_models()
+    for message in warnings:
+        logger.warning("agent_model_config_warning", detail=message)
+    if errors:
+        for message in errors:
+            logger.error("agent_model_config_error", detail=message)
+        raise RuntimeError("Invalid agent model configuration: " + "; ".join(errors))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _check_agent_models()
     checkpointer = await init_checkpointer()
     app.state.checkpointer = checkpointer
     app.state.agent = build_agent_graph().compile(checkpointer=checkpointer)
@@ -51,7 +66,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

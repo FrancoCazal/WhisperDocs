@@ -20,7 +20,7 @@ graph TB
     Query["/api/v1/query"]
     Docs["/api/v1/documents"]
     Eval["/api/v1/eval"]
-    Webhook["/api/v1/webhooks/whatsapp"]
+    Webhook["/api/v1/webhook/whatsapp"]
     Health["/api/v1/health"]
     Metrics["/api/v1/metrics"]
   end
@@ -39,7 +39,7 @@ graph TB
 
   subgraph Services
     Retrieval[Retrieval Pipeline]
-    Hybrid[VectorRetriever<br/>vector + BM25 + RRF]
+    Hybrid[VectorRetriever<br/>vector + full-text + RRF]
     Reranker[Cross-encoder Reranker]
     MMR[MMR diversity]
     Embedder[OpenAI Embeddings]
@@ -113,7 +113,7 @@ sequenceDiagram
   LLM-->>G: AgentAction { search_docs | ask_clarification | answer_direct | out_of_scope }
   alt action == search_docs
     G->>LLM: rewrite_query (if not self-contained)
-    G->>DB: hybrid_retrieve (vector + BM25 + RRF)
+    G->>DB: hybrid_retrieve (vector + full-text + RRF)
     DB-->>G: top_k chunks
     opt reranker enabled
       G->>G: cross-encoder rerank → MMR
@@ -220,7 +220,7 @@ erDiagram
     int token_count
     string text_hash
     vector embedding "pgvector(1536) HNSW"
-    tsvector tsv "BM25 generated col"
+    tsvector tsv "full-text generated col"
   }
 
   IngestionJob {
@@ -293,7 +293,9 @@ between graph nodes. Splits into two lifetimes:
 
 Each node is a pure async function `(AgentState) -> dict` returning only the
 fields it modifies. The graph wires nodes in `app/agent/graph.py`; nodes never
-import each other directly. See `.claude/rules/agent.md` for the full contract.
+import each other directly. Nodes reach an LLM only through
+`llm_service_for(alias)` and the `LLMProvider` interface, never through a
+provider SDK.
 
 ---
 
@@ -303,7 +305,8 @@ import each other directly. See `.claude/rules/agent.md` for the full contract.
 
 1. **Hybrid fetch** — `VectorRetriever.hybrid_retrieve(query_text, query_embedding, ...)`
    - Vector search via cosine distance + HNSW index on `chunks.embedding`
-   - BM25 via `ts_rank_cd(c.tsv, websearch_to_tsquery(...))`
+   - Full-text rank via `ts_rank_cd(c.tsv, websearch_to_tsquery('simple', ...))`
+     (Postgres cover-density ranking, not BM25)
    - Fused with Reciprocal Rank Fusion (`1 / (k + rank)`, `k=60`)
 2. **Cross-encoder rerank** (optional, `RERANKER_ENABLED=true`)
    - `BAAI/bge-reranker-base` via `sentence-transformers`
@@ -331,15 +334,28 @@ class LLMProvider(Protocol):
 
 | Alias | Default model | Provider |
 |-------|---------------|----------|
-| `classifier` | `gemini-2.5-flash` | Gemini |
-| `query_rewrite` | `gemini-2.5-flash` | Gemini |
-| `clarification` | `gemini-2.5-flash` | Gemini |
-| `answer_direct` | `gemini-2.5-flash` | Gemini |
+| `classifier` | `gemini-3.8-flash` | Gemini |
+| `query_rewrite` | `gemini-3.8-flash` | Gemini |
+| `clarification` | `gemini-3.8-flash` | Gemini |
+| `answer_direct` | `gemini-3.8-flash` | Gemini |
 | `rag` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Bedrock |
 | `summarize` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
-| `eval_judge` | `gemini-2.5-flash` | Gemini |
+| `eval_judge` | `gemini-3.8-flash` | Gemini |
 
-Override per node via `AGENT_MODEL_<ALIAS>` env vars.
+Override per node via `AGENT_MODEL_<ALIAS>` env vars. Model rules live in
+`app/services/llm/model_policy.py`:
+
+- **Sampling.** `temperature` is sent only to models that accept it. Gemini 3+
+  and Claude 4.7+ use fixed sampling, so `AGENT_TEMP_*` has no effect on them.
+- **Gemini 3.** `GEMINI_THINKING_LEVEL` (default `low`) sets `thinking_level`.
+  `gemini-3.8-flash` is served from the `global`, `us` and `eu` locations
+  only, so `GCP_LOCATION` defaults to `global`.
+- **Claude 4.7+.** Served on Bedrock only by the Messages endpoint
+  (`bedrock-mantle`), not by Converse, which `BedrockProvider` uses. Those IDs
+  are rejected.
+- **Startup check.** `app/main.py` refuses to start when a configured model
+  can't be routed or is rejected, and logs a warning for a model with no row
+  in `pricing.py` (its cost falls back to a generic rate).
 
 ---
 
@@ -351,8 +367,16 @@ Override per node via `AGENT_MODEL_<ALIAS>` env vars.
 - `runner.py` — CLI: `run` and `diff` subcommands, JSONL or JSON dataset loaders
 - `evaluator.py` — orchestrator (loads dataset, embeds, retrieves, generates, judges)
 - `judges.py` — LLM-as-judge for correctness + hallucination
-- `metrics.py` — aggregation: precision, recall@k, p50/p95, cost via shared `pricing.py`
+- `metrics.py` — aggregation: precision and recall@k over the in-scope items,
+  p50/p95, generation cost via shared `pricing.py`, count of failed judge calls
 - `report.py` — Markdown rendering + diff between runs
+
+The evaluator calls the retrieval pipeline and the single-turn RAG prompt
+(`app/services/rag.py`) directly; it does not run the agent graph. The
+classifier, query rewrite and history handling are covered by the unit tests in
+`tests/agent/`. A run aborts (`EvalAbortedError`, exit code 2 from the CLI,
+HTTP 502 from `/eval/run`) when the share of failed judge calls exceeds
+`AGENT_EVAL_MAX_JUDGE_ERROR_RATE` (default 0.1).
 
 Dataset format (`eval/golden/queries.jsonl`):
 
@@ -372,9 +396,10 @@ A/B run.
   console-pretty otherwise. `merge_contextvars` ready for `request_id` /
   `trace_id` propagation.
 - **Metrics** — Prometheus `/metrics` endpoint:
-  - `whisperdocs_agent_turn_duration_seconds{node}`
-  - `whisperdocs_llm_tokens_total{provider,model,direction}`
-  - `whisperdocs_retrieval_chunks{collection}`
+  - `whisperdocs_agent_turn_duration_seconds{action}` — whole turn, recorded
+    by `/agent/chat`, `/agent/chat/stream` and the WhatsApp webhook
+  - `whisperdocs_llm_tokens_total{model,direction}` — RAG generation calls only
+  - `whisperdocs_retrieval_chunks` (histogram)
   - `whisperdocs_retrieval_top_relevance` (histogram)
   - `whisperdocs_errors_total{type}`
 - **Cost tracking** — `query_logs.cost_usd` populated per turn via `pricing.estimate_cost_usd(model, tokens_in, tokens_out)`.

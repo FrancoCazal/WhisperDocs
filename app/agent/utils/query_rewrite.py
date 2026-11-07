@@ -9,7 +9,7 @@ import re
 from langchain_core.messages import BaseMessage
 
 from app.agent.prompts import QUERY_REWRITE_SYSTEM_PROMPT
-from app.agent.utils.messages import format_messages
+from app.agent.utils.messages import drop_leading_assistant, format_messages
 from app.logging_config import get_logger
 from app.services.llm import llm_service_for
 
@@ -69,7 +69,9 @@ async def rewrite_query_for_retrieval(
                     "content": "Prior conversation summary (background):\n" + summary,
                 }
             )
-        context.extend(format_messages(history[:-1]) if len(history) > 1 else [])
+        context.extend(
+            drop_leading_assistant(format_messages(history[:-1])) if len(history) > 1 else []
+        )
         context.append({"role": "user", "content": current})
         resp = await provider.generate(
             system=QUERY_REWRITE_SYSTEM_PROMPT,

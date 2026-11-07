@@ -7,38 +7,17 @@ from typing import TypeVar
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, ValidationError
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from app.config import settings
-from app.services.llm.base import LLMResponse, LLMStreamDelta
+from app.services.llm.base import LLMResponse, LLMStreamDelta, extract_text
+from app.services.llm.model_policy import accepts_custom_sampling, is_gemini_3_or_later
 
 T = TypeVar("T", bound=BaseModel)
 
-
-try:
-    from google.api_core import exceptions as google_exceptions  # type: ignore
-
-    _GEMINI_RETRY_EXCS: tuple[type[BaseException], ...] = (
-        TimeoutError,
-        google_exceptions.ResourceExhausted,
-        google_exceptions.ServiceUnavailable,
-        google_exceptions.DeadlineExceeded,
-    )
-except ImportError:
-    _GEMINI_RETRY_EXCS = (TimeoutError,)
-
-
-_retry = retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=0.3, min=0.3, max=5),
-    retry=retry_if_exception_type(_GEMINI_RETRY_EXCS),
-    reraise=True,
-)
+# Retries live in the google-genai SDK (`max_retries`). The previous tenacity
+# layer keyed on `google.api_core` exceptions, which the google-genai SDK does
+# not raise, so it never retried anything.
+_GEMINI_MAX_RETRIES = 2
 
 
 def _to_lc_messages(system: str, messages: list[dict]) -> list:
@@ -65,17 +44,24 @@ class GeminiProvider:
     def _build_chat(
         self, model: str, temperature: float, max_tokens: int
     ) -> ChatGoogleGenerativeAI:
-        return ChatGoogleGenerativeAI(
-            model=model,
-            vertexai=True,
-            project=settings.gcp_project or None,
-            location=settings.gcp_location,
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            timeout=settings.gemini_timeout_seconds,
-        )
+        kwargs: dict = {
+            "model": model,
+            "vertexai": True,
+            "project": settings.gcp_project or None,
+            "location": settings.gcp_location,
+            "max_output_tokens": max_tokens,
+            "timeout": settings.gemini_timeout_seconds,
+            "max_retries": _GEMINI_MAX_RETRIES,
+        }
+        # Gemini 3 samples with its defaults (Google recommends temperature 1.0,
+        # and 3.6 Flash / 3.5 Flash-Lite onward ignore custom values). Leaving
+        # the field unset lets langchain-google-genai send nothing.
+        if accepts_custom_sampling(model):
+            kwargs["temperature"] = temperature
+        if is_gemini_3_or_later(model) and settings.gemini_thinking_level:
+            kwargs["thinking_level"] = settings.gemini_thinking_level
+        return ChatGoogleGenerativeAI(**kwargs)
 
-    @_retry
     async def _invoke_raw(self, chat: ChatGoogleGenerativeAI, lc_messages: list):
         return await chat.ainvoke(lc_messages)
 
@@ -95,7 +81,7 @@ class GeminiProvider:
         latency = int((time.perf_counter() - t0) * 1000)
         usage = getattr(response, "usage_metadata", None) or {}
         return LLMResponse(
-            text=response.content if isinstance(response.content, str) else str(response.content),
+            text=extract_text(response.content),
             tokens_input=usage.get("input_tokens", 0),
             tokens_output=usage.get("output_tokens", 0),
             model=model,
@@ -118,8 +104,7 @@ class GeminiProvider:
         usage_in = 0
         usage_out = 0
         async for chunk in chat.astream(lc_messages):
-            content = getattr(chunk, "content", "") or ""
-            delta = content if isinstance(content, str) else str(content)
+            delta = extract_text(getattr(chunk, "content", "") or "")
             if delta:
                 full_text += delta
                 yield LLMStreamDelta(text_delta=delta, final=None)
@@ -139,7 +124,6 @@ class GeminiProvider:
             ),
         )
 
-    @_retry
     async def _invoke_structured(self, structured, lc_messages: list):
         return await structured.ainvoke(lc_messages)
 
@@ -164,8 +148,7 @@ class GeminiProvider:
         parsing_error = result.get("parsing_error")
 
         if parsed is None:
-            raw_text = getattr(raw, "content", "")
-            text_str = raw_text if isinstance(raw_text, str) else str(raw_text)
+            text_str = extract_text(getattr(raw, "content", ""))
             parsed = _salvage_structured(text_str, response_model)
             if parsed is None:
                 raise ValueError(
@@ -175,7 +158,7 @@ class GeminiProvider:
 
         usage = getattr(raw, "usage_metadata", None) or {}
         return parsed, LLMResponse(
-            text=raw.content if isinstance(raw.content, str) else str(raw.content),
+            text=extract_text(raw.content),
             tokens_input=usage.get("input_tokens", 0),
             tokens_output=usage.get("output_tokens", 0),
             model=model,

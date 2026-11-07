@@ -11,6 +11,26 @@ class LLMError(RuntimeError):
     pass
 
 
+def extract_text(content: object) -> str:
+    """Return the text of a LangChain message `content`.
+
+    Bedrock Converse and Gemini 3 return content as a list of blocks
+    (`{"type": "text", "text": ...}`, plus reasoning or signature blocks), not a
+    string. Only text blocks are kept; `str()` on the list would leak its repr.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "".join(parts)
+    return str(content) if content is not None else ""
+
+
 @dataclass(frozen=True)
 class LLMResponse:
     """Normalized response shape across providers."""

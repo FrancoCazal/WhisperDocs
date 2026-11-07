@@ -1,12 +1,13 @@
 import argparse
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.eval.evaluator import RAGEvaluator
+from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judges import Judge
 from app.eval.report import render_badge_json, render_diff_markdown, render_markdown
 from app.eval.schemas import EvalReport, TestItem
@@ -37,7 +38,9 @@ async def _resolve_collection_id(collection_id: int | None, collection_name: str
         result = await db.execute(select(Collection).where(Collection.name == collection_name))
         coll = result.scalar_one_or_none()
     if coll is None:
-        raise ValueError(f"Collection {collection_name!r} not found. Run scripts/seed_eval.py first.")
+        raise ValueError(
+            f"Collection {collection_name!r} not found. Run scripts/seed_eval.py first."
+        )
     return coll.id
 
 
@@ -106,7 +109,9 @@ def print_summary(report: EvalReport, output_path: Path) -> None:
     print(f"Hallucination rate:   {m.hallucination_rate:.2%}")
     print(f"Retrieval precision:  {m.avg_retrieval_precision:.2%}")
     print(f"Retrieval recall:     {m.avg_retrieval_recall:.2%}")
-    print(f"Latency avg/p50/p95:  {m.avg_latency_ms:.0f} / {m.latency_p50_ms:.0f} / {m.latency_p95_ms:.0f} ms")
+    print(
+        f"Latency avg/p50/p95:  {m.avg_latency_ms:.0f} / {m.latency_p50_ms:.0f} / {m.latency_p95_ms:.0f} ms"
+    )
     print(f"Avg tokens (in/out):  {m.avg_tokens_input:.0f} / {m.avg_tokens_output:.0f}")
     print(f"Total cost estimate:  ${m.estimated_cost_usd:.4f} USD")
     print()
@@ -175,18 +180,22 @@ def main() -> None:
         cmd_diff(args)
         return
 
-    asyncio.run(
-        run_eval(
-            dataset_path=args.dataset,
-            results_dir=args.results_dir,
-            collection_id=args.collection_id,
-            collection_name=args.collection_name,
-            top_k=args.top_k,
-            concurrency=args.concurrency,
-            write_markdown=args.markdown,
-            limit=args.limit,
+    try:
+        asyncio.run(
+            run_eval(
+                dataset_path=args.dataset,
+                results_dir=args.results_dir,
+                collection_id=args.collection_id,
+                collection_name=args.collection_name,
+                top_k=args.top_k,
+                concurrency=args.concurrency,
+                write_markdown=args.markdown,
+                limit=args.limit,
+            )
         )
-    )
+    except EvalAbortedError as exc:
+        print(f"\n{exc}\nFirst judge error: {exc.first_error}", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

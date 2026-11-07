@@ -21,11 +21,11 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 ## Highlights
 
 - **Agentic RAG with LangGraph** — explicit state graph, 7 nodes (compaction, summarize, classifier, search, clarify, direct, out-of-scope). Each node testable in isolation; `AsyncPostgresSaver` handles persistence.
-- **Hybrid retrieval** — vector cosine via pgvector + BM25 via tsvector, fused with Reciprocal Rank Fusion. Optional cross-encoder rerank (`bge-reranker-base`) + document-level MMR for diversity.
-- **Multi-provider routing** — Gemini 2.5 Flash for cheap hot-path nodes (classifier, query rewrite, direct answers); AWS Bedrock Claude for grounded RAG generation. Provider auto-detected from model ID.
+- **Hybrid retrieval** — vector cosine via pgvector + Postgres full-text ranking (`ts_rank_cd` over a `tsvector` column), fused with Reciprocal Rank Fusion. Optional cross-encoder rerank (`bge-reranker-base`) + document-level MMR for diversity.
+- **Multi-provider routing** — Gemini 3.8 Flash for cheap hot-path nodes (classifier, query rewrite, direct answers); AWS Bedrock Claude for grounded RAG generation. Provider auto-detected from model ID; startup fails on a model ID that can't be routed.
 - **Token-level SSE streaming** — `astream_events` v2 + custom event dispatch. Frontend renders tokens as they arrive, with progress markers per node.
 - **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE.
-- **Eval suite (50-query golden set)** — LLM-as-judge for correctness + hallucination, retrieval precision/recall@k, latency p50/p95, cost USD. Diff between runs for regression detection.
+- **Eval suite (50-query golden set)** — single-turn retrieval + generation path. LLM-as-judge for correctness + hallucination, retrieval precision/recall@k, latency p50/p95, generation cost USD. Diff between runs for regression detection.
 - **Cost tracking** — per-call USD via `pricing.py`, persisted on `query_logs`. Single source for runner, API, dashboard.
 - **Structured logging + metrics** — `structlog` JSON output, Prometheus `/metrics` (turn duration, tokens, retrieval relevance, errors).
 - **WhatsApp integration** — full agent pipeline over Twilio webhooks.
@@ -108,7 +108,7 @@ OPENAI_API_KEY=sk-...
 
 # Generation providers
 GCP_PROJECT=...                  # Gemini via Vertex AI; auth via `gcloud auth application-default login`
-GCP_LOCATION=us-central1
+GCP_LOCATION=global              # gemini-3.8-flash is served from global, us or eu only
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=us-east-1
@@ -147,8 +147,8 @@ See `.env.example` for every knob.
 | `DELETE` | `/api/v1/conversations/{thread_id}` | Delete conversation |
 | `GET` | `/api/v1/notes` | List saved notes |
 | `DELETE` | `/api/v1/notes/{note_id}` | Delete saved note |
-| `POST` | `/api/v1/webhooks/whatsapp` | Twilio inbound webhook |
-| `POST` | `/api/v1/webhooks/whatsapp/status` | Twilio delivery-status callback |
+| `POST` | `/api/v1/webhook/whatsapp` | Twilio inbound webhook |
+| `POST` | `/api/v1/webhook/whatsapp/status` | Twilio delivery-status callback |
 | `POST` | `/api/v1/eval/run` | Eval suite |
 | `GET` | `/api/v1/eval/results` | List past eval reports |
 | `GET` | `/api/v1/admin/settings` | Runtime settings snapshot |
@@ -175,8 +175,16 @@ python -m app.eval.runner diff \
   eval/results/<prev>.json eval/results/<curr>.json -o eval/results/diff.md
 ```
 
-Metrics: accuracy, hallucination rate, retrieval precision@k, retrieval recall@k,
-latency avg/p50/p95, cost USD. Bucketed by difficulty and category.
+What it measures: the single-turn retrieval + generation path
+(`retrieval_pipeline.retrieve` and the single-turn RAG prompt in `app/services/rag.py`), called
+directly. It does not go through the agent graph, so there is no classifier, query rewrite or
+conversation history; routing is covered by the graph and router unit tests in `tests/agent/`.
+
+Metrics: accuracy, hallucination rate, retrieval precision@k and recall@k (averaged over the
+in-scope queries), latency avg/p50/p95, and generation cost in USD (RAG model only; judge calls
+and embeddings are not included). Bucketed by difficulty and category. The run aborts with exit
+code 2 when more than 10% of the judge calls fail (`AGENT_EVAL_MAX_JUDGE_ERROR_RATE`), instead of
+scoring those items as failures.
 
 Dataset: JSONL at `eval/golden/queries.jsonl`.
 
@@ -187,20 +195,26 @@ Dataset: JSONL at `eval/golden/queries.jsonl`.
 | Answer accuracy (LLM judge) | 96% (48/50) |
 | Hallucination rate | 6% (3/50) |
 | Retrieval precision@k / recall@k | 91.5% / 92.1% (40 of the 41 in-scope queries) |
-| Out-of-scope queries handled correctly | 9/9 |
-| Latency p50 / p95 | 5.9 s / 9.1 s |
-| Cost | $0.63 for the 50 queries |
+| Out-of-scope queries refused by the RAG prompt | 9/9 |
+| Single-turn RAG latency p50 / p95 | 5.9 s / 9.1 s |
+| Generation cost (RAG model only) | $0.63 for the 50 queries |
 
 Run `b2b0899a` on 2026-04-28, with Claude Sonnet 4.5 on Bedrock for generation. The full
 report, including the five failing cases, is in
-[`eval/reports/2026-04-28_b2b0899a.md`](eval/reports/2026-04-28_b2b0899a.md). Two caveats: it
-is one run of a stochastic pipeline, and the seven full runs that day, made while tuning the
-engine, ranged from 80% to 96% accuracy; and it predates this snapshot by three weeks and has
-not been re-run against it.
+[`eval/reports/2026-04-28_b2b0899a.md`](eval/reports/2026-04-28_b2b0899a.md). Three caveats:
 
-The retrieval average skips any query whose precision and recall are both zero
-([`app/eval/metrics.py`](app/eval/metrics.py)). One in-scope query retrieved no chunk from its
-expected source, so the figures above average 40 queries; over all 41 they are 89.3% and 89.8%.
+- It used the original Spanish version of the seed corpus and the golden set. This repo ships
+  the English translation, which is why the questions in that report are in Spanish; a run
+  against this repo measures the translated set.
+- It is one run of a stochastic pipeline. The seven full runs that day, made while tuning the
+  engine, ranged from 80% to 96% accuracy.
+- It predates this snapshot by three weeks and has not been re-run against it.
+
+That run averaged retrieval only over queries with a non-zero precision or recall, which
+dropped the one in-scope query that retrieved no chunk from its expected source; over all 41
+the figures are 89.3% and 89.8%. That query, #23, was mislabeled: the fact it asks about is in
+two documents and the golden set listed only one. It now lists both, and
+[`app/eval/metrics.py`](app/eval/metrics.py) averages over every in-scope query.
 
 ### A/B: measure reranker + MMR lift
 

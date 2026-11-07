@@ -13,7 +13,11 @@ from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.config import settings
-from app.services.llm.base import LLMResponse, LLMStreamDelta
+from app.services.llm.base import LLMResponse, LLMStreamDelta, extract_text
+from app.services.llm.model_policy import (
+    accepts_custom_sampling,
+    bedrock_converse_unsupported_reason,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -55,19 +59,7 @@ def _to_lc_messages(system: str, messages: list[dict]) -> list:
     return lc
 
 
-def _extract_text(content) -> str:
-    if isinstance(content, str):
-        return content
-    # ChatBedrockConverse returns list of {"type":"text","text":...} blocks
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
-            elif isinstance(block, str):
-                parts.append(block)
-        return "".join(parts)
-    return str(content)
+_extract_text = extract_text
 
 
 class BedrockProvider:
@@ -86,12 +78,13 @@ class BedrockProvider:
         self._client = boto3.client("bedrock-runtime", **kwargs)
 
     def _build_chat(self, model: str, temperature: float, max_tokens: int) -> ChatBedrockConverse:
-        return ChatBedrockConverse(
-            client=self._client,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        unsupported = bedrock_converse_unsupported_reason(model)
+        if unsupported:
+            raise ValueError(unsupported)
+        kwargs: dict = {"client": self._client, "model": model, "max_tokens": max_tokens}
+        if accepts_custom_sampling(model):
+            kwargs["temperature"] = temperature
+        return ChatBedrockConverse(**kwargs)
 
     @_retry
     async def _invoke_raw(self, chat: ChatBedrockConverse, lc_messages: list):

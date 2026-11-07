@@ -27,6 +27,9 @@ class TestItem(BaseModel):
 class JudgeResult(BaseModel):
     passed: bool
     reasoning: str
+    # True when the judge call itself failed; `passed` is then False by
+    # construction and says nothing about the answer.
+    error: bool = False
 
 
 class EvalResult(BaseModel):
@@ -60,6 +63,8 @@ class AggregateMetrics(BaseModel):
     total_tokens_input: int
     total_tokens_output: int
     estimated_cost_usd: float
+    # Items where at least one judge call failed.
+    judge_errors: int = 0
 
     by_difficulty: dict[str, dict]
     by_category: dict[str, dict]

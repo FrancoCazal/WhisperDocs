@@ -13,22 +13,27 @@ class Pricing:
     output_per_1m: float
 
 
-# Static table. Update when providers change pricing or new models added.
+# Static table: one row per model the app can be configured with. Update it
+# when a default model changes; `tests/test_llm_models.py` fails if a default
+# has no row here.
 _PRICING: dict[str, Pricing] = {
-    # Gemini (Vertex AI)
-    "gemini-2.5-flash": Pricing(input_per_1m=0.30, output_per_1m=2.50),
-    "gemini-2.5-pro": Pricing(input_per_1m=1.25, output_per_1m=10.00),
-    "gemini-1.5-flash": Pricing(input_per_1m=0.075, output_per_1m=0.30),
-    "gemini-1.5-pro": Pricing(input_per_1m=1.25, output_per_1m=5.00),
-    # Claude on Bedrock (us inference profiles)
+    # Gemini on Vertex AI. Standard paid tier, <=200K context.
+    # gemini-3.8-flash: introductory rate through 2026-12-31, from third-party
+    # aggregators — confirm on cloud.google.com/vertex-ai/generative-ai/pricing.
+    # Reported to double on 2027-01-01.
+    "gemini-3.8-flash": Pricing(input_per_1m=0.75, output_per_1m=3.75),
+    # Claude on Bedrock, Converse API (us cross-region inference profiles).
     "us.anthropic.claude-sonnet-4-5-20250929-v1:0": Pricing(3.00, 15.00),
-    "us.anthropic.claude-sonnet-4-20250514-v1:0": Pricing(3.00, 15.00),
     "us.anthropic.claude-haiku-4-5-20251001-v1:0": Pricing(1.00, 5.00),
-    "us.anthropic.claude-opus-4-7-20251201-v1:0": Pricing(15.00, 75.00),
-    "us.anthropic.claude-3-5-sonnet-20241022-v2:0": Pricing(3.00, 15.00),
 }
 
 _FALLBACK = Pricing(input_per_1m=1.00, output_per_1m=5.00)
+
+_warned_unknown: set[str] = set()
+
+
+def has_pricing(model: str) -> bool:
+    return model in _PRICING
 
 
 def estimate_cost_usd(model: str | None, tokens_input: int, tokens_output: int) -> float:
@@ -38,7 +43,14 @@ def estimate_cost_usd(model: str | None, tokens_input: int, tokens_output: int) 
 
     pricing = _PRICING.get(model)
     if pricing is None:
-        logger.debug("pricing_unknown_model", model=model)
+        if model not in _warned_unknown:
+            _warned_unknown.add(model)
+            logger.warning(
+                "pricing_unknown_model",
+                model=model,
+                fallback_input_per_1m=_FALLBACK.input_per_1m,
+                fallback_output_per_1m=_FALLBACK.output_per_1m,
+            )
         pricing = _FALLBACK
 
     cost_in = (tokens_input / 1_000_000) * pricing.input_per_1m

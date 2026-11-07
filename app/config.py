@@ -6,14 +6,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class AgentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AGENT_", extra="ignore")
 
-    model_classifier: str = "gemini-2.5-flash"
-    model_query_rewrite: str = "gemini-2.5-flash"
+    # Models checked against the provider lifecycle pages on 2026-11-06:
+    # gemini-2.5-flash retired on Vertex AI on 2026-10-20 (replacement:
+    # gemini-3.8-flash). Claude 4.7+ on Bedrock is served only by the
+    # bedrock-mantle endpoint, which BedrockProvider does not call, so the
+    # Claude defaults stay on Converse-served models (see model_policy.py).
+    model_classifier: str = "gemini-3.8-flash"
+    model_query_rewrite: str = "gemini-3.8-flash"
     model_rag_generation: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    model_clarification: str = "gemini-2.5-flash"
-    model_answer_direct: str = "gemini-2.5-flash"
+    model_clarification: str = "gemini-3.8-flash"
+    model_answer_direct: str = "gemini-3.8-flash"
     model_summarize: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-    model_eval_judge: str = "gemini-2.5-flash"
+    model_eval_judge: str = "gemini-3.8-flash"
 
+    # Sent only to models that accept custom sampling: Claude 4.6 and earlier,
+    # Gemini 2.x. Claude 4.7+ and Gemini 3+ sample with their defaults.
     temp_classifier: float = 0.0
     temp_query_rewrite: float = 0.0
     temp_rag_generation: float = 0.3
@@ -27,6 +34,11 @@ class AgentSettings(BaseSettings):
     k_recent: int = 8
 
     retrieval_top_k: int = 5
+
+    # Abort an eval run (no report written) when more than this share of items
+    # had a failed judge call. Failed calls count as wrong answers, so past a
+    # few of them the report measures the judge, not the system.
+    eval_max_judge_error_rate: float = 0.1
 
     # Max tokens consumed by retrieved-chunk context block in the RAG prompt.
     # Iteratively drops lowest-relevance chunks until under budget. Leaves
@@ -81,8 +93,14 @@ class Settings(BaseSettings):
     embedding_l2_normalize: bool = True
 
     gcp_project: str = ""
-    gcp_location: str = "us-central1"
+    # gemini-3.8-flash is served from the `global` endpoint and the `us` / `eu`
+    # multi-regions, not from single regions such as us-central1.
+    gcp_location: str = "global"
     gemini_timeout_seconds: int = 20
+    # Thinking level for Gemini 3+ calls. Every Gemini node here is a cheap
+    # hot-path call (classifier, rewrite, clarification, direct answer) or the
+    # eval judge; `low` keeps latency close to Gemini 2.5 Flash. Empty = model default.
+    gemini_thinking_level: Literal["low", "medium", "high"] | None = "low"
 
     aws_region: str = "us-east-1"
     aws_access_key_id: str = ""
@@ -98,6 +116,11 @@ class Settings(BaseSettings):
 
     default_collection_id: int | None = None
     conversation_grace_period_days: int = 7
+
+    # Browser origins allowed to call the API. The API has no auth, so `*`
+    # would let any open web page read and delete local data.
+    # Env: CORS_ALLOWED_ORIGINS='["http://localhost:8080"]'
+    cors_allowed_origins: list[str] = ["http://localhost:8080", "http://localhost:5173"]
 
     # Reranker (post-retrieval refinement). Off by default — requires `[rerank]` extra.
     reranker_enabled: bool = False

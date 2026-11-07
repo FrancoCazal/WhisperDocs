@@ -27,6 +27,14 @@ _pool: AsyncConnectionPool | None = None
 _checkpointer: AsyncPostgresSaver | None = None
 
 
+def _redact_dsn(dsn: str) -> str:
+    """postgresql://user:secret@host:5432/db -> postgresql://***@host:5432/db"""
+    scheme, sep, rest = dsn.partition("://")
+    if not sep or "@" not in rest:
+        return dsn
+    return f"{scheme}://***@{rest.rsplit('@', 1)[1]}"
+
+
 async def init_checkpointer() -> AsyncPostgresSaver:
     """Initialize pool + checkpointer. Idempotent.
 
@@ -50,9 +58,10 @@ async def init_checkpointer() -> AsyncPostgresSaver:
         _checkpointer = AsyncPostgresSaver(conn=_pool)
         await _checkpointer.setup()
     except Exception:
+        # Never log the DSN: it carries the database user and password.
         logger.error(
             "checkpointer_init_failed dsn=%s",
-            settings.psycopg_database_url,
+            _redact_dsn(settings.psycopg_database_url),
             exc_info=True,
         )
         if _pool is not None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.thread_id import normalize_phone, whatsapp_thread_id
 from app.config import settings
 from app.db import get_db
+from app.metrics import agent_turn_duration_seconds
 from app.models import Collection, Conversation
 from app.services.twilio_client import send_whatsapp_message
 from app.services.whatsapp.formatter import format_for_whatsapp
@@ -162,6 +164,7 @@ async def whatsapp_webhook(
         return
 
     agent = request.app.state.agent
+    turn_started = time.perf_counter()
     try:
         result = await agent.ainvoke(
             {
@@ -180,6 +183,9 @@ async def whatsapp_webhook(
             logger.exception("twilio_error_send_failed thread_id=%s", thread_id)
         return
 
+    agent_turn_duration_seconds.labels(action=result.get("pending_action") or "unknown").observe(
+        time.perf_counter() - turn_started
+    )
     conv.last_active_at = func.now()
     await db.commit()
 

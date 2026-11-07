@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from collections.abc import AsyncIterator
 
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import SessionLocal, get_db
 from app.logging_config import get_logger
+from app.metrics import agent_turn_duration_seconds
 from app.models import Collection, Conversation, QueryLog
 from app.services.llm.pricing import estimate_cost_usd
 from app.schemas.agent import (
@@ -57,6 +59,7 @@ async def agent_chat(
             conv.collection_id = payload.collection_id
 
     agent = request.app.state.agent
+    turn_started = time.perf_counter()
     try:
         result = await agent.ainvoke(
             {
@@ -76,6 +79,9 @@ async def agent_chat(
     final = result["messages"][-1]
     answer = final.content if isinstance(final.content, str) else str(final.content)
     action = result.get("pending_action")
+    agent_turn_duration_seconds.labels(action=action or "unknown").observe(
+        time.perf_counter() - turn_started
+    )
     retrieved = result.get("retrieved_chunks") or []
     md = result.get("metadata") or {}
 
@@ -147,14 +153,10 @@ async def agent_chat_stream(
                     select(Collection.id).where(Collection.id == collection_id)
                 )
                 if exists is None:
-                    yield _sse(
-                        "error", {"message": f"Collection {collection_id} not found"}
-                    )
+                    yield _sse("error", {"message": f"Collection {collection_id} not found"})
                     return
 
-            conv = await db.scalar(
-                select(Conversation).where(Conversation.thread_id == thread_id)
-            )
+            conv = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
             if conv is None:
                 conv = Conversation(
                     thread_id=thread_id,
@@ -173,6 +175,7 @@ async def agent_chat_stream(
         agent = request.app.state.agent
 
         final_state: dict = {}
+        turn_started = time.perf_counter()
         try:
             async for event in agent.astream_events(
                 {
@@ -242,14 +245,15 @@ async def agent_chat_stream(
             answer = content if isinstance(content, str) else str(content)
 
         action = final_state.get("pending_action")
+        agent_turn_duration_seconds.labels(action=action or "unknown").observe(
+            time.perf_counter() - turn_started
+        )
         retrieved = final_state.get("retrieved_chunks") or []
         md = final_state.get("metadata") or {}
         chunks_count = md.get("retrieval_chunks_count", len(retrieved))
 
         async with SessionLocal() as db:
-            conv = await db.scalar(
-                select(Conversation).where(Conversation.thread_id == thread_id)
-            )
+            conv = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
             if conv is not None:
                 conv.last_active_at = func.now()
                 if action == "search_docs":

@@ -46,7 +46,11 @@ def render_markdown(report: EvalReport) -> str:
     lines.append(f"| Latency p95 | {m.latency_p95_ms:.0f} ms |")
     lines.append(f"| Avg tokens in / out | {m.avg_tokens_input:.0f} / {m.avg_tokens_output:.0f} |")
     lines.append(f"| Total tokens in / out | {m.total_tokens_input} / {m.total_tokens_output} |")
-    lines.append(f"| Estimated cost (USD) | ${m.estimated_cost_usd:.4f} |")
+    lines.append(
+        f"| Generation cost (USD, RAG model only; excludes judge and embeddings) "
+        f"| ${m.estimated_cost_usd:.4f} |"
+    )
+    lines.append(f"| Items with a failed judge call | {m.judge_errors} |")
     lines.append("")
     lines.append("## By difficulty")
     lines.append("")
@@ -67,7 +71,9 @@ def render_markdown(report: EvalReport) -> str:
         for r in failures:
             corr = "OK" if r.correctness.passed else "FAIL"
             hall = "OK" if r.hallucination.passed else "FAIL"
-            reason = (r.correctness.reasoning if not r.correctness.passed else r.hallucination.reasoning)
+            reason = (
+                r.correctness.reasoning if not r.correctness.passed else r.hallucination.reasoning
+            )
             lines.append(
                 f"| {r.item_id} | {_truncate(r.question, 60)} | {corr} | {hall} | {_truncate(reason, 80)} |"
             )
@@ -125,8 +131,12 @@ def render_diff_markdown(prev: EvalReport, curr: EvalReport) -> str:
     lines: list[str] = []
     lines.append(f"# Eval Diff — `{prev.run_id[:8]}` → `{curr.run_id[:8]}`")
     lines.append("")
-    lines.append(f"- **Previous**: {prev.timestamp.isoformat()} (model `{prev.model}`, n={prev.dataset_size})")
-    lines.append(f"- **Current**:  {curr.timestamp.isoformat()} (model `{curr.model}`, n={curr.dataset_size})")
+    lines.append(
+        f"- **Previous**: {prev.timestamp.isoformat()} (model `{prev.model}`, n={prev.dataset_size})"
+    )
+    lines.append(
+        f"- **Current**:  {curr.timestamp.isoformat()} (model `{curr.model}`, n={curr.dataset_size})"
+    )
     lines.append("")
     lines.append("## Metric deltas")
     lines.append("")

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.db import SessionLocal
-from app.eval.evaluator import RAGEvaluator
+from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judges import Judge
 from app.eval.schemas import EvalReport, TestItem
 from app.services.embedder import EmbeddingService, get_embedder
@@ -44,7 +44,11 @@ async def run_evaluation(
         top_k=payload.top_k,
         concurrency=payload.concurrency,
     )
-    report = await evaluator.run(payload.dataset)
+    try:
+        report = await evaluator.run(payload.dataset)
+    except EvalAbortedError as exc:
+        # The message carries counts only; the provider error stays in the logs.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{report.timestamp.strftime('%Y-%m-%dT%H-%M-%S')}_{report.run_id[:8]}.json"
