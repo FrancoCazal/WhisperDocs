@@ -407,6 +407,13 @@ Override per node via `AGENT_MODEL_<ALIAS>` env vars. Model rules live in
   can't be routed or is rejected, and logs a warning for a model with no row
   in `pricing.py` (its cost falls back to a generic rate).
 
+Retries:
+- **Bedrock.** botocore is set to a single attempt, and `BedrockProvider`
+  retries throttling, 5xx and model timeouts itself: up to 3 attempts, with
+  backoff from 0.3 s. `generate_stream` retries only until the first token. After
+  that, the client has already shown text, so the error ends the turn.
+- **Gemini.** The google-genai SDK retries (`max_retries=2`).
+
 ---
 
 ## Eval framework
