@@ -69,9 +69,9 @@ files = ["app/agent", "app/eval"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-# No type information: boto3/botocore ship no stubs, and sentence-transformers
-# is an optional extra.
-module = ["boto3", "boto3.*", "botocore", "botocore.*", "sentence_transformers"]
+# No type information: boto3, botocore and langdetect ship no stubs, and
+# sentence-transformers is an optional extra.
+module = ["boto3", "boto3.*", "botocore", "botocore.*", "langdetect", "sentence_transformers"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

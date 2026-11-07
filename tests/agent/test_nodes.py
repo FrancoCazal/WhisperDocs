@@ -11,6 +11,7 @@ from app.agent.nodes.decide_action import decide_action_node
 import app.agent.nodes.search_docs as search_docs_module
 from app.agent.nodes.search_docs import search_docs_node
 from app.agent.nodes.summarize import summarize_node
+from app.agent.utils.fixed_replies import fixed_reply
 
 
 # ---------- check_compaction ----------
@@ -134,13 +135,24 @@ async def test_decide_action_classifies_out_of_scope(
 async def test_out_of_scope_node_returns_canned_message():
     from app.agent.nodes.out_of_scope import out_of_scope_node
 
-    result = await out_of_scope_node({"messages": [HumanMessage(content="clima madrid?")]})
+    result = await out_of_scope_node(
+        {"messages": [HumanMessage(content="¿qué clima hace en Madrid?")]}
+    )
     assert len(result["messages"]) == 1
     msg = result["messages"][0]
     assert isinstance(msg, AIMessage)
     assert "fuera del alcance" in msg.content.lower()
     # No LLM call → no model recorded.
     assert result["metadata"]["generation_model"] is None
+
+
+async def test_out_of_scope_node_answers_in_the_language_of_the_question():
+    from app.agent.nodes.out_of_scope import out_of_scope_node
+
+    result = await out_of_scope_node(
+        {"messages": [HumanMessage(content="What is the weather in Madrid?")]}
+    )
+    assert "outside the scope" in result["messages"][0].content
 
 
 # ---------- ask_clarification ----------
@@ -304,7 +316,7 @@ async def test_search_docs_empty_retrieval(
     # Nothing indexed in scope: a fixed answer, and no RAG call (audit A12).
     assert len(result["messages"]) == 1
     assert isinstance(result["messages"][0], AIMessage)
-    assert result["messages"][0].content == search_docs_module.NO_DOCUMENTS_ANSWER
+    assert result["messages"][0].content == fixed_reply("no_documents", state["messages"])
     assert not _rag_calls(fake_provider)
     assert result["retrieved_chunks"] == []
     assert result["metadata"]["retrieval_chunks_count"] == 0
@@ -332,11 +344,10 @@ async def test_search_docs_retrieval_error_is_not_an_empty_collection(
     observed: list[float] = []
     monkeypatch.setattr(search_docs_module.retrieval_top_relevance, "observe", observed.append)
 
-    result = await search_docs_node(
-        {"messages": [HumanMessage(content="¿algo?")], "collection_id": None}
-    )
+    messages = [HumanMessage(content="¿algo?")]
+    result = await search_docs_node({"messages": messages, "collection_id": None})
 
-    assert result["messages"][0].content == search_docs_module.RETRIEVAL_FAILED_ANSWER
+    assert result["messages"][0].content == fixed_reply("retrieval_failed", messages)
     assert result["metadata"]["retrieval_failed"] is True
     assert not _rag_calls(fake_provider)
     assert observed == []  # a failure is not a 0.0 relevance

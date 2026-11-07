@@ -323,6 +323,9 @@ not in `AgentState`: `config["configurable"]` carries `thread_id` and the
 request's `top_k`, which `search_docs` reads (`AGENT_RETRIEVAL_TOP_K` when
 absent).
 
+Answers written without a model (no documents, a failure, out of scope) take
+the language of the user's message (`app/agent/utils/fixed_replies.py`).
+
 Each node is a pure async function `(AgentState) -> dict` returning only the
 fields it modifies; a node that needs the run config also takes
 `config: RunnableConfig`. The graph wires nodes in `app/agent/graph.py`; nodes

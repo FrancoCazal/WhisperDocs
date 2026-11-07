@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage
 
 from app.agent.prompts import ANSWER_DIRECT_SYSTEM_PROMPT
 from app.agent.state import AgentState
+from app.agent.utils.fixed_replies import fixed_reply
 from app.agent.utils.messages import build_prompt_messages
 from app.agent.utils.streaming import stream_generate
 from app.services.llm import llm_service_for
@@ -24,7 +25,7 @@ async def answer_direct_node(state: AgentState) -> dict:
             max_tokens=200,
             node="answer_direct",
         )
-        text = resp.text.strip() or "¡Hola! ¿En qué puedo ayudarte con la documentación?"
+        text = resp.text.strip() or fixed_reply("greeting", state["messages"])
         md = {
             "generation_model": resp.model,
             "generation_tokens_input": resp.tokens_input,
@@ -33,7 +34,7 @@ async def answer_direct_node(state: AgentState) -> dict:
         }
     except Exception:
         logger.exception("answer_direct_failed")
-        text = "Tuve un problema generando la respuesta. ¿Podés intentarlo de nuevo?"
+        text = fixed_reply("generation_failed", state["messages"])
         md = {"generation_model": model}
 
     msg_metadata = {

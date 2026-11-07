@@ -5,6 +5,7 @@ from app.agent.prompts import RAG_SYSTEM_PROMPT_AGENT
 from app.agent.schemas import RAGAnswer
 from app.agent.state import AgentState
 from app.agent.utils.citation_validation import validate_citations_semantic
+from app.agent.utils.fixed_replies import FixedReply, fixed_reply
 from app.agent.utils.messages import build_prompt_messages
 from app.agent.utils.query_rewrite import rewrite_query_for_retrieval
 from app.agent.utils.streaming import stream_generate
@@ -25,13 +26,9 @@ from app.services.retriever import RetrievedChunk
 
 logger = get_logger(__name__)
 
-# Answers that need no model call (audit A12). The vector leg returns the
-# nearest chunks whatever their similarity, so an empty result means nothing
-# is indexed in scope, not that nothing was relevant.
-NO_DOCUMENTS_ANSWER = "No hay documentos indexados para responder esto."
-RETRIEVAL_FAILED_ANSWER = (
-    "No pude buscar en los documentos por un problema técnico. Probá de nuevo en un momento."
-)
+# Turns answered without a model call (audit A12) get a fixed reply. The
+# vector leg returns the nearest chunks whatever their similarity, so an empty
+# result means nothing is indexed in scope, not that nothing was relevant.
 _NO_GENERATION = {
     "generation_model": None,
     "generation_tokens_input": 0,
@@ -130,10 +127,10 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
     )
 
     if retrieval_failed or not chunks:
-        answer = RETRIEVAL_FAILED_ANSWER if retrieval_failed else NO_DOCUMENTS_ANSWER
+        reply: FixedReply = "retrieval_failed" if retrieval_failed else "no_documents"
         return _turn_result(
             state,
-            answer=answer,
+            answer=fixed_reply(reply, messages),
             chunks=[],
             included_chunks=[],
             gen_md=_NO_GENERATION,
@@ -161,8 +158,8 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
                 temperature=temperature,
                 max_tokens=1000,
             )
-            answer = (parsed.answer or "").strip() or (
-                "No tengo información suficiente para responder esto."
+            answer = (parsed.answer or "").strip() or fixed_reply(
+                "not_enough_information", messages
             )
             structured_md = {
                 "rag_uses_context": parsed.uses_context,
@@ -188,7 +185,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
                 max_tokens=1000,
                 node="search_docs",
             )
-            answer = resp.text.strip() or "No tengo información suficiente para responder esto."
+            answer = resp.text.strip() or fixed_reply("not_enough_information", messages)
         answer, _used = validate_citations(answer, len(included_chunks))
         llm_tokens_total.labels(model=resp.model, direction="input").inc(resp.tokens_input)
         llm_tokens_total.labels(model=resp.model, direction="output").inc(resp.tokens_output)
@@ -201,7 +198,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
     except Exception:
         errors_total.labels(type="rag_generation").inc()
         logger.exception("rag_generation_failed", model=model, chunks=len(chunks))
-        answer = "Tuve un problema generando la respuesta. Probá de nuevo en un momento."
+        answer = fixed_reply("generation_failed", messages)
         gen_md = {"generation_model": model}
 
     if settings.agent.citation_semantic_validation and included_chunks and answer:

@@ -37,6 +37,9 @@ Fixes from the November 2026 audit.
   `uv sync --frozen`.
 - The frontend container serves a production build (`vite preview`), not the
   dev server. The `/consulta` single-query page is linked from the navigation.
+- Answers written without the model (no documents, a failure, out of scope)
+  take the language of the user's message, and the generation prompts ask for
+  answers in that language. Summary headings are fixed, in English.
 
 ### Fixed
 
