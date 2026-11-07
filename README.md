@@ -4,7 +4,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> A self-hosted agentic RAG engine: it answers questions about your own documents with citations, and measures how good and how expensive those answers are. For teams that need answers from their own documentation, in a web chat or over WhatsApp, with numbers on quality and cost. What sets it apart: an eval suite with diffs between runs, the USD cost of each RAG answer, and a model chosen per graph node.
+> A self-hosted RAG engine with an intent-routed agent: it answers questions about your own documents with citations, and measures how good and how expensive those answers are. For teams that need answers from their own documentation, in a web chat or over WhatsApp, with numbers on quality and cost. What sets it apart: an eval suite with diffs between runs, the USD cost of each RAG answer, and a model chosen per graph node.
 
 > **Portfolio project — runs locally via Docker. No hosted deployment.** Clone, fill `.env`, `docker compose up`.
 
@@ -20,7 +20,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 
 ## Highlights
 
-- **Agentic RAG with LangGraph** — explicit state graph, 7 nodes (compaction, summarize, classifier, search, clarify, direct, out-of-scope). Each node testable in isolation; `AsyncPostgresSaver` handles persistence.
+- **Intent-routed RAG agent, single pass (LangGraph)** — a classifier sends each turn down one path: search, clarify, direct answer or out-of-scope. Search rewrites the question, retrieves once and generates; there is no loop or second retrieval, by design. 7 nodes in an explicit state graph (compaction and summary keep long threads bounded), each testable in isolation; `AsyncPostgresSaver` handles persistence.
 - **Hybrid retrieval** — vector cosine via pgvector + Postgres full-text search (OR over the question's stemmed terms, per-document language, accent-insensitive, ranked by `ts_rank_cd`), fused with Reciprocal Rank Fusion. Optional cross-encoder rerank (`bge-reranker-base`) + document-level MMR for diversity.
 - **Multi-provider routing** — Gemini 3.8 Flash for cheap hot-path nodes (classifier, query rewrite, direct answers); AWS Bedrock Claude for grounded RAG generation. Provider auto-detected from model ID; startup fails on a model ID that can't be routed.
 - **Token-level SSE streaming** — `astream_events` v2 + custom event dispatch. Frontend renders tokens as they arrive, with progress markers per node.

@@ -92,6 +92,12 @@ graph TB
 
 ## Sequence: agent chat (streaming)
 
+Each turn takes one path: the classifier picks one action and that node
+answers. `search_docs` rewrites the question, retrieves once and generates;
+there is no loop, retry or second retrieval, by design. Semantic citation
+validation and the structured `refused` flag are recorded in the turn
+metadata but do not change the answer.
+
 ```mermaid
 sequenceDiagram
   autonumber
