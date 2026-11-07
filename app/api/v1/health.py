@@ -32,9 +32,7 @@ async def health(deep: bool = False, db: AsyncSession = Depends(get_db)) -> dict
         return {"status": status, "checks": checks}
 
     try:
-        result = await db.execute(
-            text("SELECT extname FROM pg_extension WHERE extname = 'vector'")
-        )
+        result = await db.execute(text("SELECT extname FROM pg_extension WHERE extname = 'vector'"))
         checks["pgvector"] = "ok" if result.first() else "missing"
     except Exception as exc:
         logger.exception("health_pgvector_failed")

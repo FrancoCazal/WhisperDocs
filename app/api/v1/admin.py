@@ -17,7 +17,10 @@ async def get_settings() -> dict:
         "models": {
             "classifier": {"model": a.model_classifier, "temperature": a.temp_classifier},
             "query_rewrite": {"model": a.model_query_rewrite, "temperature": a.temp_query_rewrite},
-            "rag_generation": {"model": a.model_rag_generation, "temperature": a.temp_rag_generation},
+            "rag_generation": {
+                "model": a.model_rag_generation,
+                "temperature": a.temp_rag_generation,
+            },
             "clarification": {"model": a.model_clarification, "temperature": a.temp_clarification},
             "answer_direct": {"model": a.model_answer_direct, "temperature": a.temp_answer_direct},
             "summarize": {"model": a.model_summarize, "temperature": a.temp_summarize},
