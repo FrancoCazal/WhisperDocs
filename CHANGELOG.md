@@ -61,6 +61,7 @@ Fixes from the November 2026 audit.
 - A turn answered without a model call, or whose answer failed, reported the
   classifier's tokens as the answer's. The classifier's usage has its own
   metadata fields.
+- A failed answer no longer lists the retrieved chunks as its citations.
 
 ### CI
 

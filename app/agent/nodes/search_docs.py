@@ -251,8 +251,12 @@ def _turn_result(
     top_rel: float | None,
     failed: bool = False,
 ) -> dict:
-    """State update for the turn. A `failed` answer reports a failure: the
-    next prompts leave it out, and `/agent/chat` logs no query for it."""
+    """State update for the turn. A `failed` answer reports a failure: it
+    cites nothing, the next prompts leave it out, and `/agent/chat` logs no
+    query for it."""
+    # The chunks were retrieved (`chunks_retrieved` still counts them), but
+    # sources listed under "I had a problem…" would read as its sources.
+    cited = [] if failed else included_chunks
     citations = [
         {
             "chunk_id": c.chunk_id,
@@ -263,7 +267,7 @@ def _turn_result(
             "cosine": c.cosine,
             "text_preview": (c.text[:500] + "...") if len(c.text) > 500 else c.text,
         }
-        for c in included_chunks
+        for c in cited
     ]
     msg_metadata = {
         "model": gen_md.get("generation_model"),

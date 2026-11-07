@@ -65,6 +65,10 @@ async def test_a_generation_failure_is_marked_and_left_out_of_the_next_prompt(
     assert answer.content == fixed_reply("generation_failed", [question])
     assert answer.additional_kwargs[FAILED_TURN] is True
     assert result["metadata"]["turn_failed"] is True
+    # Retrieved, but listed under the failure they would read as its sources.
+    assert answer.additional_kwargs["citations"] == []
+    assert result["retrieved_chunks"] == []
+    assert result["metadata"]["retrieval_chunks_count"] == 1
 
     next_turn = {"messages": [question, answer, HumanMessage(content="Try again?")]}
     assert build_prompt_messages(next_turn) == [{"role": "user", "content": "Try again?"}]
