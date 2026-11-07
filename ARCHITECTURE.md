@@ -347,9 +347,17 @@ provider SDK.
    - Document-level penalty: `λ * relevance(c) − (1−λ) * I[doc(c) ∈ selected_docs]`
    - λ=1.0 → pure relevance; λ=0.0 → pure diversity
 
-Pool sizing: when reranking is active, `hybrid_retrieve` fetches
-`max(top_k, RERANKER_CANDIDATE_POOL=20)` candidates. Without reranking,
-`top_k` directly.
+Pool sizing: when reranking or MMR is active, the pipeline fetches
+`fetch_k = max(top_k, RERANKER_CANDIDATE_POOL)` candidates (20 by default);
+otherwise `fetch_k = top_k`. Each leg of the hybrid search returns
+`max(fetch_k, 20)` rows before fusion, so RRF always works from at least 20
+per leg, and a pool above 20 reaches the reranker in full.
+
+Context budget: `build_user_prompt` (`app/services/rag.py`) renders the
+numbered context block for `/query`, the eval and the agent's `search_docs`,
+and keeps the chunks that fit `AGENT_RAG_CONTEXT_TOKEN_BUDGET` (6000 tokens).
+Citations, citation validation and the eval's hallucination judge use those
+chunks; retrieval precision and recall use every retrieved chunk.
 
 Scores on `RetrievedChunk`: `relevance` is what the list is ordered by, 0-1:
 the RRF score divided by the best possible (1.0 = first in every leg that
@@ -415,6 +423,7 @@ Override per node via `AGENT_MODEL_<ALIAS>` env vars. Model rules live in
 
 The evaluator calls the retrieval pipeline and the single-turn RAG prompt
 (`app/services/rag.py`) directly; it does not run the agent graph. The
+retrieval, the prompt and its context budget are the ones the chat uses. The
 classifier, query rewrite and history handling are covered by the unit tests in
 `tests/agent/`. A run aborts (`EvalAbortedError`, exit code 2 from the CLI,
 HTTP 502 from `/eval/run`) when the share of failed judge calls exceeds

@@ -7,6 +7,9 @@ from sqlalchemy.orm import selectinload
 from app.models import Chunk, Document
 from app.services.fulltext import or_tsquery_sql
 
+# Rows each leg of the hybrid search returns before fusion.
+DEFAULT_CANDIDATE_POOL = 20
+
 
 @dataclass(frozen=True)
 class RetrievedChunk:
@@ -203,7 +206,7 @@ class VectorRetriever:
         collection_id: int | None = None,
         top_k: int = 5,
         k_rrf: int = 60,
-        candidate_pool: int = 20,
+        candidate_pool: int = DEFAULT_CANDIDATE_POOL,
     ) -> list[RetrievedChunk]:
         """Top `candidate_pool` from each leg, fused with RRF, cut to `top_k`.
 

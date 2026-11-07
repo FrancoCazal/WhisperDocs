@@ -18,7 +18,7 @@ from app.metrics import (
 )
 from app.services.embedder import EmbeddingService
 from app.services.llm import llm_service_for
-from app.services.rag import build_context_block, validate_citations
+from app.services.rag import build_user_prompt, validate_citations
 from app.services.retrieval_pipeline import retrieve as retrieve_pipeline
 from app.services.retriever import RetrievedChunk
 
@@ -93,13 +93,7 @@ async def search_docs_node(state: AgentState) -> dict:
     )
 
     # 3. Generation
-    if chunks:
-        context_block, included_chunks = build_context_block(
-            chunks, token_budget=settings.agent.rag_context_token_budget
-        )
-    else:
-        context_block, included_chunks = "(no context available)", []
-    rag_user_prompt = f"Context:\n\n{context_block}\n\n---\n\nQuestion: {last_user_msg}\n\nAnswer:"
+    rag_user_prompt, included_chunks = build_user_prompt(last_user_msg, chunks)
 
     provider, model, temperature = llm_service_for("rag")
     history_for_llm = build_prompt_messages(state, exclude_last=True)

@@ -110,7 +110,10 @@ class RAGEvaluator:
             tokens_in = 0
             tokens_out = 0
         else:
-            user_prompt = build_user_prompt(item.question, chunks)
+            # Same prompt and budget as the chat. Retrieval metrics below
+            # use every retrieved chunk; citations and the hallucination
+            # judge use the ones the model saw.
+            user_prompt, included = build_user_prompt(item.question, chunks)
             messages = [{"role": "user", "content": user_prompt}]
 
             if settings.agent.rag_structured_output:
@@ -143,13 +146,13 @@ class RAGEvaluator:
                 )
                 answer = llm_response.text
 
-            answer, _used = validate_citations(answer, len(chunks))
+            answer, _used = validate_citations(answer, len(included))
 
-            if settings.agent.citation_semantic_validation and answer and chunks:
+            if settings.agent.citation_semantic_validation and answer and included:
                 try:
                     validation = await validate_citations_semantic(
                         answer=answer,
-                        included_chunks=chunks,
+                        included_chunks=included,
                         embedder=self.embedder,
                         min_similarity=settings.agent.citation_semantic_min_similarity,
                     )
@@ -170,7 +173,7 @@ class RAGEvaluator:
 
         correctness, hallucination = await asyncio.gather(
             self.judge.judge_correctness(item, answer),
-            self.judge.judge_hallucination(answer, [c.text for c in chunks]),
+            self.judge.judge_hallucination(answer, [c.text for c in included]),
         )
 
         retrieved_sources = [c.document_title for c in chunks]

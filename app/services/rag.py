@@ -16,6 +16,7 @@ import re
 import tiktoken
 
 from app.agent.prompts import RAG_SYSTEM_PROMPT_AGENT
+from app.config import settings
 from app.logging_config import get_logger
 from app.services.retriever import RetrievedChunk
 
@@ -135,15 +136,21 @@ def build_context_block(
     return separator.join(used_blocks), used
 
 
-def build_user_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
+def build_user_prompt(
+    question: str, chunks: list[RetrievedChunk]
+) -> tuple[str, list[RetrievedChunk]]:
     """Build the user-message prompt: numbered context block + question.
 
-    Used by the legacy `/query` endpoint and the eval suite. The agent path
-    (`search_docs_node`) calls `build_context_block` directly so it can apply
-    a token budget against the agent's settings.
+    Shared by `/query`, the eval and the agent's `search_docs_node`, with the
+    same context budget (`rag_context_token_budget`), so the eval measures the
+    prompt the chat sends (audit R15). Returns the prompt and the chunks that
+    fit: the `[n]` citations index into that subset, not the input list.
     """
-    context_block, _ = build_context_block(chunks, token_budget=None)
-    return (
-        f"Context:\n\n{context_block}\n\n---\n\n"
-        f"Question: {question}\n\nAnswer:"
-    )
+    if not chunks:
+        context_block, included = "(no context available)", []
+    else:
+        context_block, included = build_context_block(
+            chunks, token_budget=settings.agent.rag_context_token_budget
+        )
+    prompt = f"Context:\n\n{context_block}\n\n---\n\nQuestion: {question}\n\nAnswer:"
+    return prompt, included

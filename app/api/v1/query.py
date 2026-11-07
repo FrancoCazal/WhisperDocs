@@ -75,7 +75,8 @@ async def query(
             ),
         )
 
-    user_prompt = build_user_prompt(payload.question, chunks)
+    # The citations index into the chunks that fit the context budget.
+    user_prompt, included = build_user_prompt(payload.question, chunks)
 
     try:
         llm_response = await provider.generate(
@@ -118,7 +119,7 @@ async def query(
                 relevance=c.relevance,
                 cosine=c.cosine,
             )
-            for c in chunks
+            for c in included
         ],
         metadata=QueryMetadata(
             model=llm_response.model,
