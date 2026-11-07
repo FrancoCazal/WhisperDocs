@@ -87,7 +87,9 @@ async def agent_chat(
 
     conv.last_active_at = func.now()
 
-    if action == "search_docs":
+    # A failed turn has no answer to log: the failure is in errors_total and
+    # the logs (audit N4).
+    if action == "search_docs" and not md.get("turn_failed"):
         gen_model = md.get("generation_model") or "agent"
         tin = md.get("generation_tokens_input", 0)
         tout = md.get("generation_tokens_output", 0)
@@ -255,7 +257,7 @@ async def agent_chat_stream(
             conv = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
             if conv is not None:
                 conv.last_active_at = func.now()
-                if action == "search_docs":
+                if action == "search_docs" and not md.get("turn_failed"):
                     gen_model = md.get("generation_model") or "agent"
                     tin = md.get("generation_tokens_input", 0)
                     tout = md.get("generation_tokens_output", 0)

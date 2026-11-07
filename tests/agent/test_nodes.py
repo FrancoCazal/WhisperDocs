@@ -12,6 +12,7 @@ import app.agent.nodes.search_docs as search_docs_module
 from app.agent.nodes.search_docs import search_docs_node
 from app.agent.nodes.summarize import summarize_node
 from app.agent.utils.fixed_replies import fixed_reply
+from app.agent.utils.messages import FAILED_TURN
 
 
 # ---------- check_compaction ----------
@@ -317,6 +318,9 @@ async def test_search_docs_empty_retrieval(
     assert len(result["messages"]) == 1
     assert isinstance(result["messages"][0], AIMessage)
     assert result["messages"][0].content == fixed_reply("no_documents", state["messages"])
+    # An empty collection is an answer, not a failure (audit N4).
+    assert FAILED_TURN not in result["messages"][0].additional_kwargs
+    assert result["metadata"]["turn_failed"] is False
     assert not _rag_calls(fake_provider)
     assert result["retrieved_chunks"] == []
     assert result["metadata"]["retrieval_chunks_count"] == 0
@@ -348,7 +352,9 @@ async def test_search_docs_retrieval_error_is_not_an_empty_collection(
     result = await search_docs_node({"messages": messages, "collection_id": None})
 
     assert result["messages"][0].content == fixed_reply("retrieval_failed", messages)
+    assert result["messages"][0].additional_kwargs[FAILED_TURN] is True
     assert result["metadata"]["retrieval_failed"] is True
+    assert result["metadata"]["turn_failed"] is True
     assert not _rag_calls(fake_provider)
     assert observed == []  # a failure is not a 0.0 relevance
 

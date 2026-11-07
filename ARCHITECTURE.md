@@ -135,7 +135,7 @@ sequenceDiagram
   else action == out_of_scope
     G-->>API: canned refusal (no LLM call)
   end
-  G->>DB: persist checkpoint + QueryLog
+  G->>DB: persist checkpoint + QueryLog (search_docs, unless it failed)
   G-->>API: final state
   API-->>U: SSE event: final { answer, citations, metadata }
 ```
@@ -323,8 +323,13 @@ not in `AgentState`: `config["configurable"]` carries `thread_id` and the
 request's `top_k`, which `search_docs` reads (`AGENT_RETRIEVAL_TOP_K` when
 absent).
 
-Answers written without a model (no documents, a failure, out of scope) take
-the language of the user's message (`app/agent/utils/fixed_replies.py`).
+An answer that reports a failure (retrieval or generation raised) carries
+`additional_kwargs["failed"]` and `metadata.turn_failed`. It stays in
+`messages`, so the thread shows what the user saw, but `format_messages` leaves
+that exchange out of every prompt, summary and query rewrite, and
+`/agent/chat` writes no `QueryLog` for it. Answers written without a model (no
+documents, a failure, out of scope) take the language of the user's message
+(`app/agent/utils/fixed_replies.py`).
 
 Each node is a pure async function `(AgentState) -> dict` returning only the
 fields it modifies; a node that needs the run config also takes

@@ -6,7 +6,7 @@ from app.agent.schemas import RAGAnswer
 from app.agent.state import AgentState
 from app.agent.utils.citation_validation import validate_citations_semantic
 from app.agent.utils.fixed_replies import FixedReply, fixed_reply
-from app.agent.utils.messages import build_prompt_messages
+from app.agent.utils.messages import build_prompt_messages, failed_answer
 from app.agent.utils.query_rewrite import rewrite_query_for_retrieval
 from app.agent.utils.streaming import stream_generate
 from app.config import settings
@@ -137,6 +137,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
             extra_md={"retrieval_failed": retrieval_failed},
             collection_id=collection_id,
             top_rel=top_rel,
+            failed=retrieval_failed,
         )
 
     # 3. Generation
@@ -147,6 +148,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
     history_for_llm.append({"role": "user", "content": rag_user_prompt})
 
     structured_md: dict = {}
+    generation_failed = False
 
     try:
         if settings.agent.rag_structured_output:
@@ -200,8 +202,14 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
         logger.exception("rag_generation_failed", model=model, chunks=len(chunks))
         answer = fixed_reply("generation_failed", messages)
         gen_md = {"generation_model": model}
+        generation_failed = True
 
-    if settings.agent.citation_semantic_validation and included_chunks and answer:
+    if (
+        settings.agent.citation_semantic_validation
+        and included_chunks
+        and answer
+        and not generation_failed
+    ):
         try:
             validation = await validate_citations_semantic(
                 answer=answer,
@@ -227,6 +235,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
         extra_md=structured_md,
         collection_id=collection_id,
         top_rel=top_rel,
+        failed=generation_failed,
     )
 
 
@@ -240,7 +249,10 @@ def _turn_result(
     extra_md: dict,
     collection_id: int | None,
     top_rel: float | None,
+    failed: bool = False,
 ) -> dict:
+    """State update for the turn. A `failed` answer reports a failure: the
+    next prompts leave it out, and `/agent/chat` logs no query for it."""
     citations = [
         {
             "chunk_id": c.chunk_id,
@@ -261,13 +273,14 @@ def _turn_result(
         "chunks_retrieved": len(chunks),
     }
     prev = state.get("metadata") or {}
+    kwargs = {"metadata": msg_metadata, "citations": citations}
+    message = (
+        failed_answer(answer, **kwargs)
+        if failed
+        else AIMessage(content=answer, additional_kwargs=kwargs)
+    )
     return {
-        "messages": [
-            AIMessage(
-                content=answer,
-                additional_kwargs={"metadata": msg_metadata, "citations": citations},
-            )
-        ],
+        "messages": [message],
         "retrieved_chunks": citations,
         "metadata": {
             **prev,
@@ -276,5 +289,6 @@ def _turn_result(
             "collection_id_active": collection_id,
             "retrieval_chunks_count": len(chunks),
             "retrieval_top_relevance": top_rel,
+            "turn_failed": failed,
         },
     }

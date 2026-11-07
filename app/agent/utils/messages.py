@@ -5,18 +5,44 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+# `additional_kwargs` key on an answer that reports a failure ("I had a
+# problem…"). The answer stays in state, so the thread shows what the user
+# saw, but no prompt, summary or query rewrite reads it (audit N4).
+FAILED_TURN = "failed"
+
+
+def failed_answer(content: str, **additional_kwargs: Any) -> AIMessage:
+    """An answer that reports a failure instead of answering."""
+    return AIMessage(content=content, additional_kwargs={**additional_kwargs, FAILED_TURN: True})
+
+
+def _without_failed_turns(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+    """Drop each failed answer together with the question it failed on.
+
+    Dropping the answer alone would leave two user turns in a row.
+    """
+    out: list[BaseMessage] = []
+    for m in messages:
+        if isinstance(m, AIMessage) and m.additional_kwargs.get(FAILED_TURN):
+            if out and isinstance(out[-1], HumanMessage):
+                out.pop()
+            continue
+        out.append(m)
+    return out
+
 
 def format_messages(messages: Sequence[BaseMessage]) -> list[dict]:
     """Convert LangChain messages to the [{"role","content"}] shape expected by LLMProvider.
 
-    Filters out messages with empty content. Maps:
+    Filters out messages with empty content, and failed turns (`FAILED_TURN`).
+    Maps:
       HumanMessage → "user"
       AIMessage    → "assistant"
       SystemMessage→ "system"
     Other message types are ignored (tool / function messages: out of scope V1).
     """
     out: list[dict] = []
-    for m in messages:
+    for m in _without_failed_turns(messages):
         content = getattr(m, "content", "")
         if not isinstance(content, str):
             # Handle list-of-blocks (Bedrock-style) by joining text parts

@@ -34,6 +34,7 @@ async def ask_clarification_node(state: AgentState) -> dict:
         }
     except Exception:
         logger.exception("ask_clarification_failed")
+        # Still a fair reply to a vague message, so not a failed turn.
         text = fixed_reply("clarify", state["messages"])
         md = {"generation_model": model}
 

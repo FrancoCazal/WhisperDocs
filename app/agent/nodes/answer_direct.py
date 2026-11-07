@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage
 from app.agent.prompts import ANSWER_DIRECT_SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.agent.utils.fixed_replies import fixed_reply
-from app.agent.utils.messages import build_prompt_messages
+from app.agent.utils.messages import build_prompt_messages, failed_answer
 from app.agent.utils.streaming import stream_generate
 from app.services.llm import llm_service_for
 
@@ -26,6 +26,7 @@ async def answer_direct_node(state: AgentState) -> dict:
             node="answer_direct",
         )
         text = resp.text.strip() or fixed_reply("greeting", state["messages"])
+        failed = False
         md = {
             "generation_model": resp.model,
             "generation_tokens_input": resp.tokens_input,
@@ -35,6 +36,7 @@ async def answer_direct_node(state: AgentState) -> dict:
     except Exception:
         logger.exception("answer_direct_failed")
         text = fixed_reply("generation_failed", state["messages"])
+        failed = True
         md = {"generation_model": model}
 
     msg_metadata = {
@@ -45,7 +47,10 @@ async def answer_direct_node(state: AgentState) -> dict:
         "chunks_retrieved": 0,
     }
     prev = state.get("metadata") or {}
-    return {
-        "messages": [AIMessage(content=text, additional_kwargs={"metadata": msg_metadata})],
-        "metadata": {**prev, **md},
-    }
+    kwargs = {"metadata": msg_metadata}
+    message = (
+        failed_answer(text, **kwargs)
+        if failed
+        else AIMessage(content=text, additional_kwargs=kwargs)
+    )
+    return {"messages": [message], "metadata": {**prev, **md, "turn_failed": failed}}

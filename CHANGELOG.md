@@ -52,6 +52,8 @@ Fixes from the November 2026 audit.
 - The eval averages retrieval over every in-scope query, and aborts when too
   many judge calls fail.
 - `GET /documents/jobs` answered 422 on every call.
+- A failed answer ("I had a problem…") stays in the thread but no longer
+  reaches later prompts, the summary or `query_logs`.
 
 ### CI
 

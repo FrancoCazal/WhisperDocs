@@ -14,6 +14,10 @@ class TurnMetadata(TypedDict, total=False):
     # True when embedding or retrieval raised: the turn was answered without
     # the model, and an empty result does not mean an empty collection.
     retrieval_failed: bool
+    # True when the answer reports a failure (retrieval or generation) instead
+    # of answering. Later prompts leave that exchange out, and no query log is
+    # written for it (audit N4).
+    turn_failed: bool
     generation_model: str | None
     generation_tokens_input: int
     generation_tokens_output: int
