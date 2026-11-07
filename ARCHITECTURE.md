@@ -112,7 +112,7 @@ sequenceDiagram
   G->>LLM: classifier (Gemini)
   LLM-->>G: AgentAction { search_docs | ask_clarification | answer_direct | out_of_scope }
   alt action == search_docs
-    G->>LLM: rewrite_query (if not self-contained)
+    G->>LLM: rewrite_query (from the second turn)
     G->>DB: hybrid_retrieve (vector + full-text + RRF)
     DB-->>G: top_k chunks (top_k from the request)
     opt reranker enabled

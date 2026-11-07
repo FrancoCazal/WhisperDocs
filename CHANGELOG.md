@@ -40,6 +40,8 @@ Fixes from the November 2026 audit.
 - Answers written without the model (no documents, a failure, out of scope)
   take the language of the user's message, and the generation prompts ask for
   answers in that language. Summary headings are fixed, in English.
+- The query rewrite no longer calls the model on a conversation's first
+  message, where there is nothing to resolve.
 
 ### Fixed
 
