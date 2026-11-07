@@ -10,8 +10,11 @@ class TurnMetadata(TypedDict, total=False):
     classifier_confidence: Literal["high", "medium", "low"]
     collection_id_active: int | None
     retrieval_chunks_count: int
-    retrieval_top_relevance: float
-    generation_model: str
+    retrieval_top_relevance: float | None
+    # True when embedding or retrieval raised: the turn was answered without
+    # the model, and an empty result does not mean an empty collection.
+    retrieval_failed: bool
+    generation_model: str | None
     generation_tokens_input: int
     generation_tokens_output: int
     generation_latency_ms: int

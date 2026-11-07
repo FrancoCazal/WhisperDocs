@@ -8,6 +8,7 @@ from app.agent.nodes.answer_direct import answer_direct_node
 from app.agent.nodes.ask_clarification import ask_clarification_node
 from app.agent.nodes.check_compaction import check_compaction_node
 from app.agent.nodes.decide_action import decide_action_node
+import app.agent.nodes.search_docs as search_docs_module
 from app.agent.nodes.search_docs import search_docs_node
 from app.agent.nodes.summarize import summarize_node
 
@@ -264,6 +265,12 @@ async def test_search_docs_top_relevance_is_the_best_cosine(
     assert [c["cosine"] for c in result["retrieved_chunks"]] == [None, 0.55]
 
 
+def _rag_calls(provider) -> list:
+    """Calls with the RAG system prompt: query rewrite may use the same fake."""
+    prompt = search_docs_module.RAG_SYSTEM_PROMPT_AGENT
+    return [c for c in provider.calls if c["kwargs"].get("system") == prompt]
+
+
 async def test_search_docs_empty_retrieval(
     fake_provider,
     mock_llm_service_for,
@@ -294,12 +301,73 @@ async def test_search_docs_empty_retrieval(
     }
     result = await search_docs_node(state)
 
+    # Nothing indexed in scope: a fixed answer, and no RAG call (audit A12).
     assert len(result["messages"]) == 1
     assert isinstance(result["messages"][0], AIMessage)
-    assert "No tengo información suficiente" in result["messages"][0].content
+    assert result["messages"][0].content == search_docs_module.NO_DOCUMENTS_ANSWER
+    assert not _rag_calls(fake_provider)
     assert result["retrieved_chunks"] == []
     assert result["metadata"]["retrieval_chunks_count"] == 0
-    assert result["metadata"]["retrieval_top_relevance"] == 0.0
+    assert result["metadata"]["retrieval_top_relevance"] is None
+    assert result["metadata"]["retrieval_failed"] is False
+    assert result["metadata"]["generation_tokens_input"] == 0
+
+
+async def test_search_docs_retrieval_error_is_not_an_empty_collection(
+    fake_provider,
+    mock_llm_service_for,
+    mock_embedder,
+    mock_session_local,
+    monkeypatch,
+):
+    async def broken_retrieve(**_kwargs):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(search_docs_module, "retrieve_pipeline", broken_retrieve)
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    monkeypatch.setattr(
+        "app.agent.utils.query_rewrite.llm_service_for",
+        lambda _n: (fake_provider, "fake", 0.0),
+    )
+    observed: list[float] = []
+    monkeypatch.setattr(search_docs_module.retrieval_top_relevance, "observe", observed.append)
+
+    result = await search_docs_node(
+        {"messages": [HumanMessage(content="¿algo?")], "collection_id": None}
+    )
+
+    assert result["messages"][0].content == search_docs_module.RETRIEVAL_FAILED_ANSWER
+    assert result["metadata"]["retrieval_failed"] is True
+    assert not _rag_calls(fake_provider)
+    assert observed == []  # a failure is not a 0.0 relevance
+
+
+async def test_search_docs_uses_the_top_k_the_client_sent(
+    fake_provider,
+    mock_llm_service_for,
+    mock_embedder,
+    mock_session_local,
+    rag_chunk,
+    monkeypatch,
+):
+    seen: list[int] = []
+
+    async def recording_retrieve(**kwargs):
+        seen.append(kwargs["top_k"])
+        return [rag_chunk(0, 0.8)]
+
+    monkeypatch.setattr(search_docs_module, "retrieve_pipeline", recording_retrieve)
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    monkeypatch.setattr(
+        "app.agent.utils.query_rewrite.llm_service_for",
+        lambda _n: (fake_provider, "fake", 0.0),
+    )
+    state = {"messages": [HumanMessage(content="¿quién es tino?")], "collection_id": None}
+
+    await search_docs_node(state, {"configurable": {"thread_id": "t", "top_k": 12}})
+    await search_docs_node(state)  # WhatsApp and direct calls send none
+
+    assert seen == [12, search_docs_module.settings.agent.retrieval_top_k]
 
 
 # ---------- summarize ----------

@@ -65,10 +65,10 @@ async def agent_chat(
             {
                 "messages": [HumanMessage(content=payload.message)],
                 "collection_id": conv.collection_id,
-                "top_k": payload.top_k,
             },
             config={
-                "configurable": {"thread_id": thread_id},
+                # top_k is per request, not conversation state (audit A6).
+                "configurable": {"thread_id": thread_id, "top_k": payload.top_k},
                 "recursion_limit": 10,
             },
         )
@@ -181,10 +181,9 @@ async def agent_chat_stream(
                 {
                     "messages": [HumanMessage(content=payload.message)],
                     "collection_id": active_collection_id,
-                    "top_k": payload.top_k,
                 },
                 config={
-                    "configurable": {"thread_id": thread_id},
+                    "configurable": {"thread_id": thread_id, "top_k": payload.top_k},
                     "recursion_limit": 10,
                 },
                 version="v2",

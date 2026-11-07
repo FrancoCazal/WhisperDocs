@@ -1,4 +1,5 @@
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 
 from app.agent.prompts import RAG_SYSTEM_PROMPT_AGENT
 from app.agent.schemas import RAGAnswer
@@ -24,13 +25,39 @@ from app.services.retriever import RetrievedChunk
 
 logger = get_logger(__name__)
 
+# Answers that need no model call (audit A12). The vector leg returns the
+# nearest chunks whatever their similarity, so an empty result means nothing
+# is indexed in scope, not that nothing was relevant.
+NO_DOCUMENTS_ANSWER = "No hay documentos indexados para responder esto."
+RETRIEVAL_FAILED_ANSWER = (
+    "No pude buscar en los documentos por un problema técnico. Probá de nuevo en un momento."
+)
+_NO_GENERATION = {
+    "generation_model": None,
+    "generation_tokens_input": 0,
+    "generation_tokens_output": 0,
+    "generation_latency_ms": 0,
+}
 
-async def search_docs_node(state: AgentState) -> dict:
+
+def _requested_top_k(config: RunnableConfig | None) -> int:
+    """`top_k` the client sent, in `config["configurable"]` (audit A6).
+
+    It is a per-request value, not conversation state, so it travels in the
+    run config and not in AgentState. WhatsApp and direct calls send none and
+    get `AGENT_RETRIEVAL_TOP_K`.
+    """
+    configurable = (config or {}).get("configurable") or {}
+    return configurable.get("top_k") or settings.agent.retrieval_top_k
+
+
+async def search_docs_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """Query rewrite → vector retrieval → grounded RAG generation with citations.
 
     Single LLM tool call: rewrites the user query for retrieval, fetches top-k
     chunks via pgvector, builds a grounded prompt, generates the answer with
     inline citations. Opens its own DB session — agent runs outside FastAPI request cycle.
+    Without chunks, or when retrieval fails, it answers without calling the model.
     """
     messages = state["messages"]
     covered = state.get("summary_covered_count") or 0
@@ -41,6 +68,7 @@ async def search_docs_node(state: AgentState) -> dict:
     )
     collection_id = state.get("collection_id")
     state_summary = state.get("summary")
+    top_k = _requested_top_k(config)
 
     # 1. Query rewrite
     retrieval_query = await rewrite_query_for_retrieval(
@@ -51,14 +79,16 @@ async def search_docs_node(state: AgentState) -> dict:
 
     # 2. Embedding + retrieval
     embedder = EmbeddingService()
+    chunks: list[RetrievedChunk] = []
+    retrieval_failed = False
     try:
         query_embedding = await embedder.embed(retrieval_query)
     except Exception:
+        errors_total.labels(type="embedding").inc()
         logger.exception("embedding_failed", node="search_docs")
-        query_embedding = None
+        retrieval_failed = True
 
-    chunks: list[RetrievedChunk] = []
-    if query_embedding is not None:
+    if not retrieval_failed:
         async with SessionLocal() as db:
             try:
                 chunks = await retrieve_pipeline(
@@ -66,7 +96,7 @@ async def search_docs_node(state: AgentState) -> dict:
                     query_text=retrieval_query,
                     query_embedding=query_embedding,
                     collection_id=collection_id,
-                    top_k=settings.agent.retrieval_top_k,
+                    top_k=top_k,
                 )
             except Exception:
                 errors_total.labels(type="retrieval").inc()
@@ -74,23 +104,42 @@ async def search_docs_node(state: AgentState) -> dict:
                     "retrieval_failed",
                     node="search_docs",
                     collection_id=collection_id,
-                    top_k=settings.agent.retrieval_top_k,
+                    top_k=top_k,
                 )
-                chunks = []
+                retrieval_failed = True
 
     # Best cosine among the results, not chunks[0].relevance: relevance is the
     # fused RRF score, relative by construction, while cosine says how close
-    # the best match is in absolute terms.
-    top_rel = max((c.cosine for c in chunks if c.cosine is not None), default=0.0)
-    retrieval_chunks.observe(len(chunks))
-    retrieval_top_relevance.observe(top_rel)
+    # the best match is in absolute terms. A failed retrieval, or one with no
+    # cosine at all, records nothing: a 0.0 there would read as "irrelevant".
+    cosines = [c.cosine for c in chunks if c.cosine is not None]
+    top_rel = max(cosines) if cosines else None
+    if not retrieval_failed:
+        retrieval_chunks.observe(len(chunks))
+        if top_rel is not None:
+            retrieval_top_relevance.observe(top_rel)
 
     logger.info(
         "retrieval_done",
         chunks=len(chunks),
         top_relevance=top_rel,
         collection_id=collection_id,
+        top_k=top_k,
+        failed=retrieval_failed,
     )
+
+    if retrieval_failed or not chunks:
+        answer = RETRIEVAL_FAILED_ANSWER if retrieval_failed else NO_DOCUMENTS_ANSWER
+        return _turn_result(
+            state,
+            answer=answer,
+            chunks=[],
+            included_chunks=[],
+            gen_md=_NO_GENERATION,
+            extra_md={"retrieval_failed": retrieval_failed},
+            collection_id=collection_id,
+            top_rel=top_rel,
+        )
 
     # 3. Generation
     rag_user_prompt, included_chunks = build_user_prompt(last_user_msg, chunks)
@@ -171,6 +220,29 @@ async def search_docs_node(state: AgentState) -> dict:
         except Exception:
             logger.exception("citation_semantic_validation_failed")
 
+    return _turn_result(
+        state,
+        answer=answer,
+        chunks=chunks,
+        included_chunks=included_chunks,
+        gen_md=gen_md,
+        extra_md=structured_md,
+        collection_id=collection_id,
+        top_rel=top_rel,
+    )
+
+
+def _turn_result(
+    state: AgentState,
+    *,
+    answer: str,
+    chunks: list[RetrievedChunk],
+    included_chunks: list[RetrievedChunk],
+    gen_md: dict,
+    extra_md: dict,
+    collection_id: int | None,
+    top_rel: float | None,
+) -> dict:
     citations = [
         {
             "chunk_id": c.chunk_id,
@@ -202,7 +274,7 @@ async def search_docs_node(state: AgentState) -> dict:
         "metadata": {
             **prev,
             **gen_md,
-            **structured_md,
+            **extra_md,
             "collection_id_active": collection_id,
             "retrieval_chunks_count": len(chunks),
             "retrieval_top_relevance": top_rel,

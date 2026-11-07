@@ -38,7 +38,9 @@ def has_pricing(model: str) -> bool:
 
 def estimate_cost_usd(model: str | None, tokens_input: int, tokens_output: int) -> float:
     """Return USD cost for a single LLM call. Falls back to a generic estimate."""
-    if not model:
+    if not model or not (tokens_input or tokens_output):
+        # No call was billed (a turn answered without the model, or a failed
+        # call): no lookup, and no unknown-model warning for placeholders.
         return 0.0
 
     pricing = _PRICING.get(model)

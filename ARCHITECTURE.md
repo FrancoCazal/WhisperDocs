@@ -114,17 +114,21 @@ sequenceDiagram
   alt action == search_docs
     G->>LLM: rewrite_query (if not self-contained)
     G->>DB: hybrid_retrieve (vector + full-text + RRF)
-    DB-->>G: top_k chunks
+    DB-->>G: top_k chunks (top_k from the request)
     opt reranker enabled
       G->>G: cross-encoder rerank → MMR
     end
-    G->>LLM: generate_stream(system, history + chunks)
-    loop per token
-      LLM-->>G: delta
-      G-->>API: dispatch_custom_event("agent_token", delta)
-      API-->>U: SSE event: token
+    alt no chunks, or retrieval failed
+      G-->>API: fixed answer (no LLM call)
+    else chunks
+      G->>LLM: generate_stream(system, history + chunks)
+      loop per token
+        LLM-->>G: delta
+        G-->>API: dispatch_custom_event("agent_token", delta)
+        API-->>U: SSE event: token
+      end
+      LLM-->>G: final
     end
-    LLM-->>G: final
   else action == answer_direct / ask_clarification
     G->>LLM: generate_stream
     LLM-->>G: tokens (streamed same way)
@@ -310,14 +314,19 @@ LangGraph checkpointer state lives in dedicated tables managed by
 between graph nodes. Splits into two lifetimes:
 
 - **Persistent** (survive across turns via checkpointer): `messages`,
-  `summary`, `pending_action`, `collection_id`, `metadata`, `user_number`,
-  `channel`, `notes_pinned`, `turn_count`.
-- **Transient** (reset by `check_compaction` each turn): `retrieved_chunks`,
-  `top_k`.
+  `summary`, `summary_covered_count`, `collection_id`.
+- **Transient** (reset by `check_compaction` each turn): `pending_action`,
+  `retrieved_chunks`, `metadata`.
+
+Per-request values that are not conversation state travel in the run config,
+not in `AgentState`: `config["configurable"]` carries `thread_id` and the
+request's `top_k`, which `search_docs` reads (`AGENT_RETRIEVAL_TOP_K` when
+absent).
 
 Each node is a pure async function `(AgentState) -> dict` returning only the
-fields it modifies. The graph wires nodes in `app/agent/graph.py`; nodes never
-import each other directly. Nodes reach an LLM only through
+fields it modifies; a node that needs the run config also takes
+`config: RunnableConfig`. The graph wires nodes in `app/agent/graph.py`; nodes
+never import each other directly. Nodes reach an LLM only through
 `llm_service_for(alias)` and the `LLMProvider` interface, never through a
 provider SDK.
 
