@@ -1,11 +1,12 @@
 """LangChain ↔ provider message format conversion."""
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 
-def format_messages(messages: list[BaseMessage]) -> list[dict]:
+def format_messages(messages: Sequence[BaseMessage]) -> list[dict]:
     """Convert LangChain messages to the [{"role","content"}] shape expected by LLMProvider.
 
     Filters out messages with empty content. Maps:
@@ -57,7 +58,7 @@ def drop_leading_assistant(formatted: list[dict]) -> list[dict]:
     return formatted[start:]
 
 
-def build_prompt_messages(state: dict[str, Any], *, exclude_last: bool = False) -> list[dict]:
+def build_prompt_messages(state: Mapping[str, Any], *, exclude_last: bool = False) -> list[dict]:
     """Build the message list a generation/classifier node should send to its LLM.
 
     Compaction no longer mutates `messages` — old turns stay in state and the

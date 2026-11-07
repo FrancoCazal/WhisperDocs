@@ -481,8 +481,10 @@ A/B run.
   `generate_stream` stub that yields the canned response.
 - **Service** — `test_chunker.py`, `test_reranker.py`, `test_mmr.py` exercise
   pure-function services without DB.
-- **Integration (TODO)** — `pytest-postgresql` / testcontainers wiring not yet
-  in CI.
+- **Database** — `test_retrieval_db.py` and one test in `test_ingestion_jobs.py`
+  run against a real Postgres when `TEST_DATABASE_URL` is set: full-text,
+  HNSW, collection filters, job cleanup. CI sets it, against a
+  `pgvector/pgvector` service migrated with `alembic upgrade head`.
 - **E2E** — Eval suite acts as integration: ingest fixture corpus, query, judge.
 
 `tests/agent/conftest.py::mock_retriever` patches both

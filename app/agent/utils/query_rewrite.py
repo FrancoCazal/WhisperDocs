@@ -5,6 +5,7 @@ optimized for vector retrieval. Resolves elliptical follow-ups.
 """
 
 import re
+from collections.abc import Sequence
 
 from langchain_core.messages import BaseMessage
 
@@ -39,7 +40,7 @@ def _is_self_contained(query: str) -> bool:
 
 
 async def rewrite_query_for_retrieval(
-    history: list[BaseMessage],
+    history: Sequence[BaseMessage],
     current: str,
     *,
     summary: str | None = None,

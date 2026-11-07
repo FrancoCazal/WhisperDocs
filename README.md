@@ -274,6 +274,15 @@ TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test
 
 Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), database (`tests/test_retrieval_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`).
 
+CI (`.github/workflows/tests.yml`) runs, on every push to `main` and every pull request:
+- `pre-commit run --all-files`: ruff, ruff format and file hygiene;
+- gitleaks over the full history;
+- pip-audit over every locked package;
+- mypy (`app/agent`, `app/eval` and what they import);
+- the full suite against a pgvector Postgres service, database tests included.
+
+Dependabot proposes weekly updates for Python, npm, GitHub Actions and Docker images.
+
 ---
 
 ## Project layout

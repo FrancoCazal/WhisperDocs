@@ -62,8 +62,9 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
     messages = state["messages"]
     covered = state.get("summary_covered_count") or 0
     uncovered = messages[covered:]
+    # `.text`, not `.content`: content can be a list of blocks.
     last_user_msg = next(
-        (m.content for m in reversed(messages) if isinstance(m, HumanMessage)),
+        (m.text for m in reversed(messages) if isinstance(m, HumanMessage)),
         "",
     )
     collection_id = state.get("collection_id")
@@ -73,7 +74,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
     # 1. Query rewrite
     retrieval_query = await rewrite_query_for_retrieval(
         history=uncovered,
-        current=str(last_user_msg),
+        current=last_user_msg,
         summary=state_summary,
     )
 

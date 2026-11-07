@@ -61,6 +61,19 @@ rerank = [
 line-length = 100
 target-version = "py312"
 
+[tool.mypy]
+# Gradual: the agent and the eval, plus every app module they import, which
+# mypy follows and reports. Default strictness; widen `files` as it stays green.
+python_version = "3.12"
+files = ["app/agent", "app/eval"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# No type information: boto3/botocore ship no stubs, and sentence-transformers
+# is an optional extra.
+module = ["boto3", "boto3.*", "botocore", "botocore.*", "sentence_transformers"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

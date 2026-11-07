@@ -55,7 +55,9 @@ async def init_checkpointer() -> AsyncPostgresSaver:
         )
         await _pool.open()
 
-        _checkpointer = AsyncPostgresSaver(conn=_pool)
+        # The annotation wants dict_row connections; the saver sets dict_row
+        # on every cursor it opens, so tuple-row connections work the same.
+        _checkpointer = AsyncPostgresSaver(conn=_pool)  # type: ignore[arg-type]
         await _checkpointer.setup()
     except Exception:
         # Never log the DSN: it carries the database user and password.

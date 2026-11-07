@@ -146,8 +146,9 @@ def build_user_prompt(
     prompt the chat sends (audit R15). Returns the prompt and the chunks that
     fit: the `[n]` citations index into that subset, not the input list.
     """
+    included: list[RetrievedChunk] = []
     if not chunks:
-        context_block, included = "(no context available)", []
+        context_block = "(no context available)"
     else:
         context_block, included = build_context_block(
             chunks, token_budget=settings.agent.rag_context_token_budget
