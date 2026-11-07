@@ -1,6 +1,6 @@
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -132,9 +132,9 @@ async def query(
 
 @router.get("/history", response_model=Page[QueryLogRead])
 async def query_history(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = None,
-    session_id: str | None = None,
+    session_id: str | None = Query(default=None, max_length=50),
     db: AsyncSession = Depends(get_db),
 ) -> Page[QueryLogRead]:
     q = select(QueryLog).order_by(QueryLog.id.desc()).limit(limit + 1)

@@ -3,7 +3,17 @@ import hashlib
 import json
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +42,8 @@ from app.services.ingestion import (
 )
 from app.services.text_extractor import (
     EmptyDocumentError,
-    UnsupportedFileTypeError,
+    UnreadableDocumentError,
+    check_content,
     detect_file_type,
 )
 
@@ -40,7 +51,60 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+MB = 1024 * 1024
+MAX_UPLOAD_BYTES = 10 * MB
+MAX_BATCH_FILES = 20
+MAX_BATCH_BYTES = 50 * MB
+# `documents.filename`, `documents.title` and their ingestion_jobs columns are String(300).
+MAX_NAME_LENGTH = 300
+_MULTIPART_OVERHEAD = 64 * 1024  # boundaries, part headers and the form fields
+
+# Request body limits, enforced by BodySizeLimitMiddleware before the form is
+# parsed. Paths are relative to this router's mount point.
+BODY_LIMITS = {
+    "/documents/upload": MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD,
+    "/documents/upload-async": MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD,
+    "/documents/upload-batch": MAX_BATCH_BYTES + _MULTIPART_OVERHEAD,
+}
+
+
+class FileTooLargeError(ValueError):
+    pass
+
+
+async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
+    """Validate an uploaded file and read it. Returns (filename, file_type, bytes).
+
+    Raises a ValueError subclass for every rejection; `_upload_error` maps
+    them to status codes. Reads at most one byte past the limit, so an
+    oversized part is not loaded whole.
+    """
+    filename = file.filename or "untitled"
+    if len(filename) > MAX_NAME_LENGTH:
+        raise ValueError(f"Filename is longer than {MAX_NAME_LENGTH} characters")
+    file_type = detect_file_type(filename)
+    file_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(file_bytes) == 0:
+        raise ValueError("Uploaded file is empty")
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise FileTooLargeError(f"File exceeds maximum size of {MAX_UPLOAD_BYTES // MB} MB")
+    check_content(file_bytes, file_type)
+    return filename, file_type, file_bytes
+
+
+def _upload_error(exc: Exception) -> HTTPException:
+    """Status code for an upload rejection. The subclasses go before ValueError."""
+    if isinstance(exc, FileTooLargeError):
+        code = status.HTTP_413_CONTENT_TOO_LARGE
+    elif isinstance(exc, (EmptyDocumentError, UnreadableDocumentError)):
+        code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    elif isinstance(exc, EmbeddingError):
+        code = status.HTTP_502_BAD_GATEWAY
+    elif isinstance(exc, ValueError):  # includes UnsupportedFileTypeError
+        code = status.HTTP_400_BAD_REQUEST
+    else:
+        raise exc
+    return HTTPException(status_code=code, detail=str(exc))
 
 
 async def _ingest_single(
@@ -50,13 +114,7 @@ async def _ingest_single(
     db: AsyncSession,
     embedder: EmbeddingService,
 ) -> Document:
-    file_type = detect_file_type(file.filename or "")
-    file_bytes = await file.read()
-    if len(file_bytes) == 0:
-        raise ValueError("Uploaded file is empty")
-    if len(file_bytes) > MAX_UPLOAD_BYTES:
-        raise ValueError(f"File exceeds maximum size of {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
-
+    filename, file_type, file_bytes = await _read_upload(file)
     raw_text = await extract_text_in_thread(file_bytes, file_type)
     chunks_data, language = await chunk_text_in_thread(raw_text)
     if not chunks_data:
@@ -93,8 +151,8 @@ async def _ingest_single(
 
     document = Document(
         collection_id=collection_id,
-        title=title or (file.filename or "untitled"),
-        filename=file.filename or "untitled",
+        title=title or filename,
+        filename=filename,
         file_type=file_type,
         raw_text=raw_text,
         chunk_count=len(fresh),
@@ -124,7 +182,7 @@ async def _ingest_single(
 @router.post("/upload", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
 async def upload_document(
     collection_id: int = Form(...),
-    title: str | None = Form(None),
+    title: str | None = Form(None, max_length=MAX_NAME_LENGTH),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     embedder: EmbeddingService = Depends(get_embedder),
@@ -138,14 +196,8 @@ async def upload_document(
 
     try:
         return await _ingest_single(file, collection_id, title, db, embedder)
-    except UnsupportedFileTypeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    except EmptyDocumentError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
-    except EmbeddingError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    except (ValueError, EmbeddingError) as exc:
+        raise _upload_error(exc) from exc
 
 
 @router.post("/upload-batch", response_model=BatchUploadResponse)
@@ -161,6 +213,12 @@ async def upload_documents_batch(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Collection {collection_id} not found",
+        )
+
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"At most {MAX_BATCH_FILES} files per batch, got {len(files)}",
         )
 
     results: list[BatchUploadItem] = []
@@ -197,7 +255,7 @@ async def upload_documents_batch(
 @router.get("", response_model=Page[DocumentRead])
 async def list_documents(
     collection_id: int | None = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> Page[DocumentRead]:
@@ -216,7 +274,7 @@ async def list_documents(
     )
 
 
-@router.get("/{document_id}", response_model=DocumentDetail)
+@router.get("/{document_id:int}", response_model=DocumentDetail)
 async def get_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
@@ -227,7 +285,7 @@ async def get_document(
     return document
 
 
-@router.get("/{document_id}/chunks", response_model=list[ChunkRead])
+@router.get("/{document_id:int}/chunks", response_model=list[ChunkRead])
 async def list_document_chunks(
     document_id: int,
     db: AsyncSession = Depends(get_db),
@@ -241,7 +299,7 @@ async def list_document_chunks(
     return list(result.scalars().all())
 
 
-@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{document_id:int}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
@@ -343,7 +401,7 @@ async def bulk_move_documents(
 )
 async def upload_document_async(
     collection_id: int = Form(...),
-    title: str | None = Form(None),
+    title: str | None = Form(None, max_length=MAX_NAME_LENGTH),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ) -> IngestionJobCreate:
@@ -359,22 +417,10 @@ async def upload_document_async(
         )
 
     try:
-        file_type = detect_file_type(file.filename or "")
-    except UnsupportedFileTypeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        filename, file_type, file_bytes = await _read_upload(file)
+    except ValueError as exc:
+        raise _upload_error(exc) from exc
 
-    file_bytes = await file.read()
-    if len(file_bytes) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty"
-        )
-    if len(file_bytes) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File exceeds maximum size of {MAX_UPLOAD_BYTES // (1024 * 1024)} MB",
-        )
-
-    filename = file.filename or "untitled"
     job_id = await create_job(
         filename=filename,
         file_type=file_type,
@@ -405,7 +451,7 @@ async def get_ingestion_job(
 @router.get("/jobs", response_model=list[IngestionJobRead])
 async def list_ingestion_jobs(
     collection_id: int | None = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ) -> list[IngestionJob]:
     query = select(IngestionJob).order_by(IngestionJob.created_at.desc()).limit(limit)

@@ -137,7 +137,7 @@ async def test_sync_upload_does_not_block_the_loop(blocking_extractor):
     class _Upload:
         filename = "doc.md"
 
-        async def read(self) -> bytes:
+        async def read(self, _size: int = -1) -> bytes:
             return b"# Title"
 
     gap, document = await _max_loop_gap(

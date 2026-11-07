@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.db import SessionLocal
@@ -58,7 +58,7 @@ async def run_evaluation(
 
 
 @router.get("/results")
-async def list_results(limit: int = 20) -> list[dict]:
+async def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
     if not RESULTS_DIR.exists():
         return []
     files = sorted(RESULTS_DIR.glob("*.json"), reverse=True)[:limit]

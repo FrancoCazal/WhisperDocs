@@ -135,6 +135,7 @@ See `.env.example` for every knob.
 | `POST` | `/api/v1/documents/upload` | Sync ingest (small docs) |
 | `POST` | `/api/v1/documents/upload-batch` | Sync batch ingest |
 | `POST` | `/api/v1/documents/upload-async` | Async ingest, returns `job_id` |
+| `GET` | `/api/v1/documents/jobs` | List ingestion jobs |
 | `GET` | `/api/v1/documents/jobs/{job_id}/stream` | SSE: ingestion progress |
 | `POST` | `/api/v1/documents/bulk-delete` | Delete many documents |
 | `POST` | `/api/v1/documents/bulk-move` | Move documents between collections |
@@ -148,6 +149,12 @@ See `.env.example` for every knob.
 | `DELETE` | `/api/v1/conversations/{thread_id}` | Delete conversation |
 | `GET` | `/api/v1/notes` | List saved notes |
 | `DELETE` | `/api/v1/notes/{note_id}` | Delete saved note |
+
+Uploads accept PDF, Markdown and plain text, up to 10 MB per file. Batches
+take up to 20 files and 50 MB in total. A larger body is rejected with 413
+before it is parsed. A `.pdf` must carry the PDF header, a `.md` or `.txt`
+must not contain binary data, and file names and titles are capped at 300
+characters. List endpoints take `limit` between 1 and 200.
 | `POST` | `/api/v1/webhook/whatsapp` | Twilio inbound webhook |
 | `POST` | `/api/v1/webhook/whatsapp/status` | Twilio delivery-status callback |
 | `POST` | `/api/v1/eval/run` | Eval suite |
@@ -256,14 +263,14 @@ hybrid was vector-only in practice. Details, and why MMR at the default λ costs
 
 ```bash
 pytest tests/ -q
-# 113 passed, 9 skipped
+# 138 passed, 9 skipped
 
 # Database tests (full-text, HNSW, job cleanup) against a real Postgres, migrated with `alembic upgrade head`:
 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test pytest tests/ -q
-# 122 passed
+# 147 passed
 ```
 
-Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), database (`tests/test_retrieval_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`).
+Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), database (`tests/test_retrieval_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`).
 
 ---
 

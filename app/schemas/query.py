@@ -7,7 +7,9 @@ class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     collection_id: int | None = None
     top_k: int = Field(default=5, ge=1, le=20)
-    session_id: str | None = None
+    # query_logs.session_id is String(50); longer failed the commit with a 500
+    # after the LLM call was already paid for.
+    session_id: str | None = Field(default=None, max_length=50)
 
 
 class Citation(BaseModel):

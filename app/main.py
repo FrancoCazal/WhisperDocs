@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent.checkpointer import close_checkpointer, init_checkpointer
+from app.api.body_limit import BodySizeLimitMiddleware
 from app.agent.graph import build_agent_graph
 from app.config import settings
 from app.logging_config import configure_logging, get_logger
@@ -79,6 +80,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+API_PREFIX = "/api/v1"
+
+# Added before CORS so that CORS wraps it: a 413 sent from here still carries
+# the CORS headers, and the browser shows the 413 instead of a CORS error.
+app.add_middleware(
+    BodySizeLimitMiddleware,
+    limits={API_PREFIX + path: limit for path, limit in documents.BODY_LIMITS.items()},
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,
@@ -87,14 +96,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health.router, prefix="/api/v1")
-app.include_router(metrics_route.router, prefix="/api/v1")
-app.include_router(admin.router, prefix="/api/v1")
-app.include_router(collections.router, prefix="/api/v1")
-app.include_router(documents.router, prefix="/api/v1")
-app.include_router(query.router, prefix="/api/v1")
-app.include_router(eval.router, prefix="/api/v1")
-app.include_router(agent.router, prefix="/api/v1")
-app.include_router(conversations.router, prefix="/api/v1")
-app.include_router(notes.router, prefix="/api/v1")
-app.include_router(webhook_whatsapp.router, prefix="/api/v1")
+app.include_router(health.router, prefix=API_PREFIX)
+app.include_router(metrics_route.router, prefix=API_PREFIX)
+app.include_router(admin.router, prefix=API_PREFIX)
+app.include_router(collections.router, prefix=API_PREFIX)
+app.include_router(documents.router, prefix=API_PREFIX)
+app.include_router(query.router, prefix=API_PREFIX)
+app.include_router(eval.router, prefix=API_PREFIX)
+app.include_router(agent.router, prefix=API_PREFIX)
+app.include_router(conversations.router, prefix=API_PREFIX)
+app.include_router(notes.router, prefix=API_PREFIX)
+app.include_router(webhook_whatsapp.router, prefix=API_PREFIX)
