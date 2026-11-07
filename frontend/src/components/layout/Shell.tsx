@@ -5,6 +5,7 @@ import { fmtTimestamp } from "@/lib/api";
 const NAV_ITEMS = [
   { to: "/", label: "OVERVIEW", glyph: "▦" },
   { to: "/chat", label: "CHAT", glyph: "◆" },
+  { to: "/consulta", label: "QUERY", glyph: "◇" },
   { to: "/colecciones", label: "COLLECTIONS", glyph: "▣" },
   { to: "/documentos", label: "DOCUMENTS", glyph: "▤" },
   { to: "/historial", label: "HISTORY", glyph: "◷" },
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
 const ROUTE_LABELS: Record<string, string> = {
   "/": "SYSTEM_OVERVIEW",
   "/chat": "CHAT // AGENT_THREAD",
+  "/consulta": "QUERY // SINGLE_TURN_RAG",
   "/colecciones": "COLLECTIONS // NAMESPACES",
   "/documentos": "DOCUMENTS // CORPUS_INDEX",
   "/historial": "HISTORY // QUERY_LOG",

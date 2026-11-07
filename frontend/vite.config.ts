@@ -6,4 +6,9 @@
 // You can pass additional config via defineConfig({ vite: { ... } }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-export default defineConfig();
+// The default build targets Cloudflare Workers (wrangler.jsonc). The Docker
+// image builds for Node instead (BUILD_TARGET=node) and serves the result with
+// `vite preview`, which runs dist/server/server.js.
+export default defineConfig({
+  cloudflare: process.env.BUILD_TARGET === "node" ? false : undefined,
+});

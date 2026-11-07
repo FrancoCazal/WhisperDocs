@@ -41,17 +41,16 @@ services:
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
+  # A production build. For hot reload, run `npm run dev` in frontend/ instead.
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
     depends_on:
       - api
-    environment:
-      VITE_API_BASE_URL: http://localhost:8000
     ports:
       - "8080:8080"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
 
 volumes:
   pgdata:
