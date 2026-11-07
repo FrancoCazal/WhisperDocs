@@ -188,6 +188,18 @@ allocated at startup (`gc.freeze()` in the lifespan) brought the longest pause
 from about 300 ms to about 150 ms. Removing it would mean parsing in a separate
 process.
 
+The uploaded bytes live only in the API process's memory, so a job cannot
+outlive the process:
+- Running jobs are kept in a set until they end. asyncio holds tasks only by
+  weak reference, and a task nobody held could be collected mid-way.
+- On shutdown, jobs get 5 s to finish (under Docker's 10 s stop timeout).
+  Then they are cancelled and marked `failed`, with a message to upload the
+  file again.
+- On startup, jobs still unfinished in the table (left by a process that was
+  killed) are marked `failed` the same way. This assumes one process runs
+  ingestion, as compose and the Dockerfile do.
+- Persisting the bytes and retrying would need a job queue.
+
 ---
 
 ## Data model

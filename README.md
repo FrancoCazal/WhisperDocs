@@ -24,7 +24,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 - **Hybrid retrieval** — vector cosine via pgvector + Postgres full-text search (OR over the question's stemmed terms, per-document language, accent-insensitive, ranked by `ts_rank_cd`), fused with Reciprocal Rank Fusion. Optional cross-encoder rerank (`bge-reranker-base`) + document-level MMR for diversity.
 - **Multi-provider routing** — Gemini 3.8 Flash for cheap hot-path nodes (classifier, query rewrite, direct answers); AWS Bedrock Claude for grounded RAG generation. Provider auto-detected from model ID; startup fails on a model ID that can't be routed.
 - **Token-level SSE streaming** — `astream_events` v2 + custom event dispatch. Frontend renders tokens as they arrive, with progress markers per node.
-- **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE.
+- **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE. Parsing runs off the event loop, and a job cut short by a restart ends as `failed`, not stuck.
 - **Eval suite (50-query golden set)** — single-turn retrieval + generation path. LLM-as-judge for correctness + hallucination, retrieval precision/recall@k, latency p50/p95, generation cost USD. Diff between runs for regression detection.
 - **Cost tracking** — per-call USD via `pricing.py`, persisted on `query_logs`. Single source for runner, API, dashboard.
 - **Structured logging + metrics** — `structlog` JSON output, Prometheus `/metrics` (turn duration, tokens, retrieval relevance, errors).
@@ -256,14 +256,14 @@ hybrid was vector-only in practice. Details, and why MMR at the default λ costs
 
 ```bash
 pytest tests/ -q
-# 110 passed, 8 skipped
+# 113 passed, 9 skipped
 
-# Full-text and HNSW tests against a real Postgres, migrated with `alembic upgrade head`:
+# Database tests (full-text, HNSW, job cleanup) against a real Postgres, migrated with `alembic upgrade head`:
 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test pytest tests/ -q
-# 118 passed
+# 122 passed
 ```
 
-Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`), database (`tests/test_retrieval_db.py`, skipped without `TEST_DATABASE_URL`).
+Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), database (`tests/test_retrieval_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`).
 
 ---
 

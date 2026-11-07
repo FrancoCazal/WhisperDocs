@@ -15,6 +15,7 @@ from app.agent.checkpointer import close_checkpointer, init_checkpointer
 from app.agent.graph import build_agent_graph
 from app.config import settings
 from app.logging_config import configure_logging, get_logger
+from app.services.ingestion import fail_interrupted_jobs, stop_ingestions
 from app.services.llm import validate_agent_models
 from app.api.v1 import (
     admin,
@@ -49,6 +50,9 @@ def _check_agent_models() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _check_agent_models()
+    interrupted = await fail_interrupted_jobs()
+    if interrupted:
+        logger.warning("ingestion_jobs_interrupted", count=interrupted)
     checkpointer = await init_checkpointer()
     app.state.checkpointer = checkpointer
     app.state.agent = build_agent_graph().compile(checkpointer=checkpointer)
@@ -62,6 +66,9 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         gc.unfreeze()
+        cancelled = await stop_ingestions()
+        if cancelled:
+            logger.warning("ingestion_jobs_cancelled_on_shutdown", count=cancelled)
         await close_checkpointer()
 
 
