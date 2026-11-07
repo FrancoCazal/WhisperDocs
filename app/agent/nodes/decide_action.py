@@ -35,7 +35,7 @@ async def decide_action_node(state: AgentState) -> dict:
             "metadata": {
                 "classifier_reason": "classifier_failure_fallback",
                 "classifier_confidence": "low",
-                "generation_model": model,
+                "classifier_model": model,
             },
         }
 
@@ -65,9 +65,12 @@ async def decide_action_node(state: AgentState) -> dict:
         "metadata": {
             "classifier_reason": parsed.reason,
             "classifier_confidence": parsed.confidence,
-            "generation_model": resp.model,
-            "generation_tokens_input": resp.tokens_input,
-            "generation_tokens_output": resp.tokens_output,
-            "generation_latency_ms": resp.latency_ms,
+            # Its own fields: in `generation_*`, a turn whose answer took no
+            # model call, or failed, reported the classifier's usage as the
+            # answer's.
+            "classifier_model": resp.model,
+            "classifier_tokens_input": resp.tokens_input,
+            "classifier_tokens_output": resp.tokens_output,
+            "classifier_latency_ms": resp.latency_ms,
         },
     }

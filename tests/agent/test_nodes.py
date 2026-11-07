@@ -78,6 +78,10 @@ async def test_decide_action_classifies_search(
     assert result["pending_action"] == "search_docs"
     assert result["metadata"]["classifier_reason"] == "technical"
     assert result["metadata"]["classifier_confidence"] == "high"
+    # Its usage in its own fields, not in the answer's generation_*.
+    assert result["metadata"]["classifier_model"] == "fake-classifier"
+    assert result["metadata"]["classifier_tokens_input"] == 50
+    assert not any(k.startswith("generation_") for k in result["metadata"])
 
 
 async def test_decide_action_classifies_direct(

@@ -8,6 +8,10 @@ class TurnMetadata(TypedDict, total=False):
 
     classifier_reason: str
     classifier_confidence: Literal["high", "medium", "low"]
+    classifier_model: str
+    classifier_tokens_input: int
+    classifier_tokens_output: int
+    classifier_latency_ms: int
     collection_id_active: int | None
     retrieval_chunks_count: int
     retrieval_top_relevance: float | None

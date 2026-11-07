@@ -58,6 +58,9 @@ Fixes from the November 2026 audit.
 - `GET /documents/jobs` answered 422 on every call.
 - A failed answer ("I had a problem…") stays in the thread but no longer
   reaches later prompts, the summary or `query_logs`.
+- A turn answered without a model call, or whose answer failed, reported the
+  classifier's tokens as the answer's. The classifier's usage has its own
+  metadata fields.
 
 ### CI
 

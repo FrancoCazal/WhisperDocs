@@ -139,6 +139,26 @@ async def test_graph_routes_to_search_docs_with_rag(
     assert result["metadata"]["retrieval_chunks_count"] == 2
 
 
+async def test_a_turn_without_generation_reports_no_generation_tokens(
+    compiled_agent,
+    fake_provider,
+    classifier_response,
+    monkeypatch,
+):
+    """Out of scope calls only the classifier: its tokens are not the answer's."""
+    _stub_all_nodes(monkeypatch, fake_provider, classifier_response, action="out_of_scope")
+    cfg = {"configurable": {"thread_id": "oos-tokens"}, "recursion_limit": 10}
+
+    result = await compiled_agent.ainvoke(
+        {"messages": [HumanMessage(content="What is the weather in Madrid?")]}, config=cfg
+    )
+
+    md = result["metadata"]
+    assert md["generation_model"] is None
+    assert md.get("generation_tokens_input", 0) == 0
+    assert md["classifier_tokens_input"] == 50
+
+
 # ---------- multi-turn memory ----------
 
 
