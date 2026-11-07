@@ -307,7 +307,9 @@ provider SDK.
 1. **Hybrid fetch** — `VectorRetriever.hybrid_retrieve(query_text, query_embedding, ...)`
    - Vector search via cosine distance + HNSW index on `chunks.embedding`,
      with `hnsw.iterative_scan = relaxed_order` so the collection filter
-     cannot starve the scan (needs pgvector >= 0.8.0; see ADR 0002)
+     does not starve the scan (needs pgvector >= 0.8.0). When a filtered
+     search still returns fewer than `top_k` rows, it is repeated as an
+     exact scan of the collection's chunks; see ADR 0002
    - Full-text search (`VectorRetriever.lexical_retrieve`): OR over the
      question's lexemes, ranked by `ts_rank_cd` (Postgres cover-density
      ranking, not BM25). `chunks.tsv` is generated with the configuration of

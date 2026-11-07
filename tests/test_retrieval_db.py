@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.models import Chunk, Collection, Document
@@ -158,7 +158,10 @@ def _unit(axis: int, noise_axis: int | None = None, noise: float = 0.0) -> list[
 async def test_small_collection_is_not_starved_by_the_hnsw_scan(session):
     """A 3-chunk collection next to a 400-chunk one, every big chunk closer to
     the query. The HNSW scan visits `ef_search` (40) candidates and filters
-    after, so without iterative scan the small collection came back short."""
+    after, so without iterative scan the small collection came back empty.
+    Iterative scan alone is not enough here either: the 400 near-duplicate
+    vectors leave part of the graph unreachable, and the scan ran out after
+    95 to 350 rows. The exact fallback is what returns the small collection."""
     big = Collection(name="hnsw-big")
     small = Collection(name="hnsw-small")
     session.add_all([big, small])
@@ -207,3 +210,20 @@ async def test_small_collection_is_not_starved_by_the_hnsw_scan(session):
     chunks = await VectorRetriever(session).retrieve(_unit(0), collection_id=small.id, top_k=3)
 
     assert sorted(c.text for c in chunks) == ["small 0", "small 1", "small 2"]
+
+
+async def test_exact_order_does_not_use_the_hnsw_index(session):
+    """The fallback relies on `distance + 0` hiding the operator from the
+    planner. Check the plan, so a planner change cannot silently undo it."""
+    distance = Chunk.embedding.cosine_distance(_unit(0))
+    for setting in ("enable_seqscan", "enable_sort"):
+        await session.execute(text(f"SET LOCAL {setting} = off"))
+
+    async def explain(order) -> str:
+        stmt = select(Chunk.id).order_by(order).limit(3)
+        sql = stmt.compile(dialect=session.bind.dialect, compile_kwargs={"literal_binds": True})
+        rows = await session.execute(text(f"EXPLAIN {sql}"))
+        return "\n".join(rows.scalars())
+
+    assert "idx_chunk_embedding" in await explain(distance)
+    assert "idx_chunk_embedding" not in await explain(distance + 0)

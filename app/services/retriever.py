@@ -81,23 +81,20 @@ class VectorRetriever:
         walking until LIMIT rows pass the filter. `relaxed_order` may return
         rows slightly out of order, so they are re-sorted below. SET LOCAL
         lasts until the session's transaction ends.
+
+        Iterative scan still stops early when it reaches
+        `hnsw.max_scan_tuples` or runs out of graph: HNSW does not guarantee
+        that every element is reachable, and near-duplicate vectors make that
+        worse. So when a filtered search returns fewer than `top_k` rows, it
+        is repeated as an exact scan of the collection's chunks. That costs a
+        distance per chunk of the collection, and it only happens when the
+        collection is small next to the corpus, or has fewer than `top_k`
+        chunks.
         """
         await self.db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
-        distance = Chunk.embedding.cosine_distance(query_embedding).label("distance")
-
-        query = (
-            select(Chunk, Document, distance)
-            .join(Document, Chunk.document_id == Document.id)
-            .options(selectinload(Chunk.document))
-            .order_by(distance)
-            .limit(top_k)
-        )
-
-        if collection_id is not None:
-            query = query.where(Document.collection_id == collection_id)
-
-        result = await self.db.execute(query)
-        rows = sorted(result.all(), key=lambda row: row[2])
+        rows = await self._nearest(query_embedding, collection_id, top_k, exact=False)
+        if collection_id is not None and len(rows) < top_k:
+            rows = await self._nearest(query_embedding, collection_id, top_k, exact=True)
 
         chunks: list[RetrievedChunk] = []
         for chunk, document, dist in rows:
@@ -114,6 +111,34 @@ class VectorRetriever:
                 )
             )
         return chunks
+
+    async def _nearest(
+        self,
+        query_embedding: list[float],
+        collection_id: int | None,
+        top_k: int,
+        *,
+        exact: bool,
+    ) -> list:
+        """(Chunk, Document, distance) rows, nearest first.
+
+        `exact` orders by `distance + 0`: the planner only uses the HNSW index
+        for an ORDER BY on the bare operator, so this computes the distance of
+        every chunk that passes the filter.
+        """
+        distance = Chunk.embedding.cosine_distance(query_embedding)
+        query = (
+            select(Chunk, Document, distance.label("distance"))
+            .join(Document, Chunk.document_id == Document.id)
+            .options(selectinload(Chunk.document))
+            .order_by(distance + 0 if exact else distance)
+            .limit(top_k)
+        )
+        if collection_id is not None:
+            query = query.where(Document.collection_id == collection_id)
+
+        result = await self.db.execute(query)
+        return sorted(result.all(), key=lambda row: row[2])
 
     async def lexical_retrieve(
         self,
