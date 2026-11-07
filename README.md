@@ -90,14 +90,16 @@ Twilio, reranker, and MMR are all optional. Without Twilio the WhatsApp channel 
 ### Local dev
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --frozen --extra dev        # .venv with the exact versions in uv.lock
 cp .env.example .env
-alembic upgrade head
-uvicorn app.main:app --reload
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload
 
 cd frontend && npm install && npm run dev
 ```
+
+Dependencies are locked in `uv.lock`; CI and the Docker image install it with
+`uv sync --frozen`. After changing `pyproject.toml`, run `uv lock` and commit both files.
 
 ---
 
@@ -228,7 +230,7 @@ two documents and the golden set listed only one. It now lists both, and
 
 ```bash
 RERANKER_ENABLED=false MMR_ENABLED=false  python -m app.eval.runner run --markdown
-pip install -e ".[rerank]"
+uv sync --frozen --extra dev --extra rerank   # list every extra: sync removes the rest
 RERANKER_ENABLED=true  MMR_ENABLED=true   python -m app.eval.runner run --markdown
 python -m app.eval.runner diff <baseline>.json <reranked>.json -o eval/results/reranker-delta.md
 ```
@@ -262,11 +264,11 @@ hybrid was vector-only in practice. Details, and why MMR at the default λ costs
 ## Tests
 
 ```bash
-pytest tests/ -q
+uv run pytest -q
 # 150 passed, 9 skipped
 
 # Database tests (full-text, HNSW, job cleanup) against a real Postgres, migrated with `alembic upgrade head`:
-TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test pytest tests/ -q
+TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test uv run pytest -q
 # 159 passed
 ```
 

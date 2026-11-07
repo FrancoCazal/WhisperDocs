@@ -11,39 +11,47 @@ name = "whisperdocs"
 version = "0.1.0"
 description = "Agentic RAG system with WhatsApp integration"
 requires-python = ">=3.12"
+# Floors are the minor versions the test suite last ran on; uv.lock pins the
+# exact set (`uv sync --frozen`). No upper bounds: a cap held the checkpointer
+# on 2.x, below its security fixes. Upgrades go through the lock and CI.
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "pydantic>=2.9",
-    "pydantic-settings>=2.6",
-    "sqlalchemy[asyncio]>=2.0.36",
-    "asyncpg>=0.30",
-    "alembic>=1.14",
-    "pgvector>=0.3.6",
-    "python-multipart>=0.0.12",
-    "pdfplumber>=0.11.4",
-    "tiktoken>=0.8",
-    "openai>=1.57",
-    "langgraph>=0.2.60",
-    "langgraph-checkpoint-postgres>=2.0,<3.0",
-    "psycopg[binary,pool]>=3.1",
-    "langchain-core>=0.3.20",
-    "langchain-google-genai>=4.2",
-    "langchain-aws>=0.2",
-    "boto3>=1.35",
-    "tenacity>=9.0",
-    "twilio>=9.3.0",
-    "structlog>=24.4",
+    "fastapi>=0.162",
+    "uvicorn[standard]>=0.54",
+    "pydantic>=2.14",
+    "pydantic-settings>=2.16",
+    "sqlalchemy[asyncio]>=2.1",
+    "asyncpg>=0.32",
+    "alembic>=1.20",
+    "pgvector>=0.5",
+    "python-multipart>=0.0.33",
+    "pdfplumber>=0.11.10",
+    "tiktoken>=0.14",
+    "openai>=3.46",
+    "langgraph>=1.2",
+    # Floors from advisories: CVE-2025-64439 and CVE-2026-48775 (checkpoint
+    # deserialization), CVE-2026-71433 and CVE-2026-115883 (store namespaces).
+    "langgraph-checkpoint>=4.1.1",
+    "langgraph-checkpoint-postgres>=3.1.3",
+    "psycopg[binary,pool]>=3.3",
+    "langchain-core>=1.7",
+    "langchain-google-genai>=4.4",
+    "langchain-aws>=1.9",
+    "boto3>=1.43",
+    "tenacity>=9.1",
+    "twilio>=9.13",
+    "structlog>=26.1",
     "langdetect>=1.0.9",
-    "prometheus-client>=0.20",
+    "prometheus-client>=0.26",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3",
-    "pytest-asyncio>=0.24",
-    "httpx>=0.27",
-    "ruff>=0.8",
+    "pytest>=9.2",
+    "pytest-asyncio>=1.4",
+    "httpx>=0.28",
+    # Same version as the pre-commit hook, so local and CI format alike.
+    "ruff==0.15.12",
+    "mypy>=2.4",
 ]
 rerank = [
     "sentence-transformers>=3.3",
