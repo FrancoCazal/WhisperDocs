@@ -169,6 +169,7 @@ async def run_ingestion(
                     token_count=tc,
                     text_hash=h,
                     embedding=embedding,
+                    language=document.language,
                 )
                 for (idx, t, tc, h), embedding in zip(fresh, embeddings, strict=True)
             )

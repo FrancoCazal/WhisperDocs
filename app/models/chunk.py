@@ -17,6 +17,9 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     text_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Copied from the document. Picks the text search configuration of the
+    # generated `tsv` column (alembic 0013), which the ORM does not map.
+    language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     embedding: Mapped[list[float]] = mapped_column(Vector(settings.embedding_dimension))
 
     document: Mapped["Document"] = relationship(back_populates="chunks")  # noqa: F821

@@ -78,7 +78,10 @@ async def search_docs_node(state: AgentState) -> dict:
                 )
                 chunks = []
 
-    top_rel = chunks[0].relevance if chunks else 0.0
+    # Best cosine among the results, not chunks[0].relevance: relevance is the
+    # fused RRF score, relative by construction, while cosine says how close
+    # the best match is in absolute terms.
+    top_rel = max((c.cosine for c in chunks if c.cosine is not None), default=0.0)
     retrieval_chunks.observe(len(chunks))
     retrieval_top_relevance.observe(top_rel)
 
@@ -96,10 +99,7 @@ async def search_docs_node(state: AgentState) -> dict:
         )
     else:
         context_block, included_chunks = "(no context available)", []
-    rag_user_prompt = (
-        f"Context:\n\n{context_block}\n\n---\n\n"
-        f"Question: {last_user_msg}\n\nAnswer:"
-    )
+    rag_user_prompt = f"Context:\n\n{context_block}\n\n---\n\nQuestion: {last_user_msg}\n\nAnswer:"
 
     provider, model, temperature = llm_service_for("rag")
     history_for_llm = build_prompt_messages(state, exclude_last=True)
@@ -160,11 +160,7 @@ async def search_docs_node(state: AgentState) -> dict:
         answer = "Tuve un problema generando la respuesta. Probá de nuevo en un momento."
         gen_md = {"generation_model": model}
 
-    if (
-        settings.agent.citation_semantic_validation
-        and included_chunks
-        and answer
-    ):
+    if settings.agent.citation_semantic_validation and included_chunks and answer:
         try:
             validation = await validate_citations_semantic(
                 answer=answer,
@@ -188,6 +184,7 @@ async def search_docs_node(state: AgentState) -> dict:
             "document_title": c.document_title,
             "chunk_index": c.chunk_index,
             "relevance": c.relevance,
+            "cosine": c.cosine,
             "text_preview": (c.text[:500] + "...") if len(c.text) > 500 else c.text,
         }
         for c in included_chunks
@@ -214,6 +211,6 @@ async def search_docs_node(state: AgentState) -> dict:
             **structured_md,
             "collection_id_active": collection_id,
             "retrieval_chunks_count": len(chunks),
-            "retrieval_top_relevance": chunks[0].relevance if chunks else 0.0,
+            "retrieval_top_relevance": top_rel,
         },
     }

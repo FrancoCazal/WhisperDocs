@@ -21,7 +21,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 ## Highlights
 
 - **Agentic RAG with LangGraph** — explicit state graph, 7 nodes (compaction, summarize, classifier, search, clarify, direct, out-of-scope). Each node testable in isolation; `AsyncPostgresSaver` handles persistence.
-- **Hybrid retrieval** — vector cosine via pgvector + Postgres full-text ranking (`ts_rank_cd` over a `tsvector` column), fused with Reciprocal Rank Fusion. Optional cross-encoder rerank (`bge-reranker-base`) + document-level MMR for diversity.
+- **Hybrid retrieval** — vector cosine via pgvector + Postgres full-text search (OR over the question's stemmed terms, per-document language, accent-insensitive, ranked by `ts_rank_cd`), fused with Reciprocal Rank Fusion. Optional cross-encoder rerank (`bge-reranker-base`) + document-level MMR for diversity.
 - **Multi-provider routing** — Gemini 3.8 Flash for cheap hot-path nodes (classifier, query rewrite, direct answers); AWS Bedrock Claude for grounded RAG generation. Provider auto-detected from model ID; startup fails on a model ID that can't be routed.
 - **Token-level SSE streaming** — `astream_events` v2 + custom event dispatch. Frontend renders tokens as they arrive, with progress markers per node.
 - **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE.
@@ -44,7 +44,8 @@ Per-turn metadata footer shows latency, input/output tokens, model, and USD cost
 ### Retrieval transparency
 
 Every turn exposes the chunks that were actually retrieved — text, source document, and
-RRF score after rerank/MMR. Lets you debug retrieval without leaving the chat.
+relevance: the fused RRF score scaled to 0–1, or the cross-encoder score when reranking is on.
+Lets you debug retrieval without leaving the chat.
 
 ![Retrieved chunks side panel](media/whisperdocs4.png)
 
@@ -227,16 +228,42 @@ python -m app.eval.runner diff <baseline>.json <reranked>.json -o eval/results/r
 
 The diff report shows per-metric deltas and per-item regressions.
 
+### Retrieval only, without LLM calls
+
+```bash
+python -m scripts.retrieval_bench --embeddings-cache eval/results/query-embeddings.json
+```
+
+Runs the vector leg, the full-text leg and the fused pipeline over the golden set and reports
+how many questions each returns rows for, plus precision@k and recall@k. The only paid call is
+one embedding per question, cached. Toggle `RERANKER_ENABLED` / `MMR_ENABLED` to A/B them for
+free.
+
+On the English golden set (k = 5, reranker and MMR off):
+
+| | Full-text rows (in-scope) | Hybrid precision@5 | Hybrid recall@5 |
+|---|---|---|---|
+| Before the full-text rework | 5 / 41 | 89.3% | 93.5% |
+| After | 41 / 41 | 89.8% | 95.9% |
+
+Before, the full-text leg ANDed every word of the question and almost never matched, so the
+hybrid was vector-only in practice. Details, and why MMR at the default λ costs precision, in
+[ADR 0003](docs/adr/0003-hybrid-retrieval-rrf.md).
+
 ---
 
 ## Tests
 
 ```bash
 pytest tests/ -q
-# 58 passed
+# 108 passed, 6 skipped
+
+# Full-text tests against a real Postgres, migrated with `alembic upgrade head`:
+TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test pytest tests/ -q
+# 114 passed
 ```
 
-Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`).
+Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`), database (`tests/test_fulltext_db.py`, skipped without `TEST_DATABASE_URL`).
 
 ---
 

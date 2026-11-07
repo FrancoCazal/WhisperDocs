@@ -13,7 +13,10 @@ class AgentCitation(BaseModel):
     document_id: int
     document_title: str
     chunk_index: int
+    # Score the citations are ordered by, 0-1 (see RetrievedChunk).
     relevance: float
+    # Cosine similarity to the question; None if only full-text search found it.
+    cosine: float | None = None
     text_preview: str | None = None
 
 

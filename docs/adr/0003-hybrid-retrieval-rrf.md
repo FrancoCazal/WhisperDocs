@@ -61,3 +61,64 @@ and MMR can layer on top.
   — see code `app/services/reranker.py`.
 - MMR (`app/services/mmr.py`) penalizes chunks from already-selected
   documents to improve diversity at the top of the result set.
+
+## Amendment — 2026-11: the lexical leg was not BM25, and rarely matched
+
+**What was wrong.** The lexical leg was `ts_rank_cd(tsv,
+websearch_to_tsquery('simple', question))`:
+
+- `ts_rank_cd` is Postgres cover-density ranking. It has no IDF term, so it
+  is not BM25, which is what this ADR and the README called it.
+- `websearch_to_tsquery` ANDs every word, and the `simple` configuration
+  keeps stopwords. A chunk had to contain "how", "does" and "to" to match
+  "How does HNSW compare to IVFFlat?".
+- `websearch_to_tsquery` also reads "or" and "-word" in a question as
+  operators.
+
+Measured on the golden set with `scripts/retrieval_bench.py`, the lexical leg
+returned rows for 5 of the 41 in-scope questions. The hybrid was vector-only
+in practice.
+
+**What changed** (alembic `0013`, `app/services/fulltext.py`):
+
+- `chunks.tsv` is built with the configuration that matches the chunk's
+  language: `wd_english`, `wd_spanish`, or `wd_simple` as the fallback. All
+  three apply `unaccent` before stemming.
+- The query is OR over the lexemes of the question, normalized by every
+  configuration (`plainto_tsquery`, with `&` turned into `|`). No web-search
+  syntax is involved.
+- The leg is ranked by `ts_rank_cd` without length normalization. It is still
+  not BM25. Real BM25 needs an extension (`pg_search`, `vchord_bm25`) that the
+  pgvector image does not ship.
+- `relevance` is now the score the list is ordered by: RRF divided by the best
+  score possible, which is 1.0 when a chunk is first in every leg that returned
+  rows. The vector cosine moved to its own `cosine` field, `None` for chunks
+  only the lexical leg found. Before, vector hits kept their cosine and
+  lexical-only hits got RRF / max RRF, so the field mixed two scales and MMR
+  compared them.
+
+**Measured** (golden set, k = 5, same query embeddings for both runs, reranker
+and MMR off):
+
+| Leg | In-scope questions with rows | Precision@5 | Recall@5 |
+|---|---|---|---|
+| Lexical, before | 5 / 41 | 9.3% | 8.5% |
+| Lexical, after | 41 / 41 | 79.5% | 92.7% |
+| Hybrid, before | 41 / 41 | 89.3% | 93.5% |
+| Hybrid, after | 41 / 41 | 89.8% | 95.9% |
+
+The ranking function was picked on this same set, out of `ts_rank` and
+`ts_rank_cd` with normalization 0, 1 and 2. Each half point of precision is
+one chunk out of 205. Treat the gain as "the lexical leg now contributes, and
+nothing got worse", not as a tuned improvement.
+
+**Still true.** OR matching returns rows for 8 of the 9 out-of-scope
+questions too, so an empty lexical leg no longer signals "nothing relevant".
+No code read it that way: in the agent the classifier routes out-of-scope
+questions before retrieval, and the eval's single-turn path relies on the RAG
+prompt refusing.
+
+**MMR, measured on the same run.** With `MMR_ENABLED=true`, hybrid precision@5
+falls to 26.8% at the default λ = 0.5 (recall 100%): a penalty of 0.5 outweighs
+any relevance gap on a 0–1 scale, so MMR returns five different documents.
+λ = 0.9 gives 62.9%. MMR stays off by default.

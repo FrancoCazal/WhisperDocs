@@ -239,6 +239,31 @@ async def test_search_docs_with_chunks(
     assert result["metadata"]["collection_id_active"] == 3
 
 
+async def test_search_docs_top_relevance_is_the_best_cosine(
+    fake_provider,
+    mock_llm_service_for,
+    mock_embedder,
+    mock_retriever,
+    mock_session_local,
+    rag_chunk,
+    monkeypatch,
+):
+    """chunks[0] leads on the fused score but only full-text search found it."""
+    mock_retriever([rag_chunk(0, rel=1.0, cosine=None), rag_chunk(1, rel=0.8, cosine=0.55)])
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    monkeypatch.setattr(
+        "app.agent.utils.query_rewrite.llm_service_for",
+        lambda _n: (fake_provider, "fake", 0.0),
+    )
+
+    result = await search_docs_node(
+        {"messages": [HumanMessage(content="¿quién es tino?")], "collection_id": 3}
+    )
+
+    assert result["metadata"]["retrieval_top_relevance"] == 0.55
+    assert [c["cosine"] for c in result["retrieved_chunks"]] == [None, 0.55]
+
+
 async def test_search_docs_empty_retrieval(
     fake_provider,
     mock_llm_service_for,

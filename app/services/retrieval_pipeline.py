@@ -22,7 +22,7 @@ async def retrieve(
     top_k: int,
     reranker: Reranker | None = None,
 ) -> list[RetrievedChunk]:
-    """Hybrid (vector + BM25) retrieval, optionally followed by cross-encoder rerank.
+    """Hybrid (vector + full-text) retrieval, optionally followed by cross-encoder rerank.
 
     When reranking is active, fetches `reranker_candidate_pool` chunks (default
     20), then narrows to `top_k` via the reranker. Without reranking, returns

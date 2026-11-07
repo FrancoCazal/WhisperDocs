@@ -116,6 +116,7 @@ async def query(
                 document_title=c.document_title,
                 chunk_index=c.chunk_index,
                 relevance=c.relevance,
+                cosine=c.cosine,
             )
             for c in chunks
         ],

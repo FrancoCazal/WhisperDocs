@@ -112,6 +112,7 @@ async def _ingest_single(
             token_count=tc,
             text_hash=h,
             embedding=embedding,
+            language=document.language,
         )
         for (idx, t, tc, h), embedding in zip(fresh, embeddings, strict=True)
     )
@@ -265,8 +266,10 @@ async def bulk_delete_documents(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_ids is empty")
 
     rows = (
-        await db.execute(select(Document).where(Document.id.in_(payload.document_ids)))
-    ).scalars().all()
+        (await db.execute(select(Document).where(Document.id.in_(payload.document_ids))))
+        .scalars()
+        .all()
+    )
     found_ids = {d.id for d in rows}
     not_found = [i for i in payload.document_ids if i not in found_ids]
 
@@ -306,8 +309,10 @@ async def bulk_move_documents(
         )
 
     rows = (
-        await db.execute(select(Document).where(Document.id.in_(payload.document_ids)))
-    ).scalars().all()
+        (await db.execute(select(Document).where(Document.id.in_(payload.document_ids))))
+        .scalars()
+        .all()
+    )
     found_ids = {d.id for d in rows}
     not_found = [i for i in payload.document_ids if i not in found_ids]
 
@@ -333,7 +338,9 @@ async def bulk_move_documents(
 # ── Async ingestion ──────────────────────────────────────────────────────────
 
 
-@router.post("/upload-async", response_model=IngestionJobCreate, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/upload-async", response_model=IngestionJobCreate, status_code=status.HTTP_202_ACCEPTED
+)
 async def upload_document_async(
     collection_id: int = Form(...),
     title: str | None = Form(None),
@@ -358,7 +365,9 @@ async def upload_document_async(
 
     file_bytes = await file.read()
     if len(file_bytes) == 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty"
+        )
     if len(file_bytes) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

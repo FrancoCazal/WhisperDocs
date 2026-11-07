@@ -220,7 +220,8 @@ erDiagram
     int token_count
     string text_hash
     vector embedding "pgvector(1536) HNSW"
-    tsvector tsv "full-text generated col"
+    string language "copied from the document"
+    tsvector tsv "full-text, generated per language"
   }
 
   IngestionJob {
@@ -304,10 +305,16 @@ provider SDK.
 `app/services/retrieval_pipeline.py::retrieve()` composes:
 
 1. **Hybrid fetch** — `VectorRetriever.hybrid_retrieve(query_text, query_embedding, ...)`
-   - Vector search via cosine distance + HNSW index on `chunks.embedding`
-   - Full-text rank via `ts_rank_cd(c.tsv, websearch_to_tsquery('simple', ...))`
-     (Postgres cover-density ranking, not BM25)
-   - Fused with Reciprocal Rank Fusion (`1 / (k + rank)`, `k=60`)
+   - Vector search via cosine distance + HNSW index on `chunks.embedding`,
+     with `hnsw.iterative_scan = relaxed_order` so the collection filter
+     cannot starve the scan (needs pgvector >= 0.8.0; see ADR 0002)
+   - Full-text search (`VectorRetriever.lexical_retrieve`): OR over the
+     question's lexemes, ranked by `ts_rank_cd` (Postgres cover-density
+     ranking, not BM25). `chunks.tsv` is generated with the configuration of
+     the chunk's language (`wd_english`, `wd_spanish`, `wd_simple`), all
+     accent-insensitive; see `app/services/fulltext.py` and alembic `0013`
+   - Fused with Reciprocal Rank Fusion (`1 / (k + rank)`, `k=60`) in
+     `fuse_rrf`
 2. **Cross-encoder rerank** (optional, `RERANKER_ENABLED=true`)
    - `BAAI/bge-reranker-base` via `sentence-transformers`
    - Scores `(query, chunk_text)` pairs, sorts by score, normalizes to 0-1
@@ -318,6 +325,16 @@ provider SDK.
 Pool sizing: when reranking is active, `hybrid_retrieve` fetches
 `max(top_k, RERANKER_CANDIDATE_POOL=20)` candidates. Without reranking,
 `top_k` directly.
+
+Scores on `RetrievedChunk`: `relevance` is what the list is ordered by, 0-1:
+the RRF score divided by the best possible (1.0 = first in every leg that
+returned rows), or the cross-encoder score after reranking. `cosine` is the
+vector similarity, `None` for chunks only full-text search found. MMR uses
+`relevance`; the `retrieval_top_relevance` metric uses the best `cosine`.
+
+`scripts/retrieval_bench.py` measures each leg and the fused result on the
+golden set (rows returned, precision@k, recall@k) without LLM calls. Results
+before and after the full-text rework are in ADR 0003.
 
 ---
 

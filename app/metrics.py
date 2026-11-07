@@ -23,7 +23,7 @@ retrieval_chunks = Histogram(
 
 retrieval_top_relevance = Histogram(
     "whisperdocs_retrieval_top_relevance",
-    "Top relevance score per retrieval",
+    "Highest cosine similarity among the chunks of a retrieval",
     buckets=(0.0, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
 )
 
