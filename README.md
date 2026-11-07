@@ -256,14 +256,14 @@ hybrid was vector-only in practice. Details, and why MMR at the default λ costs
 
 ```bash
 pytest tests/ -q
-# 108 passed, 6 skipped
+# 110 passed, 8 skipped
 
-# Full-text tests against a real Postgres, migrated with `alembic upgrade head`:
+# Full-text and HNSW tests against a real Postgres, migrated with `alembic upgrade head`:
 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test pytest tests/ -q
-# 114 passed
+# 118 passed
 ```
 
-Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`), database (`tests/test_fulltext_db.py`, skipped without `TEST_DATABASE_URL`).
+Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`), database (`tests/test_retrieval_db.py`, skipped without `TEST_DATABASE_URL`).
 
 ---
 

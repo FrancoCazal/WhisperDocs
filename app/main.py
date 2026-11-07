@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import sys
 from contextlib import asynccontextmanager
 
@@ -51,9 +52,16 @@ async def lifespan(app: FastAPI):
     checkpointer = await init_checkpointer()
     app.state.checkpointer = checkpointer
     app.state.agent = build_agent_graph().compile(checkpointer=checkpointer)
+    # Keep what startup allocated (modules, the compiled graph, about 300k
+    # objects) out of the collector. A full collection holds the GIL, so it
+    # pauses the event loop while it scans. A long PDF parse triggers several,
+    # and freezing halved the longest pause (audit R4).
+    gc.collect()
+    gc.freeze()
     try:
         yield
     finally:
+        gc.unfreeze()
         await close_checkpointer()
 
 

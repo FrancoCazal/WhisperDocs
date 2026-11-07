@@ -23,15 +23,17 @@ from app.schemas.document import (
 )
 from app.schemas.ingestion_job import IngestionJobCreate, IngestionJobRead
 from app.schemas.pagination import Page
-from app.services.chunker import TextChunker
 from app.services.embedder import EmbeddingError, EmbeddingService, get_embedder
-from app.services.ingestion import create_job, spawn_ingestion
-from app.services.lang import detect_language
+from app.services.ingestion import (
+    chunk_text_in_thread,
+    create_job,
+    extract_text_in_thread,
+    spawn_ingestion,
+)
 from app.services.text_extractor import (
     EmptyDocumentError,
     UnsupportedFileTypeError,
     detect_file_type,
-    extract_text,
 )
 
 logger = get_logger(__name__)
@@ -55,10 +57,8 @@ async def _ingest_single(
     if len(file_bytes) > MAX_UPLOAD_BYTES:
         raise ValueError(f"File exceeds maximum size of {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
 
-    raw_text = extract_text(file_bytes, file_type)
-
-    chunker = TextChunker()
-    chunks_data = chunker.chunk(raw_text)
+    raw_text = await extract_text_in_thread(file_bytes, file_type)
+    chunks_data, language = await chunk_text_in_thread(raw_text)
     if not chunks_data:
         raise ValueError("Document produced no chunks after processing")
 
@@ -99,7 +99,7 @@ async def _ingest_single(
         raw_text=raw_text,
         chunk_count=len(fresh),
         total_tokens=sum(tc for _idx, _t, tc, _h in fresh),
-        language=detect_language(raw_text),
+        language=language,
     )
     db.add(document)
     await db.flush()

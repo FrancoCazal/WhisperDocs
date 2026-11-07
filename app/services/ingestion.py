@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from app.db import SessionLocal
 from app.logging_config import get_logger
 from app.models import Chunk, Document, IngestionJob, IngestionStatus
+from app.services.chunker import Chunk as TextChunk
 from app.services.chunker import TextChunker
 from app.services.embedder import EmbeddingService
 from app.services.lang import detect_language
@@ -21,6 +22,28 @@ from app.services.text_extractor import detect_file_type, extract_text
 logger = get_logger(__name__)
 
 EMBED_BATCH_SIZE = 32
+
+
+# Parsing, chunking and language detection are CPU-bound (pdfplumber, tiktoken,
+# langdetect). Run inline in an `async def`, a large PDF froze every request,
+# chat SSE included, until it finished (audit R4). In a worker thread
+# pdfplumber still holds the GIL while it computes, so a parse is not faster,
+# but the interpreter switches threads every few milliseconds and the event
+# loop keeps serving.
+
+
+async def extract_text_in_thread(file_bytes: bytes, file_type: str) -> str:
+    """`extract_text` off the event loop."""
+    return await asyncio.to_thread(extract_text, file_bytes, file_type)
+
+
+def _chunk_and_detect(raw_text: str) -> tuple[list[TextChunk], str | None]:
+    return TextChunker().chunk(raw_text), detect_language(raw_text)
+
+
+async def chunk_text_in_thread(raw_text: str) -> tuple[list[TextChunk], str | None]:
+    """Chunk the text and detect its language, off the event loop."""
+    return await asyncio.to_thread(_chunk_and_detect, raw_text)
 
 
 async def _set_status(
@@ -97,11 +120,10 @@ async def run_ingestion(
 
     try:
         file_type = detect_file_type(filename)
-        raw_text = extract_text(file_bytes, file_type)
+        raw_text = await extract_text_in_thread(file_bytes, file_type)
 
         await _set_status(job_id, status=IngestionStatus.CHUNKING, progress=15)
-        chunker = TextChunker()
-        chunks_data = chunker.chunk(raw_text)
+        chunks_data, language = await chunk_text_in_thread(raw_text)
         if not chunks_data:
             raise ValueError("Document produced no chunks after processing")
 
@@ -157,7 +179,7 @@ async def run_ingestion(
                 raw_text=raw_text,
                 chunk_count=len(fresh),
                 total_tokens=sum(tc for _i, _t, tc, _h in fresh),
-                language=detect_language(raw_text),
+                language=language,
             )
             db.add(document)
             await db.flush()

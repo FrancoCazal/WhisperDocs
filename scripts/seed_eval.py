@@ -24,10 +24,9 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.logging_config import get_logger
 from app.models import Chunk, Collection, Document
-from app.services.chunker import TextChunker
 from app.services.embedder import EmbeddingService
-from app.services.lang import detect_language
-from app.services.text_extractor import detect_file_type, extract_text
+from app.services.ingestion import chunk_text_in_thread, extract_text_in_thread
+from app.services.text_extractor import detect_file_type
 
 logger = get_logger(__name__)
 
@@ -64,10 +63,8 @@ async def ingest_file(
 
     file_bytes = path.read_bytes()
     file_type = detect_file_type(path.name)
-    raw_text = extract_text(file_bytes, file_type)
-
-    chunker = TextChunker()
-    chunks_data = chunker.chunk(raw_text)
+    raw_text = await extract_text_in_thread(file_bytes, file_type)
+    chunks_data, language = await chunk_text_in_thread(raw_text)
     if not chunks_data:
         raise ValueError(f"{path.name}: produced no chunks")
 
@@ -97,7 +94,7 @@ async def ingest_file(
         raw_text=raw_text,
         chunk_count=len(fresh),
         total_tokens=sum(tc for _i, _t, tc, _h in fresh),
-        language=detect_language(raw_text),
+        language=language,
     )
     db.add(document)
     await db.flush()

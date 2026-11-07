@@ -161,9 +161,9 @@ sequenceDiagram
     end
   and worker pipeline
     W->>DB: status = extracting
-    W->>W: extract_text
+    W->>W: extract_text (worker thread)
     W->>DB: status = chunking
-    W->>W: TextChunker.chunk
+    W->>W: TextChunker.chunk + detect_language (worker thread)
     W->>DB: dedup hash check
     W->>DB: status = embedding, total_chunks=N
     loop per batch (32)
@@ -176,6 +176,17 @@ sequenceDiagram
   end
   API-->>U: SSE event: complete { document_id }
 ```
+
+Parsing, chunking and language detection are CPU-bound, so the worker and the
+synchronous upload run them with `asyncio.to_thread`. The thread does not make
+the parse faster: pdfplumber still holds the GIL while it computes. It keeps
+the event loop serving, because the interpreter switches threads every 5 ms.
+On a 60-page text PDF (about 9 s of parsing) the loop used to stop for the whole
+parse; now its longest pause is a full garbage collection, which also holds the
+GIL. pdfminer allocates enough objects to trigger several. Freezing the objects
+allocated at startup (`gc.freeze()` in the lifespan) brought the longest pause
+from about 300 ms to about 150 ms. Removing it would mean parsing in a separate
+process.
 
 ---
 
