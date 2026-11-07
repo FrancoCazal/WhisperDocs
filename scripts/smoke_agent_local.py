@@ -11,8 +11,8 @@ Requires live provider credentials (GCP_PROJECT + ADC, AWS_*). For postgres
 mode, also DATABASE_URL must be reachable.
 
 Usage:
-    python -m scripts.test_agent_local
-    python -m scripts.test_agent_local --checkpointer=postgres
+    python -m scripts.smoke_agent_local
+    python -m scripts.smoke_agent_local --checkpointer=postgres
 """
 
 import argparse
