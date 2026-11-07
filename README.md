@@ -4,7 +4,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> Agentic RAG over your own documents — chat UI, WhatsApp delivery, hybrid retrieval, multi-provider LLMs, real eval suite.
+> A self-hosted agentic RAG engine: it answers questions about your own documents with citations, and measures how good and how expensive those answers are. For teams that need answers from their own documentation, in a web chat or over WhatsApp, with numbers on quality and cost. What sets it apart: an eval suite with diffs between runs, the USD cost of each RAG answer, and a model chosen per graph node.
 
 > **Portfolio project — runs locally via Docker. No hosted deployment.** Clone, fill `.env`, `docker compose up`.
 
