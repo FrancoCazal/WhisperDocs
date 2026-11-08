@@ -194,6 +194,50 @@ async def test_graph_routes_to_search_docs_with_rag(
     assert result["metadata"]["retrieval_chunks_count"] == 2
 
 
+async def test_a_classifier_outage_still_answers_from_the_documents(
+    compiled_agent,
+    fake_provider,
+    classifier_response,
+    mock_embedder,
+    mock_retriever,
+    mock_session_local,
+    rag_chunk,
+    monkeypatch,
+):
+    """The classifier's model refusing every call (Vertex's 403 for a GCP
+    project without billing) sent each question to clarification, which
+    failed the same way and asked for more details (BE-9)."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings.agent, "rag_structured_output", False)
+    mock_retriever([rag_chunk(0)])
+    _stub_all_nodes(
+        monkeypatch,
+        fake_provider,
+        classifier_response,
+        action="search_docs",
+        answer_text="Respuesta grounded [1].",
+    )
+
+    async def refused(**_):
+        raise RuntimeError("403 Forbidden: billing is not enabled")
+
+    fake_provider.generate_structured = refused  # type: ignore[assignment]
+
+    result = await compiled_agent.ainvoke(
+        {
+            "messages": [HumanMessage(content="tell me about rag fundamentals")],
+            "collection_id": None,
+        },
+        config={"configurable": {"thread_id": "outage"}, "recursion_limit": 10},
+    )
+
+    assert result["pending_action"] == "search_docs"
+    assert result["messages"][-1].content == "Respuesta grounded [1]."
+    assert result["metadata"]["turn_failed"] is False
+    assert len(result["retrieved_chunks"]) == 1
+
+
 async def test_a_turn_without_generation_reports_no_generation_tokens(
     compiled_agent,
     fake_provider,

@@ -113,9 +113,10 @@ async def test_decide_action_falls_back_on_provider_error(
     mock_llm_service_for("app.agent.nodes.decide_action", fake_provider)
 
     result = await decide_action_node({"messages": [HumanMessage(content="hi")]})
-    # Fallback on classifier error is now `ask_clarification` (more conservative
-    # than the previous `answer_direct`, which could hallucinate).
-    assert result["pending_action"] == "ask_clarification"
+    # search_docs answers only from the documents, on its own model: not
+    # clarification, which calls a model too and hid the outage (BE-9).
+    assert result["pending_action"] == "search_docs"
+    assert result["metadata"]["classifier_reason"] == "classifier_failure_fallback"
     assert result["metadata"]["classifier_confidence"] == "low"
 
 

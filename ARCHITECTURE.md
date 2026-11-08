@@ -117,6 +117,7 @@ sequenceDiagram
   end
   G->>LLM: classifier (Gemini)
   LLM-->>G: AgentAction { search_docs | ask_clarification | answer_direct | out_of_scope }
+  Note over G: classifier fails → search_docs (answers only from the documents)
   alt action == search_docs
     G->>LLM: rewrite_query (from the second turn)
     G->>DB: hybrid_retrieve (vector + full-text + RRF)

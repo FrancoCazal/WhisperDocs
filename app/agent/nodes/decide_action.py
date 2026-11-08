@@ -4,6 +4,7 @@ from app.agent.state import AgentState
 from app.agent.utils.messages import build_prompt_messages
 from app.config import settings
 from app.logging_config import get_logger
+from app.metrics import errors_total
 from app.services.llm import llm_service_for
 
 logger = get_logger(__name__)
@@ -14,8 +15,15 @@ async def decide_action_node(state: AgentState) -> dict:
 
     Low-confidence predictions are downgraded to `classifier_low_confidence_action`
     (default `ask_clarification`) to avoid silently routing uncertain calls to
-    search_docs or answer_direct. Exception fallback also goes to clarification:
-    safer than the previous answer_direct fallback, which could hallucinate.
+    search_docs or answer_direct.
+
+    When the classifier's model fails, the turn goes to search_docs. It answers
+    only from retrieved passages, so it cannot make things up as answer_direct
+    could, and it runs on its own model. Clarification used to take these
+    turns, but it calls a model too: with Vertex refusing every call (a GCP
+    project without billing), it failed the same way and replied a fixed "can
+    you give me more details", so every question read as vague and the outage
+    did not show.
     """
     provider, model, temperature = llm_service_for("classifier")
 
@@ -29,9 +37,10 @@ async def decide_action_node(state: AgentState) -> dict:
             max_tokens=200,
         )
     except Exception:
-        logger.exception("classifier_failed", model=model, fallback="ask_clarification")
+        errors_total.labels(type="classifier").inc()
+        logger.exception("classifier_failed", model=model, fallback="search_docs")
         return {
-            "pending_action": "ask_clarification",
+            "pending_action": "search_docs",
             "metadata": {
                 "classifier_reason": "classifier_failure_fallback",
                 "classifier_confidence": "low",
