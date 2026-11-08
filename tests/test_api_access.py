@@ -425,10 +425,16 @@ async def test_a_limit_of_zero_is_off(agent):
 
 async def test_an_eval_run_has_its_own_limit_and_a_dataset_cap(monkeypatch):
     monkeypatch.setattr(settings, "rate_limit_eval_per_minute", 1)
+    # The route's dependencies run before its body is validated: without
+    # OPENAI_API_KEY, the real embedder would fail first.
+    app.dependency_overrides[get_embedder] = lambda: object()
     # Both fail validation, after the limit counted them.
     item = {"question": "q", "expected_answer": "a"}
-    too_many = await _call("POST", "/eval/run", json={"dataset": [item] * 201})
-    limited = await _call("POST", "/eval/run", json={"dataset": []})
+    try:
+        too_many = await _call("POST", "/eval/run", json={"dataset": [item] * 201})
+        limited = await _call("POST", "/eval/run", json={"dataset": []})
+    finally:
+        app.dependency_overrides.clear()
 
     assert too_many.status_code == 422
     assert limited.status_code == 429
