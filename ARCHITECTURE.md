@@ -505,6 +505,12 @@ A/B run.
 `retrieval_pipeline.retrieve` *and* the rebound names in importing modules so
 either entry point sees the same stub data.
 
+No test reaches a provider. `tests/conftest.py` checks every host name a test
+resolves, and fails the test on any host but this machine and the test
+database, even when the code under test caught the error. A test that forgot
+to stub its provider fails there instead of calling the real one with the
+developer's credentials.
+
 ---
 
 ## Decision records
