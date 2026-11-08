@@ -4,6 +4,7 @@ each item's answers and verdicts and compare two runs (frontend review U5).
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -78,6 +79,41 @@ async def test_a_run_is_read_in_full(results_dir: Path):
         "reasoning": "matches",
         "error": False,
     }
+    assert body["metrics"]["latency_p95_ms"] == 1200
+    assert body["metrics"]["avg_retrieval_recall"] == 1.0
+
+
+def _old_report_json() -> str:
+    """A report saved before recall, the latency percentiles and the judge's
+    error flag existed, like the April runs in eval/results."""
+    data = _report(RUN_ID, "x").model_dump(mode="json")
+    for key in ("avg_retrieval_recall", "latency_p50_ms", "latency_p95_ms", "judge_errors"):
+        del data["metrics"][key]
+    for item in data["results"]:
+        del item["retrieval_recall"]
+        del item["correctness"]["error"]
+        del item["hallucination"]["error"]
+    return json.dumps(data)
+
+
+async def test_an_older_report_leaves_out_what_it_never_measured(results_dir: Path):
+    old = results_dir / "2026-04-20T18-35-50_b2b0899a.json"
+    old.write_text(_old_report_json(), encoding="utf-8")
+
+    full = (await _get(f"/eval/results/{RUN_ID}")).json()
+    summary = (await _get("/eval/results")).json()[0]
+
+    # Not a 0 that reads as "p95 was 0 ms" or "recall was 0%".
+    for key in ("avg_retrieval_recall", "latency_p50_ms", "latency_p95_ms", "judge_errors"):
+        assert key not in full["metrics"]
+    assert "retrieval_recall" not in full["results"][0]
+    assert "error" not in full["results"][0]["correctness"]
+    # What it did measure is still there.
+    assert full["metrics"]["avg_latency_ms"] == 1200
+    assert full["results"][0]["retrieval_precision"] == 1.0
+    assert summary["avg_retrieval_recall"] is None
+    assert summary["latency_p95_ms"] is None
+    assert summary["avg_latency_ms"] == 1200
 
 
 @pytest.mark.parametrize("run_id", ["9c1d7e52-0000-4000-8000-000000000000", "..", "not-a-run"])

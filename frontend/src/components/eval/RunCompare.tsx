@@ -131,13 +131,15 @@ const TREND_TONE = {
   same: "text-text-tertiary",
 } as const;
 
-function fmtValue(m: MetricDelta, v: number) {
+function fmtValue(m: MetricDelta, v: number | null) {
+  if (v === null) return "—";
   if (m.kind === "pct") return fmtPct(v);
   if (m.kind === "cost") return fmtCost(v);
   return `${fmtNumber(Math.round(v))}MS`;
 }
 
 function fmtChange(m: MetricDelta) {
+  if (m.prev === null || m.curr === null) return "—";
   const d = m.curr - m.prev;
   const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
   const abs = Math.abs(d);

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.db import SessionLocal
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judges import Judge
-from app.eval.schemas import EvalReport, TestItem
+from app.eval.schemas import AggregateMetrics, EvalReport, TestItem
 from app.services.embedder import EmbeddingService, get_embedder
 from app.services.llm import llm_service_for
 
@@ -58,6 +58,14 @@ async def run_evaluation(
     return report
 
 
+def _measured(metrics: AggregateMetrics, name: str) -> float | None:
+    """A metric the report saved, or None. Reports from before recall and the
+    latency percentiles lack them, and the schema's default 0 would read as a
+    measurement."""
+    value = getattr(metrics, name)
+    return value if name in metrics.model_fields_set else None
+
+
 # The two readers below are plain `def`: FastAPI runs them in its threadpool,
 # so reading and parsing reports (~100 KB each) never blocks the event loop.
 @router.get("/results")
@@ -81,10 +89,10 @@ def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
                     "accuracy": report.metrics.accuracy,
                     "hallucination_rate": report.metrics.hallucination_rate,
                     "avg_retrieval_precision": report.metrics.avg_retrieval_precision,
-                    "avg_retrieval_recall": report.metrics.avg_retrieval_recall,
+                    "avg_retrieval_recall": _measured(report.metrics, "avg_retrieval_recall"),
                     "avg_latency_ms": report.metrics.avg_latency_ms,
-                    "latency_p50_ms": report.metrics.latency_p50_ms,
-                    "latency_p95_ms": report.metrics.latency_p95_ms,
+                    "latency_p50_ms": _measured(report.metrics, "latency_p50_ms"),
+                    "latency_p95_ms": _measured(report.metrics, "latency_p95_ms"),
                     "estimated_cost_usd": report.metrics.estimated_cost_usd,
                     "file": f.name,
                 }
@@ -94,7 +102,10 @@ def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
     return summaries
 
 
-@router.get("/results/{run_id}", response_model=EvalReport)
+# Only what the report saved: an older one has no recall, no latency
+# percentiles and no judge error flag, and their defaults would read as
+# measurements (frontend review FR-19).
+@router.get("/results/{run_id}", response_model=EvalReport, response_model_exclude_unset=True)
 def get_result(run_id: str) -> EvalReport:
     """One run in full: every item's answers and judge verdicts."""
     try:

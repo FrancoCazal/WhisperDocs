@@ -166,10 +166,11 @@ export type EvalMetrics = {
   accuracy: number;
   hallucination_rate: number;
   avg_retrieval_precision: number;
-  avg_retrieval_recall: number;
+  // Reports from before these three were measured do not have them.
+  avg_retrieval_recall?: number;
   avg_latency_ms: number;
-  latency_p50_ms: number;
-  latency_p95_ms: number;
+  latency_p50_ms?: number;
+  latency_p95_ms?: number;
   avg_tokens_input: number;
   avg_tokens_output: number;
   total_tokens_input: number;

@@ -51,7 +51,11 @@ export function RunReport({ report, runs }: { report: EvalReport; runs: EvalRunS
         />
         <BigMetric
           label="LATENCY AVG · P95"
-          value={`${fmtNumber(Math.round(m.avg_latency_ms))} · ${fmtNumber(Math.round(m.latency_p95_ms))}MS`}
+          value={
+            m.latency_p95_ms === undefined
+              ? `${fmtNumber(Math.round(m.avg_latency_ms))}MS · —`
+              : `${fmtNumber(Math.round(m.avg_latency_ms))} · ${fmtNumber(Math.round(m.latency_p95_ms))}MS`
+          }
           tone={latencyTone(m.avg_latency_ms)}
         />
       </div>

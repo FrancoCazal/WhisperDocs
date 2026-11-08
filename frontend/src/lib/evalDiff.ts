@@ -6,8 +6,9 @@ export type MetricKind = "pct" | "ms" | "cost";
 
 export type MetricDelta = {
   label: string;
-  prev: number;
-  curr: number;
+  // null: that run's report is older than the metric.
+  prev: number | null;
+  curr: number | null;
   kind: MetricKind;
   higherIsBetter: boolean;
 };
@@ -45,11 +46,16 @@ const CHECKS: [Check, (r: EvalResult) => JudgeVerdict][] = [
   ["grounding", (r) => r.hallucination],
 ];
 
+function metric(r: EvalReport, key: keyof EvalMetrics): number | null {
+  const v = r.metrics[key];
+  return typeof v === "number" ? v : null;
+}
+
 export function diffRuns(prev: EvalReport, curr: EvalReport): RunDiff {
   const metrics = METRICS.map(([label, key, kind, higherIsBetter]) => ({
     label,
-    prev: Number(prev.metrics[key] ?? 0),
-    curr: Number(curr.metrics[key] ?? 0),
+    prev: metric(prev, key),
+    curr: metric(curr, key),
     kind,
     higherIsBetter,
   }));
@@ -77,6 +83,7 @@ export function diffRuns(prev: EvalReport, curr: EvalReport): RunDiff {
 
 /** "better", "worse" or "same" for a metric's move. */
 export function trend(m: MetricDelta): "better" | "worse" | "same" {
+  if (m.prev === null || m.curr === null) return "same";
   const d = m.curr - m.prev;
   const noise = m.kind === "pct" ? 0.0005 : m.kind === "ms" ? 0.5 : 0.00005;
   if (Math.abs(d) < noise) return "same";
