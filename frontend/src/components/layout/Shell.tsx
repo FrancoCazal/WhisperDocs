@@ -210,7 +210,7 @@ export function Shell() {
           id="main-content"
           role="main"
           tabIndex={-1}
-          className="flex-1 min-w-0 overflow-auto focus:outline-none"
+          className="relative flex-1 min-w-0 overflow-auto focus:outline-none"
         >
           <div className="p-3 sm:p-6 md:p-8 min-h-full pb-20">
             <Outlet />

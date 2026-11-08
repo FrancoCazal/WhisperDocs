@@ -46,12 +46,13 @@ export function RunCompare({ report, runs }: { report: EvalReport; runs: EvalRun
     <section aria-label="Compare runs" className="mb-8">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <h3 className="title-sm text-text-primary">COMPARE</h3>
-        <label className="flex items-center gap-2 label-sm text-text-secondary">
+        {/* A run's label is long: on a phone the select shrinks to fit. */}
+        <label className="flex items-center gap-2 min-w-0 max-w-full label-sm text-text-secondary">
           WITH
           <select
             value={otherId ?? ""}
             onChange={(e) => setPicked(e.target.value)}
-            className="bg-surface-lowest border border-border-subtle px-2 h-8 text-text-primary body-sm focus:outline-none focus:border-border-focus"
+            className="min-w-0 bg-surface-lowest border border-border-subtle px-2 h-8 text-text-primary body-sm focus:outline-none focus:border-border-focus"
           >
             {others.map((r) => (
               <option key={r.run_id} value={r.run_id}>

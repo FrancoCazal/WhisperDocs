@@ -186,7 +186,7 @@ function EvaluacionPage() {
                 <th className="text-right py-3 font-normal" title={GENERATION_COST_HINT}>
                   GEN. COST
                 </th>
-                <th className="text-right pr-6 py-3 font-normal w-20">
+                <th className="relative text-right pr-6 py-3 font-normal w-20">
                   <span className="sr-only">ACTIONS</span>
                 </th>
               </tr>
