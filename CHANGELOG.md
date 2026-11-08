@@ -6,7 +6,27 @@ Changes land through pull requests with CI green.
 
 ## [Unreleased]
 
-Fixes from the November 2026 audit.
+Fixes from the November 2026 audit, and a review of the frontend.
+
+### Added
+
+- Chat: each `[n]` citation shows its passage on hover and opens the
+  sources, with a link to the chunk in its document. The thread is in the
+  URL. A streaming answer shows its progress and can be stopped; a failed
+  one is an error card with Retry. Each turn shows its cost, tokens and
+  time, and the header the thread's total.
+- Threads have titles (`conversations.title`, migration 0014), a search
+  and a saved filter, and notes can be listed by thread.
+- Evaluation: a run's answers and verdicts item by item
+  (`GET /eval/results/{run_id}`), a diff between two runs, and a cost
+  confirmation before a run starts.
+- Documents: the document page can delete or move the document, search its
+  chunks and ask the chat about it. Uploads are checked before they are
+  sent and show their progress.
+- History: filters by origin and by question text
+  (`GET /query/history?source=&q=`), and pagination.
+- Frontend tests: vitest for the API client's stream parser, and a
+  Playwright test of the chat against a mocked backend.
 
 ### Security
 
@@ -35,8 +55,12 @@ Fixes from the November 2026 audit.
   A retrieval failure gets its own answer.
 - Dependencies are locked in `uv.lock`; CI and the Docker image install with
   `uv sync --frozen`.
-- The frontend container serves a production build (`vite preview`), not the
-  dev server. The `/consulta` single-query page is linked from the navigation.
+- The frontend is a static single-page app, served by nginx in its container
+  (port 8080), with long-lived caching for the hashed assets. The pages'
+  paths are in English (`/query`, `/documents`, `/collections`, `/history`,
+  `/evaluation`); the old Spanish paths redirect.
+- The frontend ships its own font, and loads the code highlighter with the
+  first code block. Answers are at reading size.
 - The README and the architecture document describe the agent as
   intent-routed and single pass: one path per turn, one retrieval, no loop.
 - Answers written without the model (no documents, a failure, out of scope)
@@ -62,12 +86,26 @@ Fixes from the November 2026 audit.
   classifier's tokens as the answer's. The classifier's usage has its own
   metadata fields.
 - A failed answer no longer lists the retrieved chunks as its citations.
+- The documents page's bulk delete could delete documents outside the
+  filter. A streamed answer could land in another thread. A document's page
+  could not be opened.
+- The UI's costs came from an old price table; they are the backend's
+  `cost_usd`. Lists stopped at 50 rows. Model output could load remote
+  images.
+- After a Postgres restart the API kept handing out dead connections.
+- A question whose stream was cut off was left without an answer, and broke
+  every later prompt of its thread.
+- `GET /eval/results` read the reports on the event loop, and applied
+  `limit` before it skipped the files that are not reports.
+- The eval CLI's reports showed metrics an old run did not save as 0.
 
 ### CI
 
 - Lint, format and file hygiene (pre-commit), gitleaks, pip-audit and mypy.
 - The full test suite runs against a pgvector Postgres service.
 - Dependabot for Python, npm, GitHub Actions and Docker.
+- A frontend job: types, lint and format, build, and the unit and browser
+  tests.
 
 ## [1.0] - 2026-05-19
 
