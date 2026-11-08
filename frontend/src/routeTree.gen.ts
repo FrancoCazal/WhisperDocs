@@ -17,7 +17,7 @@ import { Route as ConsultaRouteImport } from './routes/consulta'
 import { Route as ColeccionesRouteImport } from './routes/colecciones'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as DocumentosIdRouteImport } from './routes/documentos.$id'
+import { Route as DocumentosIdRouteImport } from './routes/documentos_.$id'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -60,9 +60,9 @@ const IndexRoute = IndexRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocumentosIdRoute = DocumentosIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => DocumentosRoute,
+  id: '/documentos_/$id',
+  path: '/documentos/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -70,7 +70,7 @@ export interface FileRoutesByFullPath {
   '/chat': typeof ChatRoute
   '/colecciones': typeof ColeccionesRoute
   '/consulta': typeof ConsultaRoute
-  '/documentos': typeof DocumentosRouteWithChildren
+  '/documentos': typeof DocumentosRoute
   '/evaluacion': typeof EvaluacionRoute
   '/historial': typeof HistorialRoute
   '/settings': typeof SettingsRoute
@@ -81,7 +81,7 @@ export interface FileRoutesByTo {
   '/chat': typeof ChatRoute
   '/colecciones': typeof ColeccionesRoute
   '/consulta': typeof ConsultaRoute
-  '/documentos': typeof DocumentosRouteWithChildren
+  '/documentos': typeof DocumentosRoute
   '/evaluacion': typeof EvaluacionRoute
   '/historial': typeof HistorialRoute
   '/settings': typeof SettingsRoute
@@ -93,11 +93,11 @@ export interface FileRoutesById {
   '/chat': typeof ChatRoute
   '/colecciones': typeof ColeccionesRoute
   '/consulta': typeof ConsultaRoute
-  '/documentos': typeof DocumentosRouteWithChildren
+  '/documentos': typeof DocumentosRoute
   '/evaluacion': typeof EvaluacionRoute
   '/historial': typeof HistorialRoute
   '/settings': typeof SettingsRoute
-  '/documentos/$id': typeof DocumentosIdRoute
+  '/documentos_/$id': typeof DocumentosIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -132,7 +132,7 @@ export interface FileRouteTypes {
     | '/evaluacion'
     | '/historial'
     | '/settings'
-    | '/documentos/$id'
+    | '/documentos_/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -140,10 +140,11 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRoute
   ColeccionesRoute: typeof ColeccionesRoute
   ConsultaRoute: typeof ConsultaRoute
-  DocumentosRoute: typeof DocumentosRouteWithChildren
+  DocumentosRoute: typeof DocumentosRoute
   EvaluacionRoute: typeof EvaluacionRoute
   HistorialRoute: typeof HistorialRoute
   SettingsRoute: typeof SettingsRoute
+  DocumentosIdRoute: typeof DocumentosIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -204,37 +205,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/documentos/$id': {
-      id: '/documentos/$id'
-      path: '/$id'
+    '/documentos_/$id': {
+      id: '/documentos_/$id'
+      path: '/documentos/$id'
       fullPath: '/documentos/$id'
       preLoaderRoute: typeof DocumentosIdRouteImport
-      parentRoute: typeof DocumentosRoute
+      parentRoute: typeof rootRouteImport
     }
   }
 }
-
-interface DocumentosRouteChildren {
-  DocumentosIdRoute: typeof DocumentosIdRoute
-}
-
-const DocumentosRouteChildren: DocumentosRouteChildren = {
-  DocumentosIdRoute: DocumentosIdRoute,
-}
-
-const DocumentosRouteWithChildren = DocumentosRoute._addFileChildren(
-  DocumentosRouteChildren,
-)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ChatRoute: ChatRoute,
   ColeccionesRoute: ColeccionesRoute,
   ConsultaRoute: ConsultaRoute,
-  DocumentosRoute: DocumentosRouteWithChildren,
+  DocumentosRoute: DocumentosRoute,
   EvaluacionRoute: EvaluacionRoute,
   HistorialRoute: HistorialRoute,
   SettingsRoute: SettingsRoute,
+  DocumentosIdRoute: DocumentosIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

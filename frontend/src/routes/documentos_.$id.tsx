@@ -1,10 +1,12 @@
 import { createFileRoute, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, fmtDate, fmtNumber } from "@/lib/api";
+import { api, ApiError, fmtDate, fmtNumber } from "@/lib/api";
 import { LoadingLine, ErrorBanner } from "@/components/ui-kit/EmptyState";
 
-export const Route = createFileRoute("/documentos/$id")({
+// "documentos_": the page renders on its own, not inside the list's layout,
+// which has no outlet for it.
+export const Route = createFileRoute("/documentos_/$id")({
   head: () => ({
     meta: [
       { title: "Document Detail — WhisperDocs" },
@@ -45,9 +47,21 @@ function DocumentDetailError({ error, reset }: ErrorComponentProps) {
 function DocumentDetailPage() {
   const { id } = Route.useParams();
   const docId = Number(id);
-  const doc = useQuery({ queryKey: ["document", docId], queryFn: () => api.getDocument(docId) });
-  const chunks = useQuery({ queryKey: ["chunks", docId], queryFn: () => api.getChunks(docId) });
+  const validId = Number.isInteger(docId) && docId > 0;
+  const doc = useQuery({
+    queryKey: ["document", docId],
+    queryFn: () => api.getDocument(docId),
+    enabled: validId,
+    // A missing document stays missing.
+    retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 3,
+  });
+  const chunks = useQuery({
+    queryKey: ["chunks", docId],
+    queryFn: () => api.getChunks(docId),
+    enabled: validId && doc.isSuccess,
+  });
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
+  const notFound = !validId || (doc.error instanceof ApiError && doc.error.status === 404);
 
   return (
     <div>
@@ -59,10 +73,21 @@ function DocumentDetailPage() {
       </div>
 
       <h1 className="title-lg text-text-primary mb-6 pb-4 border-b border-border-subtle">
-        {doc.data?.title ?? "LOADING..."}
+        {doc.data?.title ??
+          (notFound ? "DOCUMENT NOT FOUND" : doc.error ? "DOCUMENT UNAVAILABLE" : "LOADING...")}
       </h1>
 
-      {doc.error && <ErrorBanner message="failed to load document" />}
+      {notFound ? (
+        <div className="body-sm text-text-secondary">
+          No document with id {id}. It may have been deleted.{" "}
+          <Link to="/documentos" className="text-text-primary hover:text-primary-blue">
+            ← Back to documents
+          </Link>
+        </div>
+      ) : (
+        doc.error && <ErrorBanner message={`failed to load document: ${doc.error.message}`} />
+      )}
+      {chunks.error && <ErrorBanner message={`failed to load chunks: ${chunks.error.message}`} />}
 
       {doc.isLoading ? (
         <LoadingLine />
