@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { API_BASE_URL, api, fmtCost, fmtNumber, shortModel } from "@/lib/api";
 import { btnCls } from "@/components/ui-kit/Button";
+import { useHydrated } from "@/lib/useHydrated";
 
 const NAV_ITEMS = [
   { to: "/", label: "OVERVIEW", glyph: "▦" },
@@ -100,16 +101,23 @@ function LastAnswer() {
 
 export function Shell() {
   const apiState = useApiState();
+  // The SPA shell names no page and marks no link: it is built for "/" and
+  // served for every path.
+  const hydrated = useHydrated();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const unknownPath = useRouterState({ select: (s) => s.matches.some((m) => m.routeId === "/$") });
   // The drawer is open on one path: navigating closes it, with no effect to sync.
   const [navOpenAt, setNavOpenAt] = useState<string | null>(null);
   const navOpen = navOpenAt === pathname;
   const setNavOpen = (open: boolean) => setNavOpenAt(open ? pathname : null);
-  const breadcrumb =
-    ROUTE_LABELS[pathname] ??
-    (pathname.startsWith("/documentos/")
-      ? "DOCUMENTS // DOCUMENT_DETAIL"
-      : pathname.replace("/", "").toUpperCase() || "SYSTEM_OVERVIEW");
+  const breadcrumb = !hydrated
+    ? ""
+    : unknownPath
+      ? "PATH_NOT_FOUND"
+      : (ROUTE_LABELS[pathname] ??
+        (pathname.startsWith("/documentos/")
+          ? "DOCUMENTS // DOCUMENT_DETAIL"
+          : pathname.replace("/", "").toUpperCase() || "SYSTEM_OVERVIEW"));
 
   return (
     <div className="min-h-screen flex flex-col bg-surface text-text-primary">
@@ -165,12 +173,20 @@ export function Shell() {
             navOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
           ].join(" ")}
         >
-          <nav className="flex-1 py-2 overflow-y-auto" aria-label="Main">
+          {/* Rebuilt once hydrated: Link sets aria-current and data-status from
+              the URL, the shell's are for "/", and hydration keeps the
+              attributes it finds. */}
+          <nav
+            key={hydrated ? "app" : "shell"}
+            className="flex-1 py-2 overflow-y-auto"
+            aria-label="Main"
+          >
             {NAV_ITEMS.map((item) => {
               const active =
-                item.to === "/"
+                hydrated &&
+                (item.to === "/"
                   ? pathname === "/"
-                  : pathname === item.to || pathname.startsWith(item.to + "/");
+                  : pathname === item.to || pathname.startsWith(item.to + "/"));
               return (
                 <Link
                   key={item.to}

@@ -2,6 +2,7 @@ import { createRouter, useRouter, type ErrorComponentProps } from "@tanstack/rea
 import { QueryClient } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { Btn, btnCls } from "@/components/ui-kit/Button";
+import { LoadingLine } from "@/components/ui-kit/EmptyState";
 
 // A route can throw anything, not only an Error.
 function DefaultErrorComponent({ error, reset }: ErrorComponentProps) {
@@ -52,6 +53,9 @@ export const getRouter = () => {
     defaultPreload: "intent",
     defaultPreloadStaleTime: 0,
     defaultErrorComponent: DefaultErrorComponent,
+    // In place of the page while its code loads, and in the SPA shell, which
+    // is built without a page.
+    defaultPendingComponent: () => <LoadingLine />,
   });
 
   return router;

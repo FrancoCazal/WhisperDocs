@@ -1,26 +1,17 @@
-import { Link, createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/Shell";
 import { Toaster } from "@/components/ui/sonner";
-import { btnCls } from "@/components/ui-kit/Button";
+import { NotFoundPanel } from "@/components/ui-kit/NotFound";
 
 import appCss from "../styles.css?url";
 
+// For a notFound() thrown by a route without its own; a path no route takes
+// is the "/$" page, inside the frame.
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface px-6">
-      <div className="max-w-md text-center border border-border-subtle p-8 bg-surface-container">
-        <div className="display-md text-text-primary">404</div>
-        <div className="label-sm text-error mt-2">PATH_NOT_FOUND</div>
-        <p className="body-sm text-text-secondary mt-4">
-          The requested route is not registered in the protocol map.
-        </p>
-        <div className="mt-6">
-          <Link to="/" className={btnCls("secondary")}>
-            RETURN HOME
-          </Link>
-        </div>
-      </div>
+      <NotFoundPanel />
     </div>
   );
 }

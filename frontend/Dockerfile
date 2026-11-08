@@ -1,4 +1,6 @@
-FROM node:22-alpine
+# Build: TanStack Start in SPA mode writes static files to dist/client, with
+# dist/client/_shell.html for every path that is not a file.
+FROM node:22-alpine AS build
 
 WORKDIR /app
 
@@ -15,11 +17,12 @@ COPY --chown=node:node . .
 ARG VITE_API_BASE_URL=http://localhost:8000
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
-# A production build, served by `vite preview`: the app server-renders, so it
-# needs dist/server/server.js and cannot be served as static files. Preview
-# loads vite.config.ts and its plugins at startup, so node_modules stays.
 RUN npm run build
 
-EXPOSE 8080
+# Serve: nginx as a non-root user on 8080. Nothing runs Node at this stage.
+FROM nginxinc/nginx-unprivileged:stable-alpine
 
-CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "8080", "--strictPort"]
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist/client /usr/share/nginx/html
+
+EXPOSE 8080
