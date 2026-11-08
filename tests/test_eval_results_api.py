@@ -84,9 +84,11 @@ async def test_a_run_is_read_in_full(results_dir: Path):
 
 
 def _old_report_json() -> str:
-    """A report saved before recall, the latency percentiles and the judge's
-    error flag existed, like the April runs in eval/results."""
+    """A report saved before recall, the latency percentiles, the judge's
+    error flag and the prompt versions existed, like the April runs in
+    eval/results."""
     data = _report(RUN_ID, "x").model_dump(mode="json")
+    del data["prompt_version"], data["judge_prompt_version"]
     for key in ("avg_retrieval_recall", "latency_p50_ms", "latency_p95_ms", "judge_errors"):
         del data["metrics"][key]
     for item in data["results"]:
@@ -114,6 +116,22 @@ async def test_an_older_report_leaves_out_what_it_never_measured(results_dir: Pa
     assert summary["avg_retrieval_recall"] is None
     assert summary["latency_p95_ms"] is None
     assert summary["avg_latency_ms"] == 1200
+    assert "prompt_version" not in full and "judge_prompt_version" not in full
+    assert summary["prompt_version"] is None and summary["judge_prompt_version"] is None
+
+
+async def test_a_run_and_its_summary_name_its_prompt_versions(results_dir: Path):
+    report = _report(RUN_ID, "x").model_copy(
+        update={"prompt_version": "a286c8ec04d9", "judge_prompt_version": "6bad93eae2c1"}
+    )
+    _save(results_dir, "2026-11-07T10-00-00_b2b0899a.json", report)
+
+    full = (await _get(f"/eval/results/{RUN_ID}")).json()
+    (summary,) = (await _get("/eval/results")).json()
+
+    for body in (full, summary):
+        assert body["prompt_version"] == "a286c8ec04d9"
+        assert body["judge_prompt_version"] == "6bad93eae2c1"
 
 
 @pytest.mark.parametrize("run_id", ["9c1d7e52-0000-4000-8000-000000000000", "..", "not-a-run"])
