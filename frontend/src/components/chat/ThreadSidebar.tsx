@@ -133,7 +133,7 @@ export function ThreadSidebar({
                 <div className="flex items-center justify-between mb-1">
                   <span className="label-xs text-text-tertiary tabular-nums">
                     {n.conversation_id ? `THREAD · ` : ""}
-                    {new Date(n.created_at).toLocaleString("en-GB")}
+                    {fmtDate(n.created_at)}
                   </span>
                   <button
                     onClick={() => deleteNoteMut.mutate(n.id)}

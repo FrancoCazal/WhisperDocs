@@ -6,7 +6,7 @@ from app.agent.schemas import RAGAnswer
 from app.agent.state import AgentState
 from app.agent.utils.citation_validation import validate_citations_semantic
 from app.agent.utils.fixed_replies import FixedReply, fixed_reply
-from app.agent.utils.messages import build_prompt_messages, failed_answer
+from app.agent.utils.messages import build_prompt_messages, failed_answer, stamped
 from app.agent.utils.query_rewrite import rewrite_query_for_retrieval
 from app.agent.utils.streaming import stream_generate
 from app.config import settings
@@ -277,7 +277,7 @@ def _turn_result(
         "chunks_retrieved": len(chunks),
     }
     prev = state.get("metadata") or {}
-    kwargs = {"metadata": msg_metadata, "citations": citations}
+    kwargs = stamped(metadata=msg_metadata, citations=citations, action="search_docs")
     message = (
         failed_answer(answer, **kwargs)
         if failed

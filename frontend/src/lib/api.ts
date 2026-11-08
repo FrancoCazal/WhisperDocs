@@ -329,7 +329,10 @@ export type Conversation = {
 export type ConversationMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  // When it was written (UTC ISO); messages saved before the stamp have none.
   timestamp: string | null;
+  // The node that answered (search_docs, answer_direct, ...); assistant only.
+  action: string | null;
   citations: Citation[] | null;
   metadata: AgentTurnMetadata | null;
   failed: boolean;
@@ -344,6 +347,170 @@ export type SavedNote = {
   created_at: string;
 };
 
+// ============ Server-sent events ============
+// One message of a text/event-stream: its event name and its data, which the
+// backend always sends as a JSON object.
+type SseMessage = { event: string; data: Record<string, unknown> };
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** The messages of an event stream, as they arrive. Lines may end in CRLF, LF
+ *  or CR, and a message's data lines are joined with "\n", as the SSE spec
+ *  says. A message whose data is not a JSON object is skipped, and one cut
+ *  off by the end of the stream is dropped. */
+async function* readSse(res: Response): AsyncGenerator<SseMessage> {
+  if (!res.body) throw new ApiError(res.status, null, "Stream failed: empty response");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let event = "";
+  let data: string[] = [];
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      let text = buf + decoder.decode(value, { stream: true });
+      // A CR at the end may be the first half of a CRLF: keep it for the next chunk.
+      const held = text.endsWith("\r") ? "\r" : "";
+      if (held) text = text.slice(0, -1);
+      const lines = text.split(/\r\n|\r|\n/);
+      buf = (lines.pop() ?? "") + held;
+      for (const line of lines) {
+        if (line === "") {
+          const parsed = data.length > 0 ? parseJson(data.join("\n")) : null;
+          if (isRecord(parsed)) yield { event: event || "message", data: parsed };
+          event = "";
+          data = [];
+        } else if (!line.startsWith(":")) {
+          // "field: value"; a line starting with ":" is a comment (a keep-alive).
+          const colon = line.indexOf(":");
+          const field = colon === -1 ? line : line.slice(0, colon);
+          const raw = colon === -1 ? "" : line.slice(colon + 1);
+          const val = raw.startsWith(" ") ? raw.slice(1) : raw;
+          if (field === "event") event = val;
+          else if (field === "data") data.push(val);
+        }
+      }
+    }
+  } finally {
+    // Also when the reader stops early: the request is not left open.
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
+const INGESTION_STATUSES: readonly string[] = [
+  "pending",
+  "extracting",
+  "chunking",
+  "embedding",
+  "persisting",
+  "complete",
+  "failed",
+] satisfies IngestionStatus[];
+
+/** An ingestion stream's message as an event; null for one that is not. */
+function ingestionEvent({ event, data }: SseMessage): IngestionJobEvent | null {
+  const jobId = num(data.job_id);
+  switch (event) {
+    case "progress": {
+      const status = str(data.status);
+      if (jobId === null || status === null || !INGESTION_STATUSES.includes(status)) return null;
+      return {
+        type: "progress",
+        job_id: jobId,
+        status: status as IngestionStatus,
+        progress: num(data.progress) ?? 0,
+        processed_chunks: num(data.processed_chunks) ?? 0,
+        total_chunks: num(data.total_chunks) ?? 0,
+      };
+    }
+    case "complete":
+      return jobId === null
+        ? null
+        : { type: "complete", job_id: jobId, document_id: num(data.document_id) };
+    case "error":
+      return {
+        type: "error",
+        job_id: jobId ?? undefined,
+        message: str(data.message) ?? "ingestion error",
+      };
+    default:
+      return null;
+  }
+}
+
+function turnMetadata(v: unknown): AgentTurnMetadata {
+  const m = isRecord(v) ? v : {};
+  return {
+    model: str(m.model),
+    tokens_input: num(m.tokens_input) ?? 0,
+    tokens_output: num(m.tokens_output) ?? 0,
+    latency_ms: num(m.latency_ms) ?? 0,
+    chunks_retrieved: num(m.chunks_retrieved) ?? 0,
+    cost_usd: num(m.cost_usd) ?? 0,
+  };
+}
+
+/** An agent stream's message as an event; null for one that is not. */
+function agentEvent({ event, data }: SseMessage): AgentStreamEvent | null {
+  switch (event) {
+    case "thread": {
+      const threadId = str(data.thread_id);
+      return threadId ? { type: "thread", thread_id: threadId } : null;
+    }
+    case "node_start": {
+      const node = str(data.node);
+      return node ? { type: "node_start", node } : null;
+    }
+    case "node_end": {
+      const node = str(data.node);
+      if (!node) return null;
+      const s = isRecord(data.summary) ? data.summary : {};
+      const summary: { action?: string; chunks?: number } = {};
+      const action = str(s.action);
+      const chunks = num(s.chunks);
+      if (action) summary.action = action;
+      if (chunks !== null) summary.chunks = chunks;
+      return { type: "node_end", node, summary };
+    }
+    case "token":
+      return { type: "token", node: str(data.node), delta: str(data.delta) ?? "" };
+    case "final": {
+      const threadId = str(data.thread_id);
+      if (!threadId) return null;
+      return {
+        type: "final",
+        payload: {
+          thread_id: threadId,
+          action: str(data.action),
+          answer: str(data.answer) ?? "",
+          citations: Array.isArray(data.citations)
+            ? (data.citations.filter(isRecord) as AgentCitation[])
+            : [],
+          metadata: turnMetadata(data.metadata),
+          failed: data.failed === true,
+        },
+      };
+    }
+    case "error":
+      return { type: "error", message: str(data.message) ?? "stream error" };
+    default:
+      return null;
+  }
+}
+
 // ============ Endpoints ============
 export const api = {
   health: () => request<Health>("/health"),
@@ -356,7 +523,6 @@ export const api = {
     }>("/admin/settings"),
 
   listCollections: () => request<Collection[]>("/collections"),
-  getCollection: (id: number) => request<Collection>(`/collections/${id}`),
   createCollection: (body: { name: string; description?: string }) =>
     request<Collection>("/collections", { method: "POST", body: JSON.stringify(body) }),
   deleteCollection: (id: number) => request<void>(`/collections/${id}`, { method: "DELETE" }),
@@ -371,29 +537,13 @@ export const api = {
   getDocument: (id: number) => request<DocumentDetail>(`/documents/${id}`),
   getChunks: (id: number) => request<Chunk[]>(`/documents/${id}/chunks`),
   deleteDocument: (id: number) => request<void>(`/documents/${id}`, { method: "DELETE" }),
-  uploadBatch: (collectionId: number, files: File[]) => {
-    const fd = new FormData();
-    fd.append("collection_id", String(collectionId));
-    files.forEach((f) => fd.append("files", f));
-    return request<{
-      total: number;
-      succeeded: number;
-      failed: number;
-      results: {
-        status: string;
-        filename: string;
-        document: DocumentRead | null;
-        error: string | null;
-      }[];
-    }>("/documents/upload-batch", { method: "POST", body: fd });
-  },
-
   bulkDeleteDocuments: (documentIds: number[]) =>
     request<BulkOpResult>("/documents/bulk-delete", {
       method: "POST",
       body: JSON.stringify({ document_ids: documentIds }),
     }),
 
+  // No page moves documents yet: U17 (document detail) is the one that will.
   bulkMoveDocuments: (documentIds: number[], targetCollectionId: number) =>
     request<BulkOpResult>("/documents/bulk-move", {
       method: "POST",
@@ -421,6 +571,7 @@ export const api = {
 
   getIngestionJob: (jobId: number) => request<IngestionJob>(`/documents/jobs/${jobId}`),
 
+  // No page lists the jobs yet: U7 (recent jobs panel) is the one that will.
   listIngestionJobs: (collectionId?: number, limit = 50) => {
     const q = new URLSearchParams();
     if (collectionId !== undefined) q.set("collection_id", String(collectionId));
@@ -439,56 +590,9 @@ export const api = {
       signal,
     });
     if (!res.ok) throw await toApiError(res);
-    if (!res.body) throw new ApiError(res.status, null, "Stream failed: empty response");
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep = buf.indexOf("\n\n");
-      while (sep !== -1) {
-        const raw = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        sep = buf.indexOf("\n\n");
-        let evtName = "message";
-        let dataLine = "";
-        for (const line of raw.split("\n")) {
-          if (line.startsWith("event:")) evtName = line.slice(6).trim();
-          else if (line.startsWith("data:")) dataLine += line.slice(5).trim();
-        }
-        if (!dataLine) continue;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(dataLine);
-        } catch {
-          continue;
-        }
-        const data = parsed as Record<string, unknown>;
-        if (evtName === "progress") {
-          onEvent({
-            type: "progress",
-            job_id: Number(data.job_id),
-            status: data.status as IngestionStatus,
-            progress: Number(data.progress ?? 0),
-            processed_chunks: Number(data.processed_chunks ?? 0),
-            total_chunks: Number(data.total_chunks ?? 0),
-          });
-        } else if (evtName === "complete") {
-          onEvent({
-            type: "complete",
-            job_id: Number(data.job_id),
-            document_id: (data.document_id as number | null) ?? null,
-          });
-        } else if (evtName === "error") {
-          onEvent({
-            type: "error",
-            job_id: data.job_id as number | undefined,
-            message: String(data.message ?? "ingestion error"),
-          });
-        }
-      }
+    for await (const message of readSse(res)) {
+      const e = ingestionEvent(message);
+      if (e) onEvent(e);
     }
   },
 
@@ -516,21 +620,6 @@ export const api = {
     return request<Page<QueryLog>>(`/query/history?${q.toString()}`);
   },
 
-  agentChat: (body: {
-    message: string;
-    thread_id?: string | null;
-    collection_id?: number | null;
-    top_k?: number;
-  }) =>
-    request<AgentChatResponse>("/agent/chat", {
-      method: "POST",
-      body: JSON.stringify({
-        message: body.message,
-        thread_id: body.thread_id ?? null,
-        collection_id: body.collection_id ?? null,
-      }),
-    }),
-
   agentChatStream: async (
     body: {
       message: string;
@@ -553,62 +642,9 @@ export const api = {
       signal,
     });
     if (!res.ok) throw await toApiError(res);
-    if (!res.body) throw new ApiError(res.status, null, "Stream failed: empty response");
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep = buf.indexOf("\n\n");
-      while (sep !== -1) {
-        const raw = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        sep = buf.indexOf("\n\n");
-        let evtName = "message";
-        let dataLine = "";
-        for (const line of raw.split("\n")) {
-          if (line.startsWith("event:")) evtName = line.slice(6).trim();
-          else if (line.startsWith("data:")) dataLine += line.slice(5).trim();
-        }
-        if (!dataLine) continue;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(dataLine);
-        } catch {
-          continue;
-        }
-        const data = parsed as Record<string, unknown>;
-        if (evtName === "thread") onEvent({ type: "thread", thread_id: String(data.thread_id) });
-        else if (evtName === "node_start") onEvent({ type: "node_start", node: String(data.node) });
-        else if (evtName === "node_end")
-          onEvent({
-            type: "node_end",
-            node: String(data.node),
-            summary: (data.summary as { action?: string; chunks?: number }) ?? {},
-          });
-        else if (evtName === "token")
-          onEvent({
-            type: "token",
-            node: (data.node as string | null) ?? null,
-            delta: String(data.delta ?? ""),
-          });
-        else if (evtName === "final")
-          onEvent({
-            type: "final",
-            payload: {
-              thread_id: String(data.thread_id),
-              action: (data.action as string | null) ?? null,
-              answer: String(data.answer ?? ""),
-              citations: (data.citations as AgentCitation[]) ?? [],
-              metadata: data.metadata as AgentTurnMetadata,
-              failed: data.failed === true,
-            },
-          });
-        else if (evtName === "error")
-          onEvent({ type: "error", message: String(data.message ?? "stream error") });
-      }
+    for await (const message of readSse(res)) {
+      const e = agentEvent(message);
+      if (e) onEvent(e);
     }
   },
 
@@ -686,7 +722,15 @@ export function fmtDate(iso: string): string {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${yyyy}-${mo}-${dd} ${hh}:${mm}`;
+  return `${yyyy}-${mo}-${dd} ${hh}:${mm} UTC`;
+}
+
+/** A turn's time: just the time for today's turns, with the date for older ones. */
+export function fmtTurnTime(iso: string): string {
+  const d = new Date(iso);
+  const day = d.toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  return day === today ? fmtTimestamp(d) : `${day} ${fmtTimestamp(d)}`;
 }
 
 export function fmtNumber(n: number | null | undefined): string {

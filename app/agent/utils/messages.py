@@ -1,6 +1,7 @@
 """LangChain ↔ provider message format conversion."""
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -9,6 +10,12 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 # problem…"). The answer stays in state, so the thread shows what the user
 # saw, but no prompt, summary or query rewrite reads it (audit N4).
 FAILED_TURN = "failed"
+
+
+def stamped(**additional_kwargs: Any) -> dict[str, Any]:
+    """A message's `additional_kwargs` with the time it was written (UTC,
+    ISO 8601), so a reopened thread shows when each turn happened."""
+    return {**additional_kwargs, "timestamp": datetime.now(UTC).isoformat()}
 
 
 def failed_answer(content: str, **additional_kwargs: Any) -> AIMessage:

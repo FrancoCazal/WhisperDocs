@@ -23,7 +23,10 @@ class ConversationUpdate(BaseModel):
 class ConversationMessage(BaseModel):
     role: str
     content: str
+    # When the message was written (UTC, ISO 8601); older messages have none.
     timestamp: str | None = None
+    # The node that answered (search_docs, answer_direct, ...); assistant only.
+    action: str | None = None
     citations: list[dict] | None = None
     metadata: dict | None = None
     # An assistant message that reports a failure (see AgentChatResponse).

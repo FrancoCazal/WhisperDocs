@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage
 from app.agent.prompts import ANSWER_DIRECT_SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.agent.utils.fixed_replies import fixed_reply
-from app.agent.utils.messages import build_prompt_messages, failed_answer
+from app.agent.utils.messages import build_prompt_messages, failed_answer, stamped
 from app.agent.utils.streaming import stream_generate
 from app.services.llm import llm_service_for
 
@@ -47,7 +47,7 @@ async def answer_direct_node(state: AgentState) -> dict:
         "chunks_retrieved": 0,
     }
     prev = state.get("metadata") or {}
-    kwargs = {"metadata": msg_metadata}
+    kwargs = stamped(metadata=msg_metadata, action="answer_direct")
     message = (
         failed_answer(text, **kwargs)
         if failed

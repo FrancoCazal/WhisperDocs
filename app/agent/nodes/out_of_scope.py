@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage
 
 from app.agent.state import AgentState
 from app.agent.utils.fixed_replies import fixed_reply
+from app.agent.utils.messages import stamped
 
 
 async def out_of_scope_node(state: AgentState) -> dict:
@@ -27,7 +28,7 @@ async def out_of_scope_node(state: AgentState) -> dict:
         "messages": [
             AIMessage(
                 content=fixed_reply("out_of_scope", state["messages"]),
-                additional_kwargs={"metadata": msg_metadata},
+                additional_kwargs=stamped(metadata=msg_metadata, action="out_of_scope"),
             )
         ],
         "metadata": {**prev, "generation_model": None},

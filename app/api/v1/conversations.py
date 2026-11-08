@@ -108,6 +108,7 @@ async def get_conversation_messages(
                 role=role,
                 content=content,
                 timestamp=kwargs.get("timestamp"),
+                action=kwargs.get("action") if role == "assistant" else None,
                 citations=kwargs.get("citations"),
                 metadata=metadata,
                 failed=bool(kwargs.get(FAILED_TURN)),

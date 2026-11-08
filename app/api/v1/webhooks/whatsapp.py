@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.thread_id import normalize_phone, whatsapp_thread_id
+from app.agent.utils.messages import stamped
 from app.config import settings
 from app.db import get_db
 from app.metrics import agent_turn_duration_seconds
@@ -168,7 +169,7 @@ async def whatsapp_webhook(
     try:
         result = await agent.ainvoke(
             {
-                "messages": [HumanMessage(content=body)],
+                "messages": [HumanMessage(content=body, additional_kwargs=stamped())],
                 "collection_id": conv.collection_id,
             },
             config={"configurable": {"thread_id": thread_id}, "recursion_limit": 10},

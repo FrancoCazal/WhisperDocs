@@ -63,7 +63,9 @@ function LastAnswer() {
   const last = useQuery({ queryKey: ["history", 1], queryFn: () => api.history(1) });
   const q = last.data?.[0];
   if (!q) {
-    return <span>LAST ANSWER: {last.isLoading ? "—" : "NONE YET"}</span>;
+    return (
+      <span>LAST ANSWER: {last.isLoading ? "—" : last.isError ? "UNAVAILABLE" : "NONE YET"}</span>
+    );
   }
   return (
     <>
@@ -106,7 +108,7 @@ export function Shell() {
     ROUTE_LABELS[pathname] ??
     (pathname.startsWith("/documentos/")
       ? "DOCUMENTS // DOCUMENT_DETAIL"
-      : pathname.replace("/", "").toUpperCase() || "RESUMEN");
+      : pathname.replace("/", "").toUpperCase() || "SYSTEM_OVERVIEW");
 
   return (
     <div className="min-h-screen flex flex-col bg-surface text-text-primary">

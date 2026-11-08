@@ -29,6 +29,7 @@ function SettingsPage() {
     queryKey: ["admin-settings"],
     queryFn: api.adminSettings,
   });
+  const healthy = health.data?.status === "ok";
 
   return (
     <div>
@@ -43,14 +44,18 @@ function SettingsPage() {
               <LoadingLine label="PROBING" />
             ) : health.error ? (
               <span className="flex items-center gap-2 text-error">
-                <StatDot ok={false} /> UNREACHABLE
+                <StatDot tone="error" /> UNREACHABLE
               </span>
             ) : (
-              <span className="flex items-center gap-2 text-success">
-                <StatDot ok /> {health.data?.status?.toUpperCase()}
+              <span
+                className={`flex items-center gap-2 ${healthy ? "text-success" : "text-warning"}`}
+              >
+                <StatDot tone={healthy ? "success" : "warning"} />{" "}
+                {health.data?.status?.toUpperCase()}
                 {health.data?.checks?.database && (
-                  <span className="text-text-tertiary">
-                    · DB {health.data.checks.database.toUpperCase()}
+                  // A failed check is "error: <exception>": the full text is the tooltip.
+                  <span className="text-text-tertiary" title={health.data.checks.database}>
+                    · DB {health.data.checks.database === "ok" ? "OK" : "ERROR"}
                   </span>
                 )}
               </span>

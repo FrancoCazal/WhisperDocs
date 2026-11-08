@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { fmtCost } from "@/lib/api";
+import { fmtCost, fmtNumber } from "@/lib/api";
 import { Markdown } from "./Markdown";
 import { TurnTrace } from "./Trace";
 import {
@@ -46,6 +46,7 @@ export function AssistantTurn({
   turn,
   canPin,
   pinning,
+  pinned,
   onOpenSources,
   onPin,
   onRetry,
@@ -53,6 +54,8 @@ export function AssistantTurn({
   turn: AssistantTurnData;
   canPin: boolean;
   pinning: boolean;
+  // Saved as a note from this tab.
+  pinned: boolean;
   // Stable across renders: the answer's markdown is memoized on it.
   onOpenSources: (turn: AssistantTurnData, focus: number | null) => void;
   onPin: () => void;
@@ -89,10 +92,12 @@ export function AssistantTurn({
         {answered && canPin && (
           <button
             onClick={onPin}
-            disabled={pinning}
-            className="label-xs text-text-tertiary hover:text-primary-blue"
+            disabled={pinning || pinned}
+            className={`label-xs ${
+              pinned ? "text-primary-blue" : "text-text-tertiary hover:text-primary-blue"
+            }`}
           >
-            {pinning ? "PINNING..." : "★ PIN NOTE"}
+            {pinning ? "PINNING..." : pinned ? "★ PINNED" : "★ PIN NOTE"}
           </button>
         )}
       </div>
@@ -129,8 +134,8 @@ export function AssistantTurn({
 
       {answered && usage && (
         <div className="label-xs text-text-tertiary mt-4 tabular-nums">
-          {usage.latency_ms}MS · {usage.tokens_input.toLocaleString()} IN /{" "}
-          {usage.tokens_output.toLocaleString()} OUT
+          {fmtNumber(usage.latency_ms)}MS · {fmtNumber(usage.tokens_input)} IN /{" "}
+          {fmtNumber(usage.tokens_output)} OUT
           {usage.model ? ` · ${usage.model}` : ""} · {fmtCost(usage.cost_usd)}
         </div>
       )}

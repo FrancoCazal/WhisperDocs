@@ -4,6 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import {
   api,
   fmtTimestamp,
+  fmtTurnTime,
   LIMITS,
   type AgentChatResponse,
   type Conversation,
@@ -51,22 +52,28 @@ const EXAMPLES = [
 // The stream being read, and why it was aborted when it was.
 type StreamRun = { controller: AbortController; reason: "stopped" | "timeout" | null };
 
-function savedTurn(m: ConversationMessage, fallbackTs: string): Turn {
-  const ts = m.timestamp ?? fallbackTs;
+function savedTurn(m: ConversationMessage): Turn {
+  // Messages saved before they were stamped have no time of their own.
+  const ts = m.timestamp ? fmtTurnTime(m.timestamp) : "—";
   if (m.role === "user") return { kind: "user", ts, text: m.content };
   return {
     kind: "assistant",
     ts,
     text: m.content,
-    action: null,
+    action: m.action,
     citations: m.failed ? [] : (m.citations ?? []),
     metadata: m.failed ? null : m.metadata,
     outcome: m.failed ? "failed" : undefined,
   };
 }
 
+// An answer pinned from this tab: its button says PINNED, so a second click
+// does not save the same note twice.
+const pinKey = (threadId: string, text: string) => `${threadId}\n${text}`;
+
 function ChatPage() {
   const qc = useQueryClient();
+  const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
   const navigate = useNavigate({ from: "/chat" });
   const { thread: urlThread = null } = Route.useSearch();
 
@@ -148,7 +155,10 @@ function ChatPage() {
   const pinNoteMut = useMutation({
     mutationFn: ({ tid, content }: { tid: string; content: string }) =>
       api.createNote(tid, { content }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notes"] }),
+    onSuccess: (_note, v) => {
+      setPinned((s) => new Set(s).add(pinKey(v.tid, v.content)));
+      return qc.invalidateQueries({ queryKey: ["notes"] });
+    },
     onError: (e) => setErrorMsg(`pin failed: ${e.message}`),
   });
 
@@ -350,12 +360,7 @@ function ChatPage() {
     try {
       const msgs = await api.getConversationMessages(c.thread_id);
       if (viewRef.current !== view) return;
-      const fallbackTs = fmtTimestamp(c.last_active_at);
-      setTurns(
-        msgs
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .map((m) => savedTurn(m, fallbackTs)),
-      );
+      setTurns(msgs.filter((m) => m.role === "user" || m.role === "assistant").map(savedTurn));
     } catch (e) {
       if (viewRef.current !== view) return;
       setErrorMsg(e instanceof Error ? e.message : String(e));
@@ -632,6 +637,7 @@ function ChatPage() {
                       onOpenSources={openSources}
                       onPin={() => pinTurn(t)}
                       pinning={pinNoteMut.isPending && pinNoteMut.variables?.content === t.text}
+                      pinned={!!threadId && pinned.has(pinKey(threadId, t.text))}
                       onRetry={
                         t.outcome && i === lastIndex && !streaming && !readOnly
                           ? () => retry(i)

@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.utils.messages import stamped
 from app.db import SessionLocal, get_db
 from app.logging_config import get_logger
 from app.metrics import agent_turn_duration_seconds
@@ -69,16 +70,14 @@ async def agent_chat(
         db.add(conv)
         await db.flush()
     else:
-        # Request can override collection per turn (§2.4)
-        if payload.collection_id is not None:
-            conv.collection_id = payload.collection_id
+        apply_turn_collection(conv, payload)
 
     agent = request.app.state.agent
     turn_started = time.perf_counter()
     try:
         result = await agent.ainvoke(
             {
-                "messages": [HumanMessage(content=payload.message)],
+                "messages": [HumanMessage(content=payload.message, additional_kwargs=stamped())],
                 "collection_id": conv.collection_id,
             },
             config={
@@ -134,6 +133,14 @@ async def agent_chat(
     )
 
 
+def apply_turn_collection(conv: Conversation, payload: AgentChatRequest) -> None:
+    """A turn that names `collection_id` moves the thread to it, and an
+    explicit null moves it to every collection (ALL); a turn that leaves the
+    field out keeps the thread's collection (§2.4)."""
+    if "collection_id" in payload.model_fields_set:
+        conv.collection_id = payload.collection_id
+
+
 def _sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
@@ -175,8 +182,8 @@ async def agent_chat_stream(
                 )
                 db.add(conv)
                 await db.flush()
-            elif collection_id is not None:
-                conv.collection_id = collection_id
+            else:
+                apply_turn_collection(conv, payload)
             await db.commit()
             active_collection_id = conv.collection_id
 
@@ -189,7 +196,9 @@ async def agent_chat_stream(
         try:
             async for event in agent.astream_events(
                 {
-                    "messages": [HumanMessage(content=payload.message)],
+                    "messages": [
+                        HumanMessage(content=payload.message, additional_kwargs=stamped())
+                    ],
                     "collection_id": active_collection_id,
                 },
                 config={

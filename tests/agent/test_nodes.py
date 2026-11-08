@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agent.nodes.answer_direct import answer_direct_node
@@ -13,6 +15,13 @@ from app.agent.nodes.search_docs import search_docs_node
 from app.agent.nodes.summarize import summarize_node
 from app.agent.utils.fixed_replies import fixed_reply
 from app.agent.utils.messages import FAILED_TURN
+
+
+def assert_stamped(message: AIMessage, action: str) -> None:
+    """The answer says which node wrote it and when, so a reopened thread
+    shows both (frontend review P3)."""
+    assert message.additional_kwargs["action"] == action
+    assert datetime.fromisoformat(message.additional_kwargs["timestamp"]).tzinfo is not None
 
 
 # ---------- check_compaction ----------
@@ -149,6 +158,7 @@ async def test_out_of_scope_node_returns_canned_message():
     assert "fuera del alcance" in msg.content.lower()
     # No LLM call → no model recorded.
     assert result["metadata"]["generation_model"] is None
+    assert_stamped(msg, "out_of_scope")
 
 
 async def test_out_of_scope_node_answers_in_the_language_of_the_question():
@@ -179,6 +189,7 @@ async def test_ask_clarification_returns_ai_message(fake_provider, mock_llm_serv
     assert len(result["messages"]) == 1
     assert isinstance(result["messages"][0], AIMessage)
     assert "querés saber" in result["messages"][0].content
+    assert_stamped(result["messages"][0], "ask_clarification")
 
 
 async def test_ask_clarification_falls_back_on_error(fake_provider, mock_llm_service_for):
@@ -211,6 +222,7 @@ async def test_answer_direct_returns_ai_message(fake_provider, mock_llm_service_
     result = await answer_direct_node({"messages": [HumanMessage(content="hola")]})
     assert isinstance(result["messages"][0], AIMessage)
     assert "Hola" in result["messages"][0].content
+    assert_stamped(result["messages"][0], "answer_direct")
 
 
 # ---------- search_docs ----------
@@ -255,6 +267,7 @@ async def test_search_docs_with_chunks(
     assert result["metadata"]["retrieval_chunks_count"] == 2
     assert result["metadata"]["retrieval_top_relevance"] == 0.9
     assert result["metadata"]["collection_id_active"] == 3
+    assert_stamped(result["messages"][0], "search_docs")
 
 
 async def test_search_docs_top_relevance_is_the_best_cosine(

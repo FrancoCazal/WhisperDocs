@@ -209,7 +209,10 @@ function Dashboard() {
                           {fmtNumber(q.tokens_input + q.tokens_output)}
                         </td>
                         <td className="py-3 text-center pr-5">
-                          <StatDot ok={q.latency_ms < 5000} />
+                          <StatDot
+                            tone={q.latency_ms < 5000 ? "success" : "error"}
+                            label={q.latency_ms < 5000 ? "OK" : "SLOW"}
+                          />
                         </td>
                       </tr>
                     ))}

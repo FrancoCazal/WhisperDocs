@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage
 from app.agent.prompts import CLARIFICATION_SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.agent.utils.fixed_replies import fixed_reply
-from app.agent.utils.messages import build_prompt_messages
+from app.agent.utils.messages import build_prompt_messages, stamped
 from app.agent.utils.streaming import stream_generate
 from app.services.llm import llm_service_for
 
@@ -47,6 +47,11 @@ async def ask_clarification_node(state: AgentState) -> dict:
     }
     prev = state.get("metadata") or {}
     return {
-        "messages": [AIMessage(content=text, additional_kwargs={"metadata": msg_metadata})],
+        "messages": [
+            AIMessage(
+                content=text,
+                additional_kwargs=stamped(metadata=msg_metadata, action="ask_clarification"),
+            )
+        ],
         "metadata": {**prev, **md},
     }

@@ -6,7 +6,10 @@ import {
   COSINE_HINT,
   fmtCosine,
   fmtCost,
+  fmtDate,
+  fmtNumber,
   fmtTimestamp,
+  fmtTurnTime,
   LIMITS,
   type Citation,
   type QueryLog,
@@ -22,7 +25,7 @@ export const Route = createFileRoute("/consulta")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "Consulta — WhisperDocs" },
+      { title: "Query — WhisperDocs" },
       {
         name: "description",
         content: "Conversational query session against the WhisperDocs knowledge base.",
@@ -61,10 +64,10 @@ function logsToSession(sessionId: string, logs: QueryLog[]): Session {
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   );
   const turns: Turn[] = sorted.flatMap((log) => [
-    { kind: "user" as const, ts: fmtTimestamp(log.created_at), text: log.question },
+    { kind: "user" as const, ts: fmtTurnTime(log.created_at), text: log.question },
     {
       kind: "assistant" as const,
-      ts: fmtTimestamp(log.created_at),
+      ts: fmtTurnTime(log.created_at),
       text: log.answer,
       citations: [],
       metadata: {
@@ -138,9 +141,7 @@ function SessionList({
             <div className="body-sm text-text-secondary truncate mt-1">
               {preview.length > 40 ? preview.slice(0, 39) + "…" : preview}
             </div>
-            <div className="label-xs text-text-tertiary mt-1">
-              {new Date(s.createdAt).toLocaleTimeString("en-GB")}
-            </div>
+            <div className="label-xs text-text-tertiary mt-1">{fmtDate(s.createdAt)}</div>
           </button>
         );
       })}
@@ -375,6 +376,7 @@ function ConsultaPage() {
                 ) : (
                   <AssistantTurn
                     key={i}
+                    index={i}
                     turn={t}
                     onToggle={() =>
                       patchActive((s) => ({
@@ -395,10 +397,9 @@ function ConsultaPage() {
                   {PROGRESS_STEPS.slice(0, progressIdx + 1).map((s, i) => (
                     <div
                       key={s}
-                      className="label-sm text-text-secondary"
-                      style={{
-                        color: i === progressIdx ? "var(--text-primary)" : "var(--text-tertiary)",
-                      }}
+                      className={`label-sm ${
+                        i === progressIdx ? "text-text-primary" : "text-text-tertiary"
+                      }`}
                     >
                       {s} {i === progressIdx ? "▌" : "✓"}
                     </div>
@@ -456,14 +457,25 @@ function UserTurn({ turn }: { turn: Extract<Turn, { kind: "user" }> }) {
 }
 
 function AssistantTurn({
+  index,
   turn,
   onToggle,
 }: {
+  // The turn's place in the session: its citations' ids are unique with it.
+  index: number;
   turn: Extract<Turn, { kind: "assistant" }>;
   onToggle: () => void;
 }) {
   // Render answer with [N] citations highlighted
   const parts = turn.text.split(/(\[\d+\])/g);
+  const citeId = (n: number | string) => `cite-${index}-${n}`;
+  // A [n] opens the citations if they are closed, then scrolls to the one cited.
+  const goToCite = (n: string) => {
+    if (!turn.expanded) onToggle();
+    requestAnimationFrame(() =>
+      document.getElementById(citeId(n))?.scrollIntoView({ block: "nearest" }),
+    );
+  };
   return (
     <div>
       <div className="label-sm text-text-tertiary mb-2">
@@ -474,7 +486,11 @@ function AssistantTurn({
           /^\[\d+\]$/.test(p) ? (
             <a
               key={i}
-              href={`#cite-${turn.ts}-${p.replace(/\D/g, "")}`}
+              href={`#${citeId(p.replace(/\D/g, ""))}`}
+              onClick={(e) => {
+                e.preventDefault();
+                goToCite(p.replace(/\D/g, ""));
+              }}
               className="text-text-primary font-semibold mx-0.5 hover:bg-text-primary hover:text-surface px-0.5"
             >
               {p}
@@ -491,7 +507,7 @@ function AssistantTurn({
             onClick={onToggle}
             className="label-sm text-text-secondary hover:text-text-primary"
           >
-            {turn.expanded ? "▾" : "▸"} CITAS [{turn.citations.length}]
+            {turn.expanded ? "▾" : "▸"} CITATIONS [{turn.citations.length}]
           </button>
           {turn.expanded && (
             <div className="mt-3 space-y-2">
@@ -499,7 +515,7 @@ function AssistantTurn({
                 const num = String(idx + 1).padStart(2, "0");
                 return (
                   <div
-                    id={`cite-${turn.ts}-${idx + 1}`}
+                    id={citeId(idx + 1)}
                     key={c.chunk_id}
                     className="border border-border-subtle bg-surface-container-low p-3"
                   >
@@ -522,8 +538,8 @@ function AssistantTurn({
       )}
 
       <div className="label-xs text-text-tertiary mt-4 tabular-nums">
-        {turn.metadata.latency_ms}MS · {turn.metadata.tokens_input.toLocaleString()} IN /{" "}
-        {turn.metadata.tokens_output.toLocaleString()} OUT · {turn.metadata.model} ·{" "}
+        {fmtNumber(turn.metadata.latency_ms)}MS · {fmtNumber(turn.metadata.tokens_input)} IN /{" "}
+        {fmtNumber(turn.metadata.tokens_output)} OUT · {turn.metadata.model} ·{" "}
         {fmtCost(turn.metadata.cost_usd)}
       </div>
       <div className="border-b border-border-subtle mt-4" />
