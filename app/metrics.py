@@ -41,6 +41,22 @@ errors_total = Counter(
     labelnames=("type",),
 )
 
+# HTTP rate, errors and duration (audit E13), from `HTTPMetricsMiddleware`.
+# `route` is the matched route's template, never the raw path, so its values
+# stay few; a path no route matches is "unmatched".
+http_requests_total = Counter(
+    "whisperdocs_http_requests_total",
+    "HTTP requests by method, route template and status code",
+    labelnames=("method", "route", "status"),
+)
+
+http_request_duration_seconds = Histogram(
+    "whisperdocs_http_request_duration_seconds",
+    "HTTP request duration until the response's last byte; a stream's covers the whole stream",
+    labelnames=("method", "route"),
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 15.0, 30.0, 60.0),
+)
+
 
 def render_metrics() -> tuple[bytes, str]:
     return generate_latest(), CONTENT_TYPE_LATEST

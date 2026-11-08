@@ -20,6 +20,7 @@ from app.agent.checkpointer import (
 from app.api.auth import configured_key, require_api_key
 from app.api.body_limit import BodySizeLimitMiddleware
 from app.api.errors import RequestContextMiddleware, install_error_handlers
+from app.api.http_metrics import HTTPMetricsMiddleware
 from app.agent.graph import build_agent_graph
 from app.config import settings
 from app.logging_config import configure_logging, get_logger
@@ -125,6 +126,9 @@ app.add_middleware(
     limits={API_PREFIX + path: limit for path, limit in documents.BODY_LIMITS.items()},
 )
 app.add_middleware(RequestContextMiddleware)
+# Outside the request context, so an unhandled exception counts as the 500 it
+# answers; inside CORS, so preflights are not counted.
+app.add_middleware(HTTPMetricsMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,

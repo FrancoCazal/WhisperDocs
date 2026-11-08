@@ -27,7 +27,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 - **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE. Parsing runs off the event loop, and a job cut short by a restart ends as `failed`, not stuck.
 - **Eval suite (50-query golden set)** — single-turn retrieval + generation path. LLM-as-judge for correctness + hallucination, retrieval precision/recall@k, latency p50/p95, generation cost USD. Diff between runs for regression detection.
 - **Cost tracking** — per-call USD via `pricing.py`, persisted on `query_logs`. Single source for runner, API, dashboard.
-- **Logs, metrics and traces** — `structlog` JSON output, Prometheus `/metrics` (turn duration, tokens, retrieval relevance, errors), and an OpenTelemetry trace per turn: each graph node, model call, embedding and retrieval, with its tokens and cost, under the GenAI semantic conventions. A local Langfuse shows them (see [Tracing](#tracing)).
+- **Logs, metrics and traces** — `structlog` JSON output, Prometheus `/metrics` (HTTP rate, errors and latency per route, turn duration, tokens, retrieval relevance, errors) with a Grafana dashboard and alert rules, and an OpenTelemetry trace per turn: each graph node, model call, embedding and retrieval, with its tokens and cost, under the GenAI semantic conventions. A local Langfuse shows them (see [Tracing](#tracing)).
 - **WhatsApp integration** — full agent pipeline over Twilio webhooks, answered in the background so Twilio's 15 s timeout never cuts a turn.
 - **MCP server** — the knowledge base for Claude Code, Claude Desktop and Cursor:
   search, answers with citations, the lists and a resource per document, over
@@ -276,6 +276,22 @@ compose file creates the project and its keys on the first start; the header
 is their Basic auth. These are local-only credentials. Any other OTLP/HTTP
 backend works the same way: Phoenix, Jaeger, an OpenTelemetry Collector or
 Langfuse Cloud. Without an endpoint, no span leaves the process.
+
+### Dashboard and alerts
+
+`ops/` holds a Grafana dashboard and Prometheus alert rules over `/metrics`:
+HTTP rate, 5xx share and p95 by route; turns per action and their latency;
+model calls, failures and tokens; retrieval relevance.
+
+```bash
+docker compose --profile metrics up -d    # Grafana on http://localhost:3001, Prometheus on :9090
+```
+
+The dashboard opens without signing in (`admin` / `whisperdocs-local` to edit).
+The alerts (the API unreachable, over 5% of 5xx, a model role failing, slow
+turns) show at http://localhost:9090/alerts; route them with an Alertmanager
+in a deployment. With `API_KEY` set, Prometheus needs the key: see
+[`ops/prometheus/prometheus.yml`](ops/prometheus/prometheus.yml).
 
 ---
 

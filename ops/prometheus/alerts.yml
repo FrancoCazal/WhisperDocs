@@ -1,0 +1,53 @@
+# Alert rules over the API's metrics (audit E13). Thresholds:
+# - 5xx: more than 5% of requests for 5 minutes.
+# - A model role: more than half of its calls failing for 5 minutes (billing,
+#   auth, quota, an outage); the UI shows the same from /admin/model-status.
+# - Turns: p95 above 13 s for 10 minutes, about half again the measured p95
+#   (9.1 s) and a bucket bound of the turn histogram.
+groups:
+  - name: whisperdocs
+    rules:
+      - alert: WhisperDocsDown
+        expr: up{job="whisperdocs"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus cannot scrape the API.
+          description: The API is down, or its metrics route answers an error (an API_KEY without the key in prometheus.yml).
+
+      - alert: WhisperDocsHTTPErrors
+        expr: |
+          sum(rate(whisperdocs_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(whisperdocs_http_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 5% of the API's requests answer 5xx.
+          description: "Share of 5xx in the last 5 minutes: {{ $value | humanizePercentage }}."
+
+      - alert: WhisperDocsModelFailing
+        expr: |
+          sum by (role) (rate(whisperdocs_model_calls_total{outcome!="ok"}[10m]))
+            / sum by (role) (rate(whisperdocs_model_calls_total[10m]))
+          > 0.5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Most {{ $labels.role }} model calls are failing."
+          description: "Failing share in the last 10 minutes: {{ $value | humanizePercentage }}. The failure's kind is the outcome label of whisperdocs_model_calls_total."
+
+      - alert: WhisperDocsSlowTurns
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(whisperdocs_agent_turn_duration_seconds_bucket[10m])))
+          > 13
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent turns are slow.
+          description: "Turn p95 over the last 10 minutes: {{ $value | humanizeDuration }}."

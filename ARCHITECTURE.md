@@ -665,6 +665,20 @@ Postgres (the compose database)
   - `whisperdocs_retrieval_chunks` (histogram)
   - `whisperdocs_retrieval_top_relevance` (histogram)
   - `whisperdocs_errors_total{type}`
+  - `whisperdocs_http_requests_total{method,route,status}` and
+    `whisperdocs_http_request_duration_seconds{method,route}` — every HTTP
+    request, from `HTTPMetricsMiddleware` (`app/api/http_metrics.py`).
+    `route` is the template FastAPI matched (`/api/v1/documents/{document_id}`),
+    or `unmatched`, so a scanner's paths never become label values; a body
+    refused by its declared size is answered before routing, so its 413 is
+    `unmatched` too. The
+    duration runs until the response's last byte, so a stream's covers the
+    whole stream. CORS preflights are answered outside it and not counted.
+  - `ops/` holds a Grafana dashboard (HTTP rate, 5xx share and p95 by route;
+    turns and their latency; model calls, failures and tokens; retrieval) and
+    Prometheus alert rules: the API unreachable, over 5% of 5xx, a model role
+    failing over half its calls, turn p95 over 13 s. `docker compose --profile
+    metrics` runs both; nothing routes the alerts (no Alertmanager).
 - **Cost tracking** — `query_logs.cost_usd` populated per turn via `pricing.estimate_cost_usd(model, tokens_in, tokens_out)`.
 - **Health** — `/health` with `?deep=true` checks DB ping + pgvector extension + embedder reachability.
 - **Model status** — `app/services/model_status.py` keeps, for each role

@@ -10,6 +10,8 @@ env/
 
 .env
 .env.local
+# The API key Prometheus sends when API_KEY is set.
+ops/prometheus/api_key
 
 .graphify*
 .pytest_cache/

@@ -201,6 +201,46 @@ services:
       timeout: 3s
       retries: 10
 
+  # ---- Profile `metrics`: Prometheus and Grafana ------------------------------
+  # `docker compose --profile metrics up -d`, then the WhisperDocs dashboard at
+  # http://localhost:3001 (open to view; admin / whisperdocs-local to edit)
+  # and the alert rules at http://localhost:9090/alerts. Prometheus scrapes the
+  # API every 15 s; with API_KEY set, see ops/prometheus/prometheus.yml.
+  prometheus:
+    profiles: [metrics]
+    image: prom/prometheus:v3.15.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./ops/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    profiles: [metrics]
+    image: grafana/grafana:13.2.5
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: whisperdocs-local
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/whisperdocs.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      # 3000 is Langfuse's.
+      - "127.0.0.1:3001:3000"
+
 volumes:
   pgdata:
   langfuse_postgres_data:
@@ -208,3 +248,5 @@ volumes:
   langfuse_clickhouse_logs:
   langfuse_minio_data:
   langfuse_redis_data:
+  prometheus_data:
+  grafana_data:

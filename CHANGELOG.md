@@ -71,6 +71,11 @@ Fixes from the November 2026 audit, and a review of the frontend.
   links a row to its trace. Spans are exported over OTLP/HTTP only when
   `OTEL_EXPORTER_OTLP_ENDPOINT` is set; `docker compose --profile tracing`
   runs Langfuse locally to read them. ADR 0006 has the design.
+- HTTP metrics: `whisperdocs_http_requests_total` and
+  `whisperdocs_http_request_duration_seconds`, by method, route template
+  and status. A Grafana dashboard and Prometheus alert rules in `ops/`
+  (the API unreachable, 5xx, a failing model role, slow turns);
+  `docker compose --profile metrics` runs both.
 
 ### Security
 
