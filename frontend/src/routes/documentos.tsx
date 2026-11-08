@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   fmtDate,
@@ -37,15 +37,41 @@ export const Route = createFileRoute("/documentos")({
 });
 
 type UploadStatus = {
+  // Rows are found by id: a later batch, or a row cleared, never shifts them.
+  id: number;
   filename: string;
-  status: "queued" | "running" | "success" | "error";
+  status: "queued" | "uploading" | "running" | "success" | "error";
   progress: number;
   stage: IngestionStatus | null;
   error?: string;
 };
 
+type QueuedUpload = { id: number; file: File; collectionId: number };
+
+// Files ingest a few at a time: each one holds an SSE stream until it is
+// indexed, and the browser allows six connections per host.
+const UPLOAD_CONCURRENCY = 3;
+// When a stream ends without its final event, the job is polled instead.
+const POLL_MS = 2000;
+const POLL_MAX_MISSES = 5;
+
+function wait(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
+}
+
 const STAGE_LABEL: Record<IngestionStatus, string> = {
-  pending: "QUEUED",
+  // On the server, waiting for a worker; "QUEUED" is a file not sent yet.
+  pending: "PENDING",
   extracting: "EXTRACTING",
   chunking: "CHUNKING",
   embedding: "EMBEDDING",
@@ -63,6 +89,20 @@ function DocumentsPage() {
     search.collection_id ?? null,
   );
   const [uploadStatuses, setUploadStatuses] = useState<UploadStatus[]>([]);
+  // The upload queue and the controllers of the files in flight. Leaving the
+  // page aborts them; jobs the server already has keep running there.
+  const uploads = useRef({
+    nextId: 0,
+    queue: [] as QueuedUpload[],
+    active: new Set<AbortController>(),
+  });
+  useEffect(() => {
+    const u = uploads.current;
+    return () => {
+      u.queue.length = 0;
+      for (const c of u.active) c.abort();
+    };
+  }, []);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -78,40 +118,70 @@ function DocumentsPage() {
   const uploadTarget = uploadCollection ?? collections.data?.[0]?.id ?? null;
   const noCollections = collections.isSuccess && collections.data.length === 0;
 
-  function updateStatus(idx: number, patch: Partial<UploadStatus>) {
-    setUploadStatuses((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  function updateStatus(id: number, patch: Partial<UploadStatus>) {
+    setUploadStatuses((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
 
-  async function ingestFile(file: File, cid: number, idx: number) {
+  async function ingestFile({ id, file, collectionId }: QueuedUpload, signal: AbortSignal) {
+    const succeed = () => updateStatus(id, { status: "success", stage: "complete", progress: 100 });
+    const fail = (error: string) => updateStatus(id, { status: "error", stage: "failed", error });
     try {
-      const { job_id } = await api.uploadAsync(cid, file);
-      updateStatus(idx, { status: "running", stage: "pending" });
-      await api.streamIngestionJob(job_id, (e) => {
-        if (e.type === "progress") {
-          updateStatus(idx, {
-            status: "running",
-            stage: e.status,
-            progress: e.progress,
-          });
-        } else if (e.type === "complete") {
-          updateStatus(idx, {
-            status: "success",
-            stage: "complete",
-            progress: 100,
-          });
-        } else if (e.type === "error") {
-          updateStatus(idx, {
-            status: "error",
-            stage: "failed",
-            error: e.message,
-          });
+      updateStatus(id, { status: "uploading" });
+      const { job_id } = await api.uploadAsync(collectionId, file, { signal });
+      updateStatus(id, { status: "running", stage: "pending" });
+      let ended = false;
+      try {
+        await api.streamIngestionJob(
+          job_id,
+          (e) => {
+            if (e.type === "progress") {
+              updateStatus(id, { status: "running", stage: e.status, progress: e.progress });
+            } else if (e.type === "complete") {
+              ended = true;
+              succeed();
+            } else if (e.type === "error") {
+              ended = true;
+              fail(e.message);
+            }
+          },
+          signal,
+        );
+      } catch (err) {
+        // A dropped stream (the API restarting, the network) is no verdict:
+        // the job runs on, so ask it below.
+        if (signal.aborted) throw err;
+      }
+      // The stream ended without its final event: poll the job itself.
+      let misses = 0;
+      while (!ended) {
+        try {
+          const job = await api.getIngestionJob(job_id);
+          misses = 0;
+          if (job.status === "complete") return succeed();
+          if (job.status === "failed") return fail(job.error_message ?? "ingestion failed");
+          updateStatus(id, { status: "running", stage: job.status, progress: job.progress });
+        } catch (err) {
+          if (++misses >= POLL_MAX_MISSES) throw err;
         }
-      });
+        await wait(POLL_MS, signal);
+      }
     } catch (err) {
-      updateStatus(idx, {
-        status: "error",
-        stage: "failed",
-        error: err instanceof Error ? err.message : String(err),
+      if (signal.aborted) return;
+      fail(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Starts queued files while there is room; each one that ends makes room.
+  function pump() {
+    const u = uploads.current;
+    while (u.active.size < UPLOAD_CONCURRENCY && u.queue.length > 0) {
+      const next = u.queue.shift()!;
+      const ctrl = new AbortController();
+      u.active.add(ctrl);
+      void ingestFile(next, ctrl.signal).finally(() => {
+        u.active.delete(ctrl);
+        void qc.invalidateQueries({ queryKey: ["documents"] });
+        pump();
       });
     }
   }
@@ -157,21 +227,29 @@ function DocumentsPage() {
 
   function handleFiles(files: File[]) {
     // No target: the zone says to create a collection instead of taking files.
-    const cid = uploadTarget;
-    if (files.length === 0 || cid === null) return;
-    const initial: UploadStatus[] = files.map((f) => ({
-      filename: f.name,
-      status: "queued",
-      progress: 0,
-      stage: null,
-    }));
-    setUploadStatuses(initial);
-    files.forEach((file, idx) => {
-      ingestFile(file, cid, idx).then(() => {
-        qc.invalidateQueries({ queryKey: ["documents"] });
-      });
-    });
+    const collectionId = uploadTarget;
+    if (files.length === 0 || collectionId === null) return;
+    const u = uploads.current;
+    const batch = files.map((file) => ({ id: u.nextId++, file, collectionId }));
+    // A new batch joins the list; rows of earlier ones stay until cleared.
+    setUploadStatuses((prev) => [
+      ...prev,
+      ...batch.map((b) => ({
+        id: b.id,
+        filename: b.file.name,
+        status: "queued" as const,
+        progress: 0,
+        stage: null,
+      })),
+    ]);
+    u.queue.push(...batch);
+    pump();
   }
+
+  const queuedCount = uploadStatuses.filter((u) => u.status === "queued").length;
+  const finishedCount = uploadStatuses.filter(
+    (u) => u.status === "success" || u.status === "error",
+  ).length;
 
   return (
     <div>
@@ -260,7 +338,26 @@ function DocumentsPage() {
 
         {uploadStatuses.length > 0 && (
           <div className="mt-3 border border-border-subtle bg-surface-container-low">
-            {uploadStatuses.map((u, i) => {
+            <div className="px-4 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle label-xs text-text-tertiary">
+              <span>
+                UPLOADS · {uploadStatuses.length - queuedCount - finishedCount} IN PROGRESS
+                {queuedCount > 0 && ` · ${queuedCount} QUEUED, NOT SENT IF YOU LEAVE THIS PAGE`}
+              </span>
+              {finishedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setUploadStatuses((prev) =>
+                      prev.filter((u) => u.status !== "success" && u.status !== "error"),
+                    )
+                  }
+                  className="label-xs text-text-secondary hover:text-text-primary"
+                >
+                  CLEAR FINISHED
+                </button>
+              )}
+            </div>
+            {uploadStatuses.map((u) => {
               const labelColor =
                 u.status === "success"
                   ? "text-success"
@@ -272,11 +369,13 @@ function DocumentsPage() {
                   ? "✓ INDEXED"
                   : u.status === "error"
                     ? `✗ ${u.error ?? "FAILED"}`
-                    : u.stage
-                      ? STAGE_LABEL[u.stage]
-                      : "QUEUED";
+                    : u.status === "uploading"
+                      ? "UPLOADING"
+                      : u.stage
+                        ? STAGE_LABEL[u.stage]
+                        : "QUEUED";
               return (
-                <div key={i} className="px-4 py-2 border-b border-border-subtle/50">
+                <div key={u.id} className="px-4 py-2 border-b border-border-subtle/50">
                   <div className="flex items-center justify-between body-sm">
                     <span className="text-text-primary truncate">{u.filename}</span>
                     <span className={`label-sm ${labelColor}`}>
@@ -284,12 +383,12 @@ function DocumentsPage() {
                     </span>
                   </div>
                   {u.status === "running" && (
-                    <div className="mt-1 h-1 bg-surface-container">
-                      <div
-                        className="h-full bg-text-primary transition-all duration-200"
-                        style={{ width: `${u.progress}%` }}
-                      />
-                    </div>
+                    <progress
+                      value={u.progress}
+                      max={100}
+                      aria-label={`${u.filename} progress`}
+                      className="mt-1 block w-full h-1 appearance-none border-0 bg-surface-container [&::-webkit-progress-bar]:bg-surface-container [&::-webkit-progress-value]:bg-text-primary [&::-webkit-progress-value]:transition-all [&::-moz-progress-bar]:bg-text-primary"
+                    />
                   )}
                 </div>
               );

@@ -404,14 +404,19 @@ export const api = {
       }),
     }),
 
-  uploadAsync: (collectionId: number, file: File, title?: string) => {
+  uploadAsync: (
+    collectionId: number,
+    file: File,
+    opts: { title?: string; signal?: AbortSignal } = {},
+  ) => {
     const fd = new FormData();
     fd.append("collection_id", String(collectionId));
     fd.append("file", file);
-    if (title) fd.append("title", title);
+    if (opts.title) fd.append("title", opts.title);
     return request<{ job_id: number; status: IngestionStatus }>("/documents/upload-async", {
       method: "POST",
       body: fd,
+      signal: opts.signal,
     });
   },
 
