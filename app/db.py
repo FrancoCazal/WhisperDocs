@@ -9,7 +9,16 @@ from app.config import settings
 
 # pool_pre_ping: after a Postgres restart, a pooled connection is dead; the
 # ping replaces it on checkout instead of failing the request that drew it.
-engine = create_async_engine(settings.database_url, echo=False, future=True, pool_pre_ping=True)
+# hide_parameters: a database error's message leaves out the statement's
+# values, which can be a WhatsApp number, a question or a document's text, so
+# the traceback a log line carries holds none of them (audit A11).
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,
+    hide_parameters=True,
+)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 

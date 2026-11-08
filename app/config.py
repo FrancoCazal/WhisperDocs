@@ -136,7 +136,8 @@ class Settings(BaseSettings):
     api_key: SecretStr | None = None
     # Requests a minute per client (its API key, or its IP without one) on the
     # routes that spend (audit R9, app/api/rate_limit.py); 0 turns a limit
-    # off. Questions: /query, /retrieve, /agent/chat*, /health?deep=true.
+    # off. Questions: /query, /retrieve, /agent/chat*, /health?deep=true,
+    # and each WhatsApp number's messages.
     rate_limit_per_minute: int = 30
     # Uploads, one request per file: the frontend sends a folder three at a
     # time.

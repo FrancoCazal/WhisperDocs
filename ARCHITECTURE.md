@@ -534,6 +534,17 @@ From the outside in: CORS, then `RequestContextMiddleware`
   bucket and client, in process memory. The key names the client only when
   auth is on: with it off, a made-up key per request would get a fresh
   window.
+- **WhatsApp webhook** (`app/api/v1/webhooks/whatsapp.py`). Twilio waits at
+  most 15 s for it, and a turn's p95 was 9.1 s, so it only checks the
+  signature, drops a repeated `MessageSid` and a number over the questions'
+  limit, and returns 204. The turn runs in a task
+  (`app/services/whatsapp/inbound.py`) with its own session. A number's
+  messages run one at a time, in the order they came: a lock per thread,
+  dropped with its last waiter. The ids seen, the locks and the tasks live in
+  process memory, like the rate limits; on shutdown the turns get 5 s, then
+  are cancelled. No log line carries a number: the thread id is a UUID5 of
+  it, a Twilio failure logs its status and code without its message, and the
+  engine hides statement parameters (`hide_parameters`).
 
 ---
 

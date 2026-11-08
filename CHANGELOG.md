@@ -95,9 +95,20 @@ Fixes from the November 2026 audit, and a review of the frontend.
   list endpoints bound `limit`.
 - Database passwords are redacted from logs, and CORS uses an allowlist
   (`CORS_ALLOWED_ORIGINS`).
+- WhatsApp: no log line carries a phone number. Delivery statuses and sent
+  messages no longer log the recipient, a Twilio failure logs its status
+  and code but not its message, and database errors leave out their
+  statement's values (`hide_parameters`).
+- WhatsApp: a repeated message (same `MessageSid`) is answered once, and
+  each number gets the questions' limit per minute.
 
 ### Changed
 
+- The WhatsApp webhook answers 204 at once and runs the turn in the
+  background: Twilio waits at most 15 s, and a turn's p95 was 9.1 s. A
+  number's messages are answered one at a time, in order, so a
+  `/coleccion` sent before a question applies to it. One Twilio client is
+  reused instead of one per message.
 - Every error body is `{detail, code, request_id}`, with a stable `code`
   (`not_found`, `rate_limited`, `upstream_error`, ...). A 5xx message quotes
   the request id, which is also the `X-Request-ID` header and is on every

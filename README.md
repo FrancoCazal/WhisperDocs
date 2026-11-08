@@ -28,7 +28,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 - **Eval suite (50-query golden set)** — single-turn retrieval + generation path. LLM-as-judge for correctness + hallucination, retrieval precision/recall@k, latency p50/p95, generation cost USD. Diff between runs for regression detection.
 - **Cost tracking** — per-call USD via `pricing.py`, persisted on `query_logs`. Single source for runner, API, dashboard.
 - **Logs, metrics and traces** — `structlog` JSON output, Prometheus `/metrics` (turn duration, tokens, retrieval relevance, errors), and an OpenTelemetry trace per turn: each graph node, model call, embedding and retrieval, with its tokens and cost, under the GenAI semantic conventions. A local Langfuse shows them (see [Tracing](#tracing)).
-- **WhatsApp integration** — full agent pipeline over Twilio webhooks.
+- **WhatsApp integration** — full agent pipeline over Twilio webhooks, answered in the background so Twilio's 15 s timeout never cuts a turn.
 - **MCP server** — the knowledge base for Claude Code, Claude Desktop and Cursor:
   search, answers with citations, the lists and a resource per document, over
   stdio. Each tool calls the same service as its REST route.
@@ -306,6 +306,12 @@ other machine, set `API_KEY`.
   its `kind`: `billing`, `auth`, `rate_limit`, `timeout`, `unavailable`,
   `invalid_request`, `bad_response` or `unknown`.
 - **Uploads.** Size limits are checked before the body is parsed (see above).
+- **WhatsApp.** The webhook checks Twilio's signature, drops a message it
+  already took (same `MessageSid`) and a number past `RATE_LIMIT_PER_MINUTE`
+  messages a minute, and answers 204 at once. The turn runs in the
+  background, one message at a time per number, in the order they came. No
+  log line carries a phone number: threads are a UUID5 of it, Twilio's error
+  messages are left out, and database errors hide their statement's values.
 - **Not covered.** There are no user accounts or roles: whoever has the key
   can read and delete every document and thread. The API serves no TLS, so
   put a TLS proxy in front of it. Documents and questions go to the

@@ -20,6 +20,7 @@ from app.config import settings
 from app.logging_config import configure_logging, get_logger
 from app.services.ingestion import fail_interrupted_jobs, stop_ingestions
 from app.services.llm import validate_agent_models
+from app.services.whatsapp.inbound import stop_replies
 from app.telemetry import configure_tracing
 from app.api.v1 import (
     admin,
@@ -77,9 +78,12 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         gc.unfreeze()
-        cancelled = await stop_ingestions()
+        # Together: each waits up to 5 s, and Docker kills the process at 10.
+        cancelled, unanswered = await asyncio.gather(stop_ingestions(), stop_replies())
         if cancelled:
             logger.warning("ingestion_jobs_cancelled_on_shutdown", count=cancelled)
+        if unanswered:
+            logger.warning("whatsapp_replies_cancelled_on_shutdown", count=unanswered)
         await close_checkpointer()
 
 
