@@ -69,6 +69,12 @@ class AggregateMetrics(BaseModel):
     by_difficulty: dict[str, dict]
     by_category: dict[str, dict]
 
+    def measured(self, name: str) -> float | None:
+        """A metric the report saved, or None. Reports from before recall,
+        the latency percentiles and the judge's error count lack them, and
+        the schema's default 0 would read as a measurement."""
+        return getattr(self, name) if name in self.model_fields_set else None
+
 
 class EvalReport(BaseModel):
     run_id: str
