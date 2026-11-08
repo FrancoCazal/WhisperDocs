@@ -4,7 +4,12 @@ import { useState } from "react";
 import { api, fmtDate, fmtNumber, LIMITS, type DocumentRead } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
-import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
+import {
+  EmptyState,
+  ErrorBanner,
+  LoadingLine,
+  emptyActionCls,
+} from "@/components/ui-kit/EmptyState";
 import { Modal, Field, inputCls, textareaCls } from "@/components/ui-kit/Modal";
 
 export const Route = createFileRoute("/colecciones")({
@@ -71,7 +76,11 @@ function CollectionsPage() {
             <LoadingLine />
           </div>
         ) : !collections.data || collections.data.length === 0 ? (
-          <EmptyState label="NO COLLECTIONS · CREATE ONE TO BEGIN" />
+          <EmptyState label="NO COLLECTIONS · CREATE ONE TO BEGIN">
+            <button type="button" onClick={() => setOpen(true)} className={emptyActionCls}>
+              + NEW COLLECTION
+            </button>
+          </EmptyState>
         ) : (
           <table className="w-full min-w-[680px]">
             <thead>

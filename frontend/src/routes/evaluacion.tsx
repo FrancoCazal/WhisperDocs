@@ -5,7 +5,12 @@ import { api, fmtCost, fmtDate, fmtPct, type EvalReport } from "@/lib/api";
 import { parseEvalDataset, STARTER_DATASET } from "@/lib/evalDataset";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
-import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
+import {
+  EmptyState,
+  ErrorBanner,
+  LoadingLine,
+  emptyActionCls,
+} from "@/components/ui-kit/EmptyState";
 import { Modal, Field, textareaCls, inputCls } from "@/components/ui-kit/Modal";
 import { StatDot } from "@/components/ui-kit/StatDot";
 
@@ -58,19 +63,18 @@ function EvaluacionPage() {
     onError: (e) => setFormError(e instanceof Error ? e.message : String(e)),
   });
 
+  function openForm() {
+    setFormError(null);
+    setOpen(true);
+  }
+
   return (
     <div>
       <PageHeader
         title="EVALUATION"
         subtitle="BENCHMARK & TELEMETRY"
         actions={
-          <Btn
-            variant="primary"
-            onClick={() => {
-              setFormError(null);
-              setOpen(true);
-            }}
-          >
+          <Btn variant="primary" onClick={openForm}>
             + RUN NEW EVALUATION
           </Btn>
         }
@@ -106,7 +110,11 @@ function EvaluacionPage() {
             <LoadingLine />
           </div>
         ) : !runs.data || runs.data.length === 0 ? (
-          <EmptyState label="NO HISTORICAL RUNS" />
+          <EmptyState label="NO HISTORICAL RUNS">
+            <button type="button" onClick={openForm} className={emptyActionCls}>
+              SET UP A RUN
+            </button>
+          </EmptyState>
         ) : (
           <table className="w-full min-w-[640px]">
             <thead>

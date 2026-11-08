@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import {
@@ -11,7 +11,12 @@ import {
 } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
-import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
+import {
+  EmptyState,
+  ErrorBanner,
+  LoadingLine,
+  emptyActionCls,
+} from "@/components/ui-kit/EmptyState";
 
 type SearchParams = { collection_id?: number };
 
@@ -69,6 +74,9 @@ function DocumentsPage() {
 
   const collectionName = (id: number) =>
     collections.data?.find((c) => c.id === id)?.name ?? `#${id}`;
+  // Where a drop goes, shown in the select: the chosen collection, else the first.
+  const uploadTarget = uploadCollection ?? collections.data?.[0]?.id ?? null;
+  const noCollections = collections.isSuccess && collections.data.length === 0;
 
   function updateStatus(idx: number, patch: Partial<UploadStatus>) {
     setUploadStatuses((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
@@ -148,12 +156,9 @@ function DocumentsPage() {
   }
 
   function handleFiles(files: File[]) {
-    if (files.length === 0) return;
-    const cid = uploadCollection ?? collections.data?.[0]?.id;
-    if (!cid) {
-      alert("Create a collection first.");
-      return;
-    }
+    // No target: the zone says to create a collection instead of taking files.
+    const cid = uploadTarget;
+    if (files.length === 0 || cid === null) return;
     const initial: UploadStatus[] = files.map((f) => ({
       filename: f.name,
       status: "queued",
@@ -197,12 +202,13 @@ function DocumentsPage() {
         <label className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
           <span className="label-sm text-text-secondary">UPLOAD TO COLLECTION:</span>
           <select
-            value={uploadCollection ?? ""}
+            value={uploadTarget ?? ""}
             onChange={(e) => setUploadCollection(e.target.value ? Number(e.target.value) : null)}
-            className="bg-surface-lowest border border-border-subtle px-2 h-8 text-text-primary body-sm focus:outline-none focus:border-border-focus"
+            disabled={uploadTarget === null}
+            className="bg-surface-lowest border border-border-subtle px-2 h-8 text-text-primary body-sm focus:outline-none focus:border-border-focus disabled:text-text-tertiary"
             aria-label="Upload target collection"
           >
-            <option value="">— SELECT —</option>
+            {uploadTarget === null && <option value="">{noCollections ? "NONE" : "—"}</option>}
             {collections.data?.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -210,35 +216,47 @@ function DocumentsPage() {
             ))}
           </select>
         </label>
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            handleFiles(Array.from(e.dataTransfer.files));
-          }}
-          onClick={() => fileInputRef.current?.click()}
-          className={`bg-surface-lowest border border-dashed cursor-pointer text-center py-10 transition-colors ${
-            dragOver ? "border-border-focus" : "border-border-subtle"
-          }`}
-        >
-          <div className="label-sm text-text-primary">DROP FILES HERE OR CLICK TO SELECT</div>
-          <div className="label-xs text-text-tertiary mt-2">
-            SUPPORTED: PDF, MD, TXT · MAX 10 MB PER FILE
+        {noCollections ? (
+          <div className="bg-surface-lowest border border-dashed border-border-subtle text-center py-10 px-4">
+            <div className="label-sm text-text-primary">CREATE A COLLECTION FIRST</div>
+            <div className="label-xs text-text-tertiary mt-2">
+              DOCUMENTS ARE INDEXED INTO A COLLECTION
+            </div>
+            <Link to="/colecciones" className={`inline-block mt-3 ${emptyActionCls}`}>
+              GO TO COLLECTIONS →
+            </Link>
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.md,.txt"
-            multiple
-            className="hidden"
-            onChange={(e) => handleFiles(Array.from(e.target.files ?? []))}
-          />
-        </div>
+        ) : (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              handleFiles(Array.from(e.dataTransfer.files));
+            }}
+            onClick={() => fileInputRef.current?.click()}
+            className={`bg-surface-lowest border border-dashed cursor-pointer text-center py-10 transition-colors ${
+              dragOver ? "border-border-focus" : "border-border-subtle"
+            }`}
+          >
+            <div className="label-sm text-text-primary">DROP FILES HERE OR CLICK TO SELECT</div>
+            <div className="label-xs text-text-tertiary mt-2">
+              SUPPORTED: PDF, MD, TXT · MAX 10 MB PER FILE
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.md,.txt"
+              multiple
+              className="hidden"
+              onChange={(e) => handleFiles(Array.from(e.target.files ?? []))}
+            />
+          </div>
+        )}
 
         {uploadStatuses.length > 0 && (
           <div className="mt-3 border border-border-subtle bg-surface-container-low">
@@ -337,7 +355,20 @@ function DocumentsPage() {
             <LoadingLine />
           </div>
         ) : !documents.data || documents.data.length === 0 ? (
-          <EmptyState label="NO DOCUMENTS INDEXED" />
+          filter !== null ? (
+            <EmptyState label={`NO DOCUMENTS IN ${collectionName(filter).toUpperCase()}`}>
+              <button type="button" onClick={() => changeFilter(null)} className={emptyActionCls}>
+                SHOW ALL COLLECTIONS
+              </button>
+            </EmptyState>
+          ) : noCollections ? (
+            // The upload zone above already says to create a collection.
+            <EmptyState label="NO DOCUMENTS INDEXED" />
+          ) : (
+            <EmptyState label="NO DOCUMENTS INDEXED">
+              <span className="text-text-secondary">DROP FILES ABOVE TO INDEX THEM</span>
+            </EmptyState>
+          )
         ) : (
           <table className="w-full min-w-[720px]">
             <thead>

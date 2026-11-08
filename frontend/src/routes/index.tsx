@@ -5,7 +5,13 @@ import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
 import { StatCard } from "@/components/ui-kit/StatCard";
 import { StatDot } from "@/components/ui-kit/StatDot";
-import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
+import {
+  EmptyState,
+  ErrorBanner,
+  LoadingLine,
+  emptyActionCls,
+} from "@/components/ui-kit/EmptyState";
+import { GettingStarted } from "@/components/dashboard/GettingStarted";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -71,8 +77,9 @@ function Dashboard() {
   });
   const history = useQuery({ queryKey: ["history", 10], queryFn: () => api.history(10) });
   const evals = useQuery({ queryKey: ["eval-results", 5], queryFn: () => api.evalResults(5) });
+  // The limit is in the key: the chat lists 50 under the same prefix.
   const conversations = useQuery({
-    queryKey: ["conversations", "list"],
+    queryKey: ["conversations", "list", 200],
     queryFn: () => api.listConversations({ limit: 200 }),
   });
 
@@ -97,7 +104,11 @@ function Dashboard() {
   const primaryModel = recentLogs[0]?.model_used ?? null;
   const lastAccuracy = evals.data?.[0]?.accuracy ?? null;
 
-  const anyError = collections.error || documents.error || history.error || evals.error;
+  const anyError =
+    collections.error || documents.error || history.error || evals.error || conversations.error;
+  // Only on real counts: zeros from a backend that is down are not a fresh install.
+  const countsLoaded =
+    collections.isSuccess && documents.isSuccess && history.isSuccess && conversations.isSuccess;
 
   const collectionRows = (collections.data ?? []).map((c) => {
     const docs = (documents.data ?? []).filter((d) => d.collection_id === c.id);
@@ -122,6 +133,14 @@ function Dashboard() {
       {anyError && (
         <ErrorBanner
           message={`backend unreachable at ${(import.meta.env.VITE_API_BASE_URL as string) ?? "http://localhost:8000"}`}
+        />
+      )}
+
+      {countsLoaded && (
+        <GettingStarted
+          collections={totalCollections}
+          documents={totalDocuments}
+          questions={recentLogs.length + (conversations.data?.length ?? 0)}
         />
       )}
 
@@ -162,7 +181,11 @@ function Dashboard() {
                   <LoadingLine />
                 </div>
               ) : recentLogs.length === 0 ? (
-                <EmptyState label="NO QUERIES LOGGED" />
+                <EmptyState label="NO QUERIES LOGGED">
+                  <Link to="/chat" className={emptyActionCls}>
+                    ASK A QUESTION →
+                  </Link>
+                </EmptyState>
               ) : (
                 <table className="w-full min-w-[600px]">
                   <thead>
@@ -318,7 +341,11 @@ function Dashboard() {
                 <LoadingLine />
               </div>
             ) : !evals.data || evals.data.length === 0 ? (
-              <EmptyState label="NO EVALUATION RUNS" />
+              <EmptyState label="NO EVALUATION RUNS">
+                <Link to="/evaluacion" className={emptyActionCls}>
+                  SET UP AN EVALUATION →
+                </Link>
+              </EmptyState>
             ) : (
               <table className="w-full min-w-[480px]">
                 <thead>
@@ -370,7 +397,11 @@ function Dashboard() {
                 <LoadingLine />
               </div>
             ) : collectionRows.length === 0 ? (
-              <EmptyState label="NO COLLECTIONS" />
+              <EmptyState label="NO COLLECTIONS">
+                <Link to="/colecciones" className={emptyActionCls}>
+                  CREATE A COLLECTION →
+                </Link>
+              </EmptyState>
             ) : (
               <table className="w-full min-w-[560px]">
                 <thead>

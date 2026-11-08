@@ -1,7 +1,17 @@
-export function EmptyState({ label = "NO DATA AVAILABLE" }: { label?: string }) {
+import type { ReactNode } from "react";
+
+/** An empty list; `children` is what to do about it (a link or a button). */
+export function EmptyState({
+  label = "NO DATA AVAILABLE",
+  children,
+}: {
+  label?: string;
+  children?: ReactNode;
+}) {
   return (
-    <div className="border border-border-subtle border-dashed py-10 text-center label-sm text-text-tertiary">
-      {label}
+    <div className="border border-border-subtle border-dashed py-10 px-4 text-center label-sm text-text-tertiary">
+      <div>{label}</div>
+      {children && <div className="mt-3">{children}</div>}
     </div>
   );
 }
@@ -17,3 +27,6 @@ export function ErrorBanner({ message }: { message: string }) {
     </div>
   );
 }
+
+// The call to action inside an EmptyState.
+export const emptyActionCls = "label-sm text-text-primary hover:text-primary-blue";

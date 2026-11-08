@@ -3,7 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { api, fmtCost, fmtDate, fmtNumber, truncate } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
-import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
+import {
+  EmptyState,
+  ErrorBanner,
+  LoadingLine,
+  emptyActionCls,
+} from "@/components/ui-kit/EmptyState";
 
 export const Route = createFileRoute("/historial")({
   head: () => ({
@@ -81,7 +86,19 @@ function HistorialPage() {
             <LoadingLine />
           </div>
         ) : rows.length === 0 ? (
-          <EmptyState label="NO QUERIES LOGGED" />
+          collFilter !== null && (history.data?.length ?? 0) > 0 ? (
+            <EmptyState label={`NO QUERIES IN ${collectionName(collFilter).toUpperCase()}`}>
+              <button type="button" onClick={() => setCollFilter(null)} className={emptyActionCls}>
+                SHOW ALL COLLECTIONS
+              </button>
+            </EmptyState>
+          ) : (
+            <EmptyState label="NO QUERIES LOGGED">
+              <Link to="/chat" className={emptyActionCls}>
+                ASK A QUESTION →
+              </Link>
+            </EmptyState>
+          )
         ) : (
           <table className="w-full min-w-[760px]">
             <thead>

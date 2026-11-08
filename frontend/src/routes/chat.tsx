@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
@@ -9,7 +9,7 @@ import {
   type Conversation,
   type ConversationMessage,
 } from "@/lib/api";
-import { LoadingLine } from "@/components/ui-kit/EmptyState";
+import { LoadingLine, emptyActionCls } from "@/components/ui-kit/EmptyState";
 import { LengthHint } from "@/components/ui-kit/LengthHint";
 import { Modal } from "@/components/ui-kit/Modal";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -40,6 +40,7 @@ export const Route = createFileRoute("/chat")({
   component: ChatPage,
 });
 
+// Questions the seed collections answer; offered only once there are documents.
 const EXAMPLES = [
   "What distance metrics does pgvector support?",
   "How does selectinload work in SQLAlchemy async?",
@@ -95,9 +96,14 @@ function ChatPage() {
   const streaming = live !== null;
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
+  // The limit is in the key: the dashboard lists 200 under the same prefix.
   const conversations = useQuery({
-    queryKey: ["conversations", "list"],
+    queryKey: ["conversations", "list", 50],
     queryFn: () => api.listConversations({ limit: 50 }),
+  });
+  const documents = useQuery({
+    queryKey: ["documents", "all"],
+    queryFn: () => api.listDocuments(),
   });
 
   const activeConv: Conversation | undefined = useMemo(
@@ -556,19 +562,33 @@ function ChatPage() {
                 <div className="body-sm text-text-secondary mt-3">
                   LangGraph · classifier → RAG / direct / clarify · persistent memory.
                 </div>
-                <div className="mt-10 w-full text-left space-y-2">
-                  <div className="label-sm text-text-tertiary mb-3">EXAMPLE QUERIES</div>
-                  {EXAMPLES.map((q) => (
-                    <button
-                      key={q}
-                      onClick={() => send(q)}
-                      className="block w-full text-left px-4 py-2 body-sm text-text-secondary hover:bg-surface-container hover:text-text-primary transition-colors border border-border-subtle"
-                    >
-                      <span className="text-text-primary mr-2">{">"}</span>
-                      {q}
-                    </button>
-                  ))}
-                </div>
+                {documents.isSuccess && documents.data.length === 0 ? (
+                  <div className="mt-10 w-full border border-dashed border-border-subtle px-4 py-6">
+                    <div className="label-sm text-text-primary">NO DOCUMENTS INDEXED YET</div>
+                    <div className="body-sm text-text-secondary mt-2">
+                      The agent answers from your documents: upload some first.
+                    </div>
+                    <Link to="/documentos" className={`inline-block mt-3 ${emptyActionCls}`}>
+                      UPLOAD DOCUMENTS →
+                    </Link>
+                  </div>
+                ) : (
+                  documents.isSuccess && (
+                    <div className="mt-10 w-full text-left space-y-2">
+                      <div className="label-sm text-text-tertiary mb-3">EXAMPLE QUERIES</div>
+                      {EXAMPLES.map((q) => (
+                        <button
+                          key={q}
+                          onClick={() => send(q)}
+                          className="block w-full text-left px-4 py-2 body-sm text-text-secondary hover:bg-surface-container hover:text-text-primary transition-colors border border-border-subtle"
+                        >
+                          <span className="text-text-primary mr-2">{">"}</span>
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                )}
               </div>
             ) : (
               <div className="space-y-6 max-w-4xl mx-auto pb-4">
