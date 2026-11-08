@@ -57,6 +57,12 @@ async def _get_conversation_or_404(db: AsyncSession, thread_id: str) -> Conversa
     return conv
 
 
+@router.get("/{thread_id}", response_model=ConversationRead)
+async def get_conversation(thread_id: str, db: AsyncSession = Depends(get_db)) -> Conversation:
+    """One thread, for a client that has its id (a link) but not a list page holding it."""
+    return await _get_conversation_or_404(db, thread_id)
+
+
 @router.get("/{thread_id}/messages", response_model=list[ConversationMessage])
 async def get_conversation_messages(
     thread_id: str,
