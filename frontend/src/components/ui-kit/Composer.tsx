@@ -62,7 +62,7 @@ export function Composer({
           placeholder={placeholder}
           aria-label={label}
           aria-describedby={hintId}
-          className="flex-1 min-w-0 resize-none field-sizing-content max-h-[calc(10lh+1rem)] overflow-y-auto bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-read max-sm:text-base py-2 focus-visible:ring-0"
+          className="flex-1 min-w-0 resize-none field-sizing-content max-h-[calc(10lh+1rem)] overflow-y-auto bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-read py-2 focus-visible:ring-0"
         />
         <LengthHint length={value.length} max={maxLength} />
         {children}

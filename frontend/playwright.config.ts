@@ -11,6 +11,9 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
+  // The dev server compiles a page's code on its first request: on a cold
+  // server, with tests in parallel, a page can take over the default 5 s.
+  expect: { timeout: 15_000 },
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     channel: "chrome",

@@ -128,6 +128,15 @@
   }
 }
 
+/* iOS zooms the page when a field under 16px takes focus, so on a phone every
+   field is 16px. Outside any layer, so it wins over the text utilities the
+   fields use on a wider screen. */
+@media (width < 40rem) {
+  :is(input, select, textarea) {
+    font-size: 1rem;
+  }
+}
+
 /* Text that is read, not scanned: questions and answers. An @utility, unlike
    the classes below, sorts with Tailwind's own, so a variant such as max-sm:
    can override it. */
