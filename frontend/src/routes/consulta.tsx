@@ -16,7 +16,7 @@ import {
   type QueryMetadata,
 } from "@/lib/api";
 import { ErrorBanner } from "@/components/ui-kit/EmptyState";
-import { LengthHint } from "@/components/ui-kit/LengthHint";
+import { Composer } from "@/components/ui-kit/Composer";
 import { ScopeControls } from "@/components/ui-kit/ScopeControls";
 import { useTopK } from "@/lib/topK";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -396,24 +396,18 @@ function ConsultaPage() {
 
         {/* Input */}
         <div className="border-t border-border-subtle px-8 py-4 shrink-0">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!queryMut.isPending) send(input);
+          {/* Typing stays open while an answer is generated, so the box keeps
+              its focus; sending waits for the answer. */}
+          <Composer
+            value={input}
+            onChange={setInput}
+            onSubmit={() => {
+              if (!queryMut.isPending) void send(input);
             }}
-            className="max-w-4xl mx-auto flex items-center gap-3 border-b border-border-subtle focus-within:border-border-focus pb-2"
+            maxLength={LIMITS.queryQuestion}
+            placeholder="ENTER QUERY..."
+            label="Query input"
           >
-            <span className="text-text-primary body-sm">{">"}</span>
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              disabled={queryMut.isPending}
-              maxLength={LIMITS.queryQuestion}
-              placeholder="ENTER QUERY..."
-              aria-label="Query input"
-              className="flex-1 min-w-0 bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-sm py-2"
-            />
-            <LengthHint length={input.length} max={LIMITS.queryQuestion} />
             <button
               type="submit"
               disabled={queryMut.isPending || !input.trim()}
@@ -421,7 +415,7 @@ function ConsultaPage() {
             >
               ↵ SEND
             </button>
-          </form>
+          </Composer>
         </div>
       </section>
     </div>

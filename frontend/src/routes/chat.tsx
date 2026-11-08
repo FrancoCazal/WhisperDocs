@@ -13,7 +13,7 @@ import {
   type ConversationMessage,
 } from "@/lib/api";
 import { LoadingLine, emptyActionCls } from "@/components/ui-kit/EmptyState";
-import { LengthHint } from "@/components/ui-kit/LengthHint";
+import { Composer } from "@/components/ui-kit/Composer";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -97,7 +97,7 @@ function ChatPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const runRef = useRef<StreamRun | null>(null);
   // Bumped whenever another thread is shown: a stream or a load started for
   // the previous one sees the change and leaves the screen alone.
@@ -686,29 +686,19 @@ function ChatPage() {
                 thread.
               </div>
             ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void send(input);
-                }}
-                className="max-w-4xl mx-auto flex items-center gap-3 border-b border-border-subtle focus-within:border-border-focus pb-2"
+              // Typing stays open while an answer streams; sending waits for it.
+              <Composer
+                textareaRef={inputRef}
+                value={input}
+                onChange={setInput}
+                onSubmit={() => void send(input)}
+                onEscape={() => streaming && stop()}
+                disabled={loadingThread}
+                maxLength={LIMITS.chatMessage}
+                placeholder="ASK THE AGENT..."
+                label="Message to agent"
+                hint="ENTER SENDS · SHIFT+ENTER ADDS A LINE · ESC STOPS AN ANSWER"
               >
-                <span className="text-text-primary body-sm">{">"}</span>
-                {/* Typing stays open while an answer streams; sending waits for it. */}
-                <input
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape" && streaming) stop();
-                  }}
-                  disabled={loadingThread}
-                  maxLength={LIMITS.chatMessage}
-                  placeholder="ASK THE AGENT..."
-                  aria-label="Message to agent"
-                  className="flex-1 min-w-0 bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-sm py-2 focus-visible:ring-0"
-                />
-                <LengthHint length={input.length} max={LIMITS.chatMessage} />
                 {streaming ? (
                   <button
                     type="button"
@@ -727,7 +717,7 @@ function ChatPage() {
                     ↵ SEND
                   </button>
                 )}
-              </form>
+              </Composer>
             )}
           </div>
         </section>
