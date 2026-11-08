@@ -11,6 +11,7 @@ import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.agent.utils.messages import failed_answer
 from app.db import get_db
 from app.main import app
 from app.models import Conversation, QueryLog
@@ -69,7 +70,7 @@ def db():
 
 
 @pytest.mark.parametrize(("turn_failed", "logged"), [(False, 1), (True, 0)])
-async def test_query_log_only_for_answers(db, turn_failed, logged):
+async def test_query_log_only_for_answers_and_the_failure_is_flagged(db, turn_failed, logged):
     app.state.agent = _FakeAgent({"turn_failed": turn_failed, "retrieval_chunks_count": 1})
     try:
         transport = httpx.ASGITransport(app=app)
@@ -80,6 +81,7 @@ async def test_query_log_only_for_answers(db, turn_failed, logged):
 
     assert r.status_code == 200
     assert r.json()["answer"] == "a"
+    assert r.json()["failed"] is turn_failed
     assert sum(isinstance(o, QueryLog) for o in db.added) == logged
 
 
@@ -126,3 +128,21 @@ async def test_a_thread_prices_answers_written_before_the_cost_field(db):
     user, answer = r.json()
     assert user["metadata"] is None
     assert answer["metadata"]["cost_usd"] == estimate_cost_usd(SONNET, 3446, 406)
+
+
+async def test_a_thread_flags_its_failed_answers(db):
+    app.state.agent = _FakeAgent(
+        {},
+        messages=[
+            HumanMessage(content="q"),
+            failed_answer("I had a problem…", metadata={"model": SONNET}),
+            HumanMessage(content="q again"),
+            AIMessage(content="a"),
+        ],
+    )
+    try:
+        r = await _call("GET", "/conversations/t/messages")
+    finally:
+        del app.state.agent
+
+    assert [m["failed"] for m in r.json()] == [False, True, False, False]

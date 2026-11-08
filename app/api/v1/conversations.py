@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.utils.messages import FAILED_TURN
 from app.db import get_db
 from app.models import Conversation, SavedNote
 from app.schemas.conversation import (
@@ -98,6 +99,7 @@ async def get_conversation_messages(
                 timestamp=kwargs.get("timestamp"),
                 citations=kwargs.get("citations"),
                 metadata=metadata,
+                failed=bool(kwargs.get(FAILED_TURN)),
             )
         )
     return out

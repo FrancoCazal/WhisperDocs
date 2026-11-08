@@ -26,3 +26,5 @@ class ConversationMessage(BaseModel):
     timestamp: str | None = None
     citations: list[dict] | None = None
     metadata: dict | None = None
+    # An assistant message that reports a failure (see AgentChatResponse).
+    failed: bool = False

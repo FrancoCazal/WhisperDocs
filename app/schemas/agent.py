@@ -36,3 +36,6 @@ class AgentChatResponse(BaseModel):
     answer: str
     citations: list[AgentCitation]
     metadata: AgentTurnMetadata
+    # The answer reports a failure ("I had a problem…"): it cites nothing and
+    # later prompts leave it out (audit N4).
+    failed: bool = False
