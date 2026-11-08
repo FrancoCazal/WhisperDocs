@@ -52,6 +52,38 @@ jobs:
           uv export --frozen --all-extras --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
           uvx pip-audit@2.10.1 -r "$RUNNER_TEMP/requirements.txt" --disable-pip --progress-spinner off
 
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Types
+        run: npm run typecheck
+
+      # eslint runs Prettier as a rule, so this also checks formatting.
+      - name: Lint and format
+        run: npm run lint
+
+      # The Node target, as the Docker image builds it.
+      - name: Build
+        run: npm run build
+        env:
+          BUILD_TARGET: node
+
   test:
     name: Types and tests
     runs-on: ubuntu-latest

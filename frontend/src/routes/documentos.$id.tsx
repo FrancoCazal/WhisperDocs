@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, fmtDate, fmtNumber } from "@/lib/api";
@@ -12,23 +12,7 @@ export const Route = createFileRoute("/documentos/$id")({
     ],
   }),
   component: DocumentDetailPage,
-  errorComponent: ({ error, reset }) => {
-    const router = useRouter();
-    return (
-      <div>
-        <ErrorBanner message={error.message} />
-        <button
-          onClick={() => {
-            router.invalidate();
-            reset();
-          }}
-          className="label-sm border border-text-primary text-text-primary px-3 h-8 hover:bg-text-primary hover:text-surface"
-        >
-          RETRY ↻
-        </button>
-      </div>
-    );
-  },
+  errorComponent: DocumentDetailError,
   notFoundComponent: () => (
     <div>
       <div className="label-sm text-error">DOCUMENT_NOT_FOUND</div>
@@ -38,6 +22,25 @@ export const Route = createFileRoute("/documentos/$id")({
     </div>
   ),
 });
+
+// A named component, so the hook below runs inside a component.
+function DocumentDetailError({ error, reset }: ErrorComponentProps) {
+  const router = useRouter();
+  return (
+    <div>
+      <ErrorBanner message={error.message} />
+      <button
+        onClick={() => {
+          router.invalidate();
+          reset();
+        }}
+        className="label-sm border border-text-primary text-text-primary px-3 h-8 hover:bg-text-primary hover:text-surface"
+      >
+        RETRY ↻
+      </button>
+    </div>
+  );
+}
 
 function DocumentDetailPage() {
   const { id } = Route.useParams();
