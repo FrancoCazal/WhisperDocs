@@ -13,8 +13,7 @@ COPY --chown=node:node . .
 
 # VITE_* values are inlined into the bundle, so they are build arguments.
 ARG VITE_API_BASE_URL=http://localhost:8000
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
-    BUILD_TARGET=node
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 # A production build, served by `vite preview`: the app server-renders, so it
 # needs dist/server/server.js and cannot be served as static files. Preview

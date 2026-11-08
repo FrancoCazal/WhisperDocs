@@ -1,5 +1,5 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "whisperdocs-frontend",
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -13,7 +13,6 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@cloudflare/vite-plugin": "^1.25.5",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-hover-card": "^1.1.15",
@@ -22,7 +21,6 @@
     "@tanstack/react-query": "^5.99.2",
     "@tanstack/react-router": "^1.168.0",
     "@tanstack/react-start": "^1.167.14",
-    "@tanstack/router-plugin": "^1.167.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "highlight.js": "^11.11.1",
@@ -39,7 +37,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
-    "@lovable.dev/vite-tanstack-config": "^1.4.0",
     "@types/node": "^22.16.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

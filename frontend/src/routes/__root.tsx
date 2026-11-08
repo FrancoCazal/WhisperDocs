@@ -1,10 +1,4 @@
-import {
-  Outlet,
-  Link,
-  createRootRouteWithContext,
-  HeadContent,
-  Scripts,
-} from "@tanstack/react-router";
+import { Link, createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/Shell";
 
@@ -75,17 +69,8 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   return (
     <QueryClientProvider client={queryClient}>
+      {/* The Shell renders the route's Outlet inside <main>. */}
       <Shell />
-      {/* Outlet rendered inside Shell */}
-      <HiddenOutlet />
     </QueryClientProvider>
   );
 }
-
-// Outlet is rendered by the Shell (inside <main>); nothing extra needed here.
-function HiddenOutlet() {
-  return null;
-}
-
-// Re-export Outlet for any direct consumers (kept for tree-shaking safety)
-export { Outlet };

@@ -1,14 +1,19 @@
-// @lovable.dev/vite-tanstack-config already includes the following — do NOT add them manually
-// or the app will break with duplicate plugins:
-//   - tanstackStart, viteReact, tailwindcss, tsConfigPaths, cloudflare (build-only),
-//     componentTagger (dev-only), VITE_* env injection, @ path alias, React/TanStack dedupe,
-//     error logger plugins, and sandbox detection (port/host/strictPort).
-// You can pass additional config via defineConfig({ vite: { ... } }) if needed.
-import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
+import tsConfigPaths from "vite-tsconfig-paths";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
 
-// The default build targets Cloudflare Workers (wrangler.jsonc). The Docker
-// image builds for Node instead (BUILD_TARGET=node) and serves the result with
-// `vite preview`, which runs dist/server/server.js.
+// TanStack Start builds a Node server (dist/server/server.js), which
+// `vite preview` serves in the Docker image. The dev server is on Vite's
+// default port, 5173: the container takes 8080.
 export default defineConfig({
-  cloudflare: process.env.BUILD_TARGET === "node" ? false : undefined,
+  plugins: [
+    tailwindcss(),
+    // The "@/..." imports, from tsconfig.json's paths.
+    tsConfigPaths({ projects: ["./tsconfig.json"] }),
+    // Before the React plugin: it generates the route tree and splits routes.
+    tanstackStart(),
+    viteReact(),
+  ],
 });

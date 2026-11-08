@@ -78,11 +78,8 @@ jobs:
       - name: Lint and format
         run: npm run lint
 
-      # The Node target, as the Docker image builds it.
       - name: Build
         run: npm run build
-        env:
-          BUILD_TARGET: node
 
   test:
     name: Types and tests
