@@ -29,6 +29,7 @@ class QueryMetadata(BaseModel):
     tokens_output: int
     latency_ms: int
     chunks_retrieved: int
+    cost_usd: float = 0.0
 
 
 class QueryResponse(BaseModel):
@@ -49,6 +50,7 @@ class QueryLogRead(BaseModel):
     tokens_input: int
     tokens_output: int
     latency_ms: int
+    cost_usd: float
     session_id: str | None
     agent_action: str | None
     created_at: datetime

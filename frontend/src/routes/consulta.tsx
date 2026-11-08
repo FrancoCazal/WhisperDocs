@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
-  estimateCost,
+  fmtCost,
   fmtTimestamp,
   type Citation,
   type QueryLog,
@@ -65,6 +65,7 @@ function logsToSession(sessionId: string, logs: QueryLog[]): Session {
         tokens_output: log.tokens_output,
         latency_ms: log.latency_ms,
         chunks_retrieved: log.chunks_retrieved,
+        cost_usd: log.cost_usd,
       },
     },
   ]);
@@ -441,7 +442,7 @@ function AssistantTurn({
       <div className="label-xs text-text-tertiary mt-4 tabular-nums">
         {turn.metadata.latency_ms}MS · {turn.metadata.tokens_input.toLocaleString()} IN /{" "}
         {turn.metadata.tokens_output.toLocaleString()} OUT · {turn.metadata.model} ·{" "}
-        {estimateCost(turn.metadata.tokens_input, turn.metadata.tokens_output, turn.metadata.model)}
+        {fmtCost(turn.metadata.cost_usd)}
       </div>
       <div className="border-b border-border-subtle mt-4" />
     </div>

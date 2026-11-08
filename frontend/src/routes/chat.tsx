@@ -7,7 +7,7 @@ import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
 import {
   api,
-  estimateCost,
+  fmtCost,
   fmtDate,
   fmtTimestamp,
   type AgentCitation,
@@ -253,6 +253,7 @@ function ChatPage() {
                   tokens_output: 0,
                   latency_ms: 0,
                   chunks_retrieved: 0,
+                  cost_usd: 0,
                 },
               } as Turn),
         );
@@ -901,8 +902,7 @@ function AssistantTurn({
       <div className="label-xs text-text-tertiary mt-4 tabular-nums">
         {turn.metadata.latency_ms}MS · {turn.metadata.tokens_input.toLocaleString()} IN /{" "}
         {turn.metadata.tokens_output.toLocaleString()} OUT
-        {turn.metadata.model ? ` · ${turn.metadata.model}` : ""} ·{" "}
-        {estimateCost(turn.metadata.tokens_input, turn.metadata.tokens_output, turn.metadata.model)}
+        {turn.metadata.model ? ` · ${turn.metadata.model}` : ""} · {fmtCost(turn.metadata.cost_usd)}
       </div>
       <div className="border-b border-border-subtle mt-4" />
     </div>

@@ -26,6 +26,21 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
+def _turn_metadata(md: dict, chunks_retrieved: int) -> AgentTurnMetadata:
+    """The answer's model call, as the UI shows it and `query_logs` stores it."""
+    model = md.get("generation_model")
+    tokens_input = md.get("generation_tokens_input", 0)
+    tokens_output = md.get("generation_tokens_output", 0)
+    return AgentTurnMetadata(
+        model=model,
+        tokens_input=tokens_input,
+        tokens_output=tokens_output,
+        latency_ms=md.get("generation_latency_ms", 0),
+        chunks_retrieved=chunks_retrieved,
+        cost_usd=estimate_cost_usd(model, tokens_input, tokens_output),
+    )
+
+
 @router.post("/chat", response_model=AgentChatResponse)
 async def agent_chat(
     payload: AgentChatRequest,
@@ -84,26 +99,24 @@ async def agent_chat(
     )
     retrieved = result.get("retrieved_chunks") or []
     md = result.get("metadata") or {}
+    turn = _turn_metadata(md, md.get("retrieval_chunks_count", len(retrieved)))
 
     conv.last_active_at = func.now()
 
     # A failed turn has no answer to log: the failure is in errors_total and
     # the logs (audit N4).
     if action == "search_docs" and not md.get("turn_failed"):
-        gen_model = md.get("generation_model") or "agent"
-        tin = md.get("generation_tokens_input", 0)
-        tout = md.get("generation_tokens_output", 0)
         db.add(
             QueryLog(
                 question=payload.message,
                 answer=answer,
                 collection_id=conv.collection_id,
-                chunks_retrieved=md.get("retrieval_chunks_count", len(retrieved)),
-                model_used=gen_model,
-                tokens_input=tin,
-                tokens_output=tout,
-                latency_ms=md.get("generation_latency_ms", 0),
-                cost_usd=estimate_cost_usd(gen_model, tin, tout),
+                chunks_retrieved=turn.chunks_retrieved,
+                model_used=turn.model or "agent",
+                tokens_input=turn.tokens_input,
+                tokens_output=turn.tokens_output,
+                latency_ms=turn.latency_ms,
+                cost_usd=turn.cost_usd,
                 session_id=thread_id,
                 agent_action=action,
             )
@@ -116,13 +129,7 @@ async def agent_chat(
         action=action,
         answer=answer,
         citations=[AgentCitation(**c) for c in retrieved],
-        metadata=AgentTurnMetadata(
-            model=md.get("generation_model"),
-            tokens_input=md.get("generation_tokens_input", 0),
-            tokens_output=md.get("generation_tokens_output", 0),
-            latency_ms=md.get("generation_latency_ms", 0),
-            chunks_retrieved=md.get("retrieval_chunks_count", len(retrieved)),
-        ),
+        metadata=turn,
     )
 
 
@@ -251,27 +258,24 @@ async def agent_chat_stream(
         )
         retrieved = final_state.get("retrieved_chunks") or []
         md = final_state.get("metadata") or {}
-        chunks_count = md.get("retrieval_chunks_count", len(retrieved))
+        turn = _turn_metadata(md, md.get("retrieval_chunks_count", len(retrieved)))
 
         async with SessionLocal() as db:
             conv = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
             if conv is not None:
                 conv.last_active_at = func.now()
                 if action == "search_docs" and not md.get("turn_failed"):
-                    gen_model = md.get("generation_model") or "agent"
-                    tin = md.get("generation_tokens_input", 0)
-                    tout = md.get("generation_tokens_output", 0)
                     db.add(
                         QueryLog(
                             question=payload.message,
                             answer=answer,
                             collection_id=conv.collection_id,
-                            chunks_retrieved=chunks_count,
-                            model_used=gen_model,
-                            tokens_input=tin,
-                            tokens_output=tout,
-                            latency_ms=md.get("generation_latency_ms", 0),
-                            cost_usd=estimate_cost_usd(gen_model, tin, tout),
+                            chunks_retrieved=turn.chunks_retrieved,
+                            model_used=turn.model or "agent",
+                            tokens_input=turn.tokens_input,
+                            tokens_output=turn.tokens_output,
+                            latency_ms=turn.latency_ms,
+                            cost_usd=turn.cost_usd,
                             session_id=thread_id,
                             agent_action=action,
                         )
@@ -289,13 +293,7 @@ async def agent_chat_stream(
                 "action": action,
                 "answer": answer,
                 "citations": list(retrieved),
-                "metadata": {
-                    "model": md.get("generation_model"),
-                    "tokens_input": md.get("generation_tokens_input", 0),
-                    "tokens_output": md.get("generation_tokens_output", 0),
-                    "latency_ms": md.get("generation_latency_ms", 0),
-                    "chunks_retrieved": chunks_count,
-                },
+                "metadata": turn.model_dump(),
             },
         )
 

@@ -90,6 +90,9 @@ async def query(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
     latency_ms = int((time.perf_counter() - start) * 1000)
+    cost_usd = estimate_cost_usd(
+        llm_response.model, llm_response.tokens_input, llm_response.tokens_output
+    )
 
     log = QueryLog(
         question=payload.question,
@@ -100,9 +103,7 @@ async def query(
         tokens_input=llm_response.tokens_input,
         tokens_output=llm_response.tokens_output,
         latency_ms=latency_ms,
-        cost_usd=estimate_cost_usd(
-            llm_response.model, llm_response.tokens_input, llm_response.tokens_output
-        ),
+        cost_usd=cost_usd,
         session_id=payload.session_id,
     )
     db.add(log)
@@ -127,6 +128,7 @@ async def query(
             tokens_output=llm_response.tokens_output,
             latency_ms=latency_ms,
             chunks_retrieved=len(chunks),
+            cost_usd=cost_usd,
         ),
     )
 

@@ -94,6 +94,7 @@ export type QueryMetadata = {
   tokens_output: number;
   latency_ms: number;
   chunks_retrieved: number;
+  cost_usd: number;
 };
 
 export type QueryResponse = {
@@ -112,6 +113,7 @@ export type QueryLog = {
   tokens_input: number;
   tokens_output: number;
   latency_ms: number;
+  cost_usd: number;
   session_id: string | null;
   agent_action: string | null;
   created_at: string;
@@ -158,12 +160,15 @@ export type EvalRunSummary = {
 // ============ Agent / Conversations / Notes ============
 export type AgentCitation = Citation;
 
+// The answer's model call. `cost_usd` is priced by the backend, which keeps
+// the only pricing table.
 export type AgentTurnMetadata = {
   model: string | null;
   tokens_input: number;
   tokens_output: number;
   latency_ms: number;
   chunks_retrieved: number;
+  cost_usd: number;
 };
 
 export type AgentChatResponse = {
@@ -634,24 +639,4 @@ export function fmtPct(n: number | null | undefined, decimals = 1): string {
 export function truncate(s: string, n = 60): string {
   if (!s) return "";
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
-}
-
-const MODEL_COST_PER_1M: Record<string, { input: number; output: number }> = {
-  "gpt-4o-mini": { input: 0.15, output: 0.6 },
-  "gpt-4o": { input: 2.5, output: 10.0 },
-  "gemini-2.5-flash": { input: 0.15, output: 0.6 },
-  "us.anthropic.claude-sonnet-4-20250514-v1:0": { input: 3.0, output: 15.0 },
-  "us.anthropic.claude-haiku-4-5-20251001-v1:0": { input: 0.8, output: 4.0 },
-};
-
-export function estimateCost(
-  tokensIn: number,
-  tokensOut: number,
-  model: string | null | undefined,
-): string {
-  if (!model) return fmtCost(((tokensIn + tokensOut) / 1_000_000) * 0.5);
-  const rates = MODEL_COST_PER_1M[model];
-  if (!rates) return fmtCost(((tokensIn + tokensOut) / 1_000_000) * 0.5);
-  const cost = (tokensIn / 1_000_000) * rates.input + (tokensOut / 1_000_000) * rates.output;
-  return fmtCost(cost);
 }

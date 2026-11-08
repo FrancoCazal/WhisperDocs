@@ -26,6 +26,8 @@ class AgentTurnMetadata(BaseModel):
     tokens_output: int = 0
     latency_ms: int = 0
     chunks_retrieved: int = 0
+    # The answer's model call, priced by the backend (`query_logs.cost_usd`).
+    cost_usd: float = 0.0
 
 
 class AgentChatResponse(BaseModel):

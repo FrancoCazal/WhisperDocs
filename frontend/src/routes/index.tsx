@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { api, estimateCost, fmtCost, fmtDate, fmtNumber, fmtPct, truncate } from "@/lib/api";
+import { api, fmtCost, fmtDate, fmtNumber, fmtPct, truncate } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
 import { StatCard } from "@/components/ui-kit/StatCard";
@@ -82,14 +82,7 @@ function Dashboard() {
 
   const recentLogs = history.data ?? [];
 
-  const queryCostEst = recentLogs.reduce(
-    (s, q) =>
-      s +
-      parseFloat(
-        estimateCost(q.tokens_input, q.tokens_output, q.model_used).replace("$", "") || "0",
-      ),
-    0,
-  );
+  const queryCost = recentLogs.reduce((s, q) => s + q.cost_usd, 0);
 
   const totalInputTokens = recentLogs.reduce((s, q) => s + q.tokens_input, 0);
   const totalOutputTokens = recentLogs.reduce((s, q) => s + q.tokens_output, 0);
@@ -215,9 +208,9 @@ function Dashboard() {
         <div className="lg:col-span-4 flex flex-col gap-4 min-w-0">
           {/* COST CARD */}
           <div className="border border-border-subtle bg-surface-container p-5">
-            <div className="label-xs text-text-tertiary mb-1">EST. QUERY COST (LAST 10)</div>
+            <div className="label-xs text-text-tertiary mb-1">QUERY COST (LAST 10)</div>
             <div className="display-md text-error mb-4">
-              {history.isLoading ? "—" : fmtCost(queryCostEst)}
+              {history.isLoading ? "—" : fmtCost(queryCost)}
             </div>
             <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border-subtle">
               <div>

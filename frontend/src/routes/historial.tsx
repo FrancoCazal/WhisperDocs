@@ -33,9 +33,6 @@ function HistorialPage() {
   const collectionName = (id: number | null) =>
     id === null ? "—" : (collections.data?.find((c) => c.id === id)?.name ?? `#${id}`);
 
-  const tokensCost = (tin: number, tout: number) =>
-    `$${(((tin + tout) / 1_000_000) * 0.5).toFixed(4)}`;
-
   return (
     <div>
       <PageHeader
@@ -119,7 +116,7 @@ function HistorialPage() {
                         {q.latency_ms}MS
                       </td>
                       <td className="text-right pr-6 tabular-nums text-text-primary">
-                        {tokensCost(q.tokens_input, q.tokens_output)}
+                        {fmtCost(q.cost_usd)}
                       </td>
                     </tr>
                     {open && (

@@ -14,6 +14,7 @@ from app.schemas.conversation import (
 )
 from app.schemas.note import SavedNoteCreate, SavedNoteRead
 from app.schemas.pagination import Page
+from app.services.llm.pricing import estimate_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -79,13 +80,24 @@ async def get_conversation_messages(
             continue
         content = m.content if isinstance(m.content, str) else str(m.content)
         kwargs = getattr(m, "additional_kwargs", None) or {}
+        metadata = kwargs.get("metadata")
+        if role == "assistant" and isinstance(metadata, dict):
+            # Priced on read, so threads written before the field have it too.
+            metadata = {
+                **metadata,
+                "cost_usd": estimate_cost_usd(
+                    metadata.get("model"),
+                    metadata.get("tokens_input", 0),
+                    metadata.get("tokens_output", 0),
+                ),
+            }
         out.append(
             ConversationMessage(
                 role=role,
                 content=content,
                 timestamp=kwargs.get("timestamp"),
                 citations=kwargs.get("citations"),
-                metadata=kwargs.get("metadata"),
+                metadata=metadata,
             )
         )
     return out
