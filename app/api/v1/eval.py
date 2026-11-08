@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -57,13 +58,18 @@ async def run_evaluation(
     return report
 
 
+# The two readers below are plain `def`: FastAPI runs them in its threadpool,
+# so reading and parsing reports (~100 KB each) never blocks the event loop.
 @router.get("/results")
-async def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
+def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
     if not RESULTS_DIR.exists():
         return []
-    files = sorted(RESULTS_DIR.glob("*.json"), reverse=True)[:limit]
-    summaries = []
-    for f in files:
+    summaries: list[dict] = []
+    # Newest first. Other JSON files live here too (the badge, agent evals), so
+    # the limit counts reports read, not files.
+    for f in sorted(RESULTS_DIR.glob("*.json"), reverse=True):
+        if len(summaries) == limit:
+            break
         try:
             report = EvalReport.model_validate_json(f.read_text(encoding="utf-8"))
             summaries.append(
@@ -86,3 +92,21 @@ async def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dic
         except Exception:
             continue
     return summaries
+
+
+@router.get("/results/{run_id}", response_model=EvalReport)
+def get_result(run_id: str) -> EvalReport:
+    """One run in full: every item's answers and judge verdicts."""
+    try:
+        canonical = str(uuid.UUID(run_id))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    # Reports are saved as "<timestamp>_<first 8 chars of the run id>.json".
+    for f in sorted(RESULTS_DIR.glob(f"*_{canonical[:8]}.json"), reverse=True):
+        try:
+            report = EvalReport.model_validate_json(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if report.run_id == canonical:
+            return report
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
