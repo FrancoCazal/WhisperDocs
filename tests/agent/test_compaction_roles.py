@@ -8,11 +8,21 @@ AIMessage and every later RAG turn in that thread failed.
 
 from __future__ import annotations
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agent.nodes.summarize import summarize_node
 from app.agent.utils.messages import build_prompt_messages, drop_leading_assistant
 from app.agent.utils.query_rewrite import rewrite_query_for_retrieval
+from app.services.llm.base import LLMResponse
+
+
+@pytest.fixture(autouse=True)
+def summarizes(fake_provider, complete_summary):
+    """The fake returns a summary `summarize` keeps."""
+    fake_provider.generate_response = LLMResponse(
+        text=complete_summary, tokens_input=10, tokens_output=5, model="fake", latency_ms=1
+    )
 
 
 def _alternating(n_turns: int) -> list:

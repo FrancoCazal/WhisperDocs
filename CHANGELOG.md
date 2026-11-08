@@ -108,6 +108,10 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Changed
 
+- The conversation summary keeps where its facts came from: each user
+  message records the collection or document its turn searched, and each
+  fact in the summary names its source. Each pass carries over the
+  previous summary's facts, within 500 tokens instead of 300.
 - The eval CLI exits 3 when a run is below `AGENT_EVAL_MIN_ACCURACY` (0.80)
   or above `AGENT_EVAL_MAX_HALLUCINATION_RATE` (0.10), so the eval workflow
   fails on a regression. The workflow drops its branches for pull requests
@@ -163,6 +167,10 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Fixed
 
+- A failed summary is no longer retried on every turn: compaction waits
+  `AGENT_COMPACTION_RETRY_MESSAGES` (6) messages first. A summary cut at
+  `max_tokens`, or empty, is not kept; before, a cut one replaced the
+  previous summary.
 - Compaction never leaves the conversation starting with the assistant,
   which Bedrock rejects. The summarizer no longer returns empty summaries.
 - Filtered vector search no longer comes back empty for small collections.

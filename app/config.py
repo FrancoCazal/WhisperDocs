@@ -33,6 +33,10 @@ class AgentSettings(BaseSettings):
 
     compaction_token_threshold: int = 8000
     compaction_count_threshold: int = 30
+    # After a failed summary, compaction waits this many messages (two per
+    # turn) before it tries again, instead of paying for a failing call on
+    # every turn (audit A17).
+    compaction_retry_messages: int = 6
     k_recent: int = 8
 
     retrieval_top_k: int = 5

@@ -61,6 +61,14 @@ def fake_provider() -> FakeProvider:
 
 
 @pytest.fixture
+def complete_summary() -> str:
+    """A summary with every section, which `summarize` keeps."""
+    from app.agent.prompts import SUMMARY_SECTIONS
+
+    return "\n\n".join(f"{heading}\n(none)" for heading in SUMMARY_SECTIONS)
+
+
+@pytest.fixture
 def mock_llm_service_for(monkeypatch):
     """Return a helper that stubs `llm_service_for` in a given module path.
 

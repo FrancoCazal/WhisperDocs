@@ -45,6 +45,10 @@ Rules:
 """
 
 
+# The summary's sections, in order. `summarize` keeps a summary only when it
+# has all of them: one cut at max_tokens misses the last.
+SUMMARY_SECTIONS = ("## User goal", "## Decisions", "## Key information", "## Open questions")
+
 SUMMARIZE_SYSTEM_PROMPT = """You produce a progressive structured summary of a conversation between a user and a technical documentation assistant.
 
 Output format (exactly these sections, with these headings):
@@ -56,16 +60,17 @@ Output format (exactly these sections, with these headings):
 <bullets or "(none)">
 
 ## Key information
-<bullets of factual content exchanged>
+<bullets of factual content exchanged, each starting with its source in brackets>
 
 ## Open questions
 <bullets or "(none)">
 
 Rules:
 - Write the content in the language of the conversation; keep the headings in English.
-- If a previous summary is provided, incorporate it: absorb its information, do not duplicate.
+- Each user line in the transcript names, in brackets, what that turn searched: a collection, a document, or all collections. Start each Key information bullet with the source of the turn it came from, e.g. "- [collection "Contracts"] Retention is five years." Facts from one source may not hold for another.
+- If a previous summary is provided, carry over every one of its Decisions and Key information bullets, with their sources, unless the new turns correct or replace it. Merge duplicates. To save space, shorten the wording; do not drop facts.
 - Be faithful to the transcript. Do not invent content.
-- Keep under 300 tokens total.
+- Keep under 500 tokens total.
 """
 
 

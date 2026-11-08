@@ -63,6 +63,7 @@ class _Agent:
             {
                 "collection_id": state["collection_id"],
                 "question": state["messages"][-1].content,
+                "scope": state["messages"][-1].additional_kwargs.get("scope"),
                 "thread_id": config["configurable"]["thread_id"],
             }
         )
@@ -98,6 +99,7 @@ async def test_a_new_number_gets_a_thread_and_an_answer(session, sent, caplog):
         {
             "collection_id": settings.default_collection_id,
             "question": "¿Qué dice?",
+            "scope": {"collection_id": settings.default_collection_id, "document_id": None},
             "thread_id": thread_id,
         }
     ]
@@ -126,6 +128,7 @@ async def test_a_collection_switch_applies_to_the_question_sent_right_after(sess
     )
 
     assert [turn["collection_id"] for turn in agent.turns] == [collection.id]
+    assert agent.turns[0]["scope"] == {"collection_id": collection.id, "document_id": None}
     assert sent[0] == (sender, f"Ahora consultando: {name}. ¿Qué querés saber?")
     assert sent[1][1] == "Respuesta"
 

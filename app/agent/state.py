@@ -58,6 +58,9 @@ class AgentState(MessagesState):
         - summary_covered_count: number of messages absorbed into `summary`.
           Generation nodes inject `summary` plus messages[summary_covered_count:]
           to keep prompts bounded while preserving the full history.
+        - summary_retry_at: after a failed summary, the message count below
+          which `check_compaction` does not compact again; None otherwise.
+          Written only by summarize: set on a failure, cleared on a success.
         - collection_id: last collection used; mutable per turn.
         - document_id: the one document searched in place of the
           collection, or None; mutable per turn.
@@ -72,6 +75,7 @@ class AgentState(MessagesState):
     document_id: int | None
     summary: str | None
     summary_covered_count: int | None
+    summary_retry_at: int | None
     pending_action: (
         Literal[
             "summarize",

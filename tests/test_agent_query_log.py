@@ -168,6 +168,7 @@ async def test_an_answer_says_which_calls_failed(db):
 
 class _StreamingAgent(_FakeAgent):
     async def astream_events(self, _input, config, version):
+        self.input = _input
         state = await self.ainvoke(_input, config)
         yield {"event": "on_chain_end", "name": "LangGraph", "data": {"output": state}}
 
@@ -181,11 +182,16 @@ async def test_the_streams_final_event_says_which_calls_failed(db, monkeypatch):
             return False
 
     monkeypatch.setattr("app.api.v1.agent.SessionLocal", _Session)
-    app.state.agent = _StreamingAgent({"turn_errors": [CLASSIFIER_BILLING]})
+    agent = _StreamingAgent({"turn_errors": [CLASSIFIER_BILLING]})
+    app.state.agent = agent
     try:
-        r = await _call("POST", "/agent/chat/stream", json={"message": "q"})
+        r = await _call("POST", "/agent/chat/stream", json={"message": "q", "collection_id": 4})
     finally:
         del app.state.agent
+
+    # The question carries the scope the turn searched (audit A17).
+    (question,) = agent.input["messages"]
+    assert question.additional_kwargs["scope"] == {"collection_id": 4, "document_id": None}
 
     events = [block.split("\n", 1) for block in r.text.strip().split("\n\n")]
     (final,) = [data for name, data in events if name == "event: final"]

@@ -15,7 +15,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agent.thread_id import thread_title
-from app.agent.utils.messages import stamped
+from app.agent.utils.messages import SCOPE, stamped
 from app.api.v1.agent import apply_turn_scope, ensure_title
 from app.db import get_db
 from app.main import app
@@ -135,6 +135,8 @@ async def test_all_on_an_existing_thread_searches_every_collection(conv):
     assert r.status_code == 200
     assert conv.collection_id is None
     assert agent.inputs[0]["collection_id"] is None
+    (question,) = agent.inputs[0]["messages"]
+    assert question.additional_kwargs[SCOPE] == {"collection_id": None, "document_id": None}
 
 
 async def test_a_turn_with_a_document_searches_only_it(conv):
@@ -150,6 +152,9 @@ async def test_a_turn_with_a_document_searches_only_it(conv):
     assert (conv.document_id, conv.collection_id) == (12, 5)
     assert agent.inputs[0]["document_id"] == 12
     assert agent.inputs[0]["collection_id"] == 5
+    # The question carries its scope, for the summary (audit A17).
+    (question,) = agent.inputs[0]["messages"]
+    assert question.additional_kwargs[SCOPE] == {"collection_id": 5, "document_id": 12}
 
 
 async def test_a_document_that_does_not_exist_is_refused(conv):

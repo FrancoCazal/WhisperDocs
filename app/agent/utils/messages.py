@@ -11,11 +11,23 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 # saw, but no prompt, summary or query rewrite reads it (audit N4).
 FAILED_TURN = "failed"
 
+# `additional_kwargs` key on a user message: what its turn searched,
+# {"collection_id", "document_id"}, so the summary can say where each fact
+# came from (audit A17).
+SCOPE = "scope"
+
 
 def stamped(**additional_kwargs: Any) -> dict[str, Any]:
     """A message's `additional_kwargs` with the time it was written (UTC,
     ISO 8601), so a reopened thread shows when each turn happened."""
     return {**additional_kwargs, "timestamp": datetime.now(UTC).isoformat()}
+
+
+def asked(text: str, *, collection_id: int | None, document_id: int | None = None) -> HumanMessage:
+    """A user's message: stamped with its time and with what its turn
+    searched (a document, a collection, or all of them when both are None)."""
+    scope = {"collection_id": collection_id, "document_id": document_id}
+    return HumanMessage(content=text, additional_kwargs=stamped(**{SCOPE: scope}))
 
 
 def failed_answer(content: str, **additional_kwargs: Any) -> AIMessage:
@@ -46,6 +58,15 @@ def _without_failed_turns(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
 
 def format_messages(messages: Sequence[BaseMessage]) -> list[dict]:
     """Convert LangChain messages to the [{"role","content"}] shape expected by LLMProvider.
+    See `format_messages_with_sources`."""
+    return [formatted for _m, formatted in format_messages_with_sources(messages)]
+
+
+def format_messages_with_sources(
+    messages: Sequence[BaseMessage],
+) -> list[tuple[BaseMessage, dict]]:
+    """Each kept message with its [{"role","content"}] form, for a caller
+    that also reads the message's `additional_kwargs`.
 
     Filters out messages with empty content, and failed turns (`FAILED_TURN`).
     Maps:
@@ -54,7 +75,7 @@ def format_messages(messages: Sequence[BaseMessage]) -> list[dict]:
       SystemMessage→ "system"
     Other message types are ignored (tool / function messages: out of scope V1).
     """
-    out: list[dict] = []
+    out: list[tuple[BaseMessage, dict]] = []
     for m in _without_failed_turns(messages):
         content = getattr(m, "content", "")
         if not isinstance(content, str):
@@ -79,7 +100,7 @@ def format_messages(messages: Sequence[BaseMessage]) -> list[dict]:
             role = "system"
         else:
             continue
-        out.append({"role": role, "content": content})
+        out.append((m, {"role": role, "content": content}))
     return out
 
 

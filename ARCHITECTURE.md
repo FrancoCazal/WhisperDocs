@@ -325,11 +325,27 @@ LangGraph checkpointer state lives in dedicated tables managed by
 between graph nodes. Splits into two lifetimes:
 
 - **Persistent** (survive across turns via checkpointer): `messages`,
-  `summary`, `summary_covered_count`, `collection_id`, `document_id` (the
-  one document a thread searches in place of its collection, from a
-  document's ASK IN CHAT).
+  `summary`, `summary_covered_count`, `summary_retry_at`, `collection_id`,
+  `document_id` (the one document a thread searches in place of its
+  collection, from a document's ASK IN CHAT).
 - **Transient** (reset by `check_compaction` each turn): `pending_action`,
   `retrieved_chunks`, `metadata`.
+
+Compaction absorbs the older messages into `summary`, a structured summary
+with four sections (user goal, decisions, key information, open questions)
+that the generation prompts read in their place:
+
+- Each user message carries what its turn searched,
+  `additional_kwargs["scope"]` (a collection, a document, or all of them).
+  The summarizer sees it on every user line, and each key fact keeps its
+  source, so after a switch the facts from the earlier collection read as
+  such.
+- Each pass carries over the previous summary's decisions and facts, unless
+  the new turns correct them, within 500 tokens.
+- A summary missing a section (cut at `max_tokens`) or empty is not kept.
+  After a failed summary, `summary_retry_at` makes `check_compaction` wait
+  `AGENT_COMPACTION_RETRY_MESSAGES` (6) messages before trying again, instead
+  of paying for a failing call on every turn. The turn proceeds either way.
 
 Per-request values that are not conversation state travel in the run config,
 not in `AgentState`: `config["configurable"]` carries `thread_id` and the

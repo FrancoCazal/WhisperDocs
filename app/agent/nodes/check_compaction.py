@@ -15,6 +15,7 @@ async def check_compaction_node(state: AgentState) -> dict:
     Compaction guards:
       - Only compact if last message is from user (don't compact mid-turn).
       - Trigger on token OR message-count threshold.
+      - Not before `summary_retry_at` messages, after a failed summary.
     """
     messages = state["messages"]
     covered = state.get("summary_covered_count") or 0
@@ -25,7 +26,9 @@ async def check_compaction_node(state: AgentState) -> dict:
         total_tokens > settings.agent.compaction_token_threshold
         or len(uncovered) > settings.agent.compaction_count_threshold
     )
-    needs_compaction = over_threshold and last_is_user
+    retry_at = state.get("summary_retry_at")
+    backing_off = retry_at is not None and len(messages) < retry_at
+    needs_compaction = over_threshold and last_is_user and not backing_off
 
     return {
         "pending_action": "summarize" if needs_compaction else None,

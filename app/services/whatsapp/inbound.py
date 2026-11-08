@@ -31,12 +31,11 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from langchain_core.messages import HumanMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.thread_id import normalize_phone, thread_title, whatsapp_thread_id
-from app.agent.utils.messages import stamped
+from app.agent.utils.messages import asked
 from app.agent.utils.turn_errors import failure_kind
 from app.config import settings
 from app.db import SessionLocal
@@ -200,7 +199,7 @@ async def _answer(agent: Any, db: AsyncSession, *, sender: str, body: str, threa
         try:
             result = await agent.ainvoke(
                 {
-                    "messages": [HumanMessage(content=body, additional_kwargs=stamped())],
+                    "messages": [asked(body, collection_id=conv.collection_id)],
                     "collection_id": conv.collection_id,
                 },
                 config={"configurable": {"thread_id": thread_id}, "recursion_limit": 10},

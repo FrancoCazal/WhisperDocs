@@ -473,7 +473,7 @@ async def test_summarize_early_return_when_short(fake_provider, mock_llm_service
 
 
 async def test_summarize_writes_progressive_summary(
-    fake_provider, mock_llm_service_for, monkeypatch
+    fake_provider, mock_llm_service_for, monkeypatch, complete_summary
 ):
     from app.services.llm.base import LLMResponse
     from app.config import settings
@@ -488,7 +488,7 @@ async def test_summarize_writes_progressive_summary(
         messages.append(m)
 
     fake_provider.generate_response = LLMResponse(
-        text="## Objetivo\nUser asked about X\n## Decisiones\n(ninguna)",
+        text=complete_summary,
         tokens_input=400,
         tokens_output=80,
         model="fake-sum",
@@ -498,9 +498,10 @@ async def test_summarize_writes_progressive_summary(
 
     result = await summarize_node({"messages": messages, "summary": None})
 
-    assert result["summary"].startswith("## Objetivo")
+    assert result["summary"] == complete_summary
     assert result["pending_action"] is None
     assert result["summary_covered_count"] == 4
+    assert result["summary_retry_at"] is None
     # Literal transcript preserved — node returns no "messages" patch.
     assert "messages" not in result
 
@@ -549,10 +550,13 @@ async def test_summarize_graceful_on_llm_error(fake_provider, mock_llm_service_f
         m.id = f"msg-{i}"
         messages.append(m)
 
-    # Must NOT raise: the history stays intact, and the turn records why.
+    # Must NOT raise: the history stays intact, the turn records why, and
+    # compaction waits 6 messages (compaction_retry_messages) to try again.
+    monkeypatch.setattr(settings.agent, "compaction_retry_messages", 6)
     result = await summarize_node({"messages": messages, "summary": None})
     assert result == {
         "pending_action": None,
+        "summary_retry_at": 12,
         "metadata": {
             "turn_errors": [{"step": "summarize", "kind": "unknown", "model": "fake-model"}]
         },

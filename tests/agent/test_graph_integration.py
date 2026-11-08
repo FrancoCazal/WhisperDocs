@@ -401,6 +401,7 @@ async def test_compaction_fires_when_count_threshold_exceeded(
     fake_provider,
     classifier_response,
     monkeypatch,
+    complete_summary,
 ):
     """Pre-seed a thread with many messages via checkpointer, then next
     invocation must run summarize before decide_action.
@@ -422,7 +423,7 @@ async def test_compaction_fires_when_count_threshold_exceeded(
         if "progressive structured summary" in sys:
             generate_spy.summarize_called = True  # type: ignore[attr-defined]
             return LLMResponse(
-                text="## Objetivo\ntest",
+                text=complete_summary,
                 tokens_input=200,
                 tokens_output=50,
                 model="fake-sum",

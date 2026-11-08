@@ -5,12 +5,12 @@ from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.thread_id import thread_title
-from app.agent.utils.messages import stamped
+from app.agent.utils.messages import asked
 from app.agent.utils.turn_errors import failure_kind
 from app.api.errors import APIError, request_id
 from app.api.rate_limit import questions_limit
@@ -94,7 +94,11 @@ async def agent_chat(
             result = await agent.ainvoke(
                 {
                     "messages": [
-                        HumanMessage(content=payload.message, additional_kwargs=stamped())
+                        asked(
+                            payload.message,
+                            collection_id=conv.collection_id,
+                            document_id=conv.document_id,
+                        )
                     ],
                     "collection_id": conv.collection_id,
                     "document_id": conv.document_id,
@@ -272,7 +276,11 @@ async def agent_chat_stream(
                 async for event in agent.astream_events(
                     {
                         "messages": [
-                            HumanMessage(content=payload.message, additional_kwargs=stamped())
+                            asked(
+                                payload.message,
+                                collection_id=active_collection_id,
+                                document_id=active_document_id,
+                            )
                         ],
                         "collection_id": active_collection_id,
                         "document_id": active_document_id,
