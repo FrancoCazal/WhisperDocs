@@ -21,7 +21,9 @@ Fixes from the November 2026 audit, and a review of the frontend.
   (`GET /eval/results/{run_id}`), a diff between two runs, and a cost
   confirmation before a run starts.
 - Documents: the document page can delete or move the document, search its
-  chunks and ask the chat about it. Uploads are checked before they are
+  chunks and ask the chat about it: a thread that searches only that
+  document (`conversations.document_id`, migration 0015; `document_id` on
+  `/agent/chat`). Uploads are checked before they are
   sent and show their progress.
 - History: filters by origin and by question text
   (`GET /query/history?source=&q=`), and pagination.
@@ -98,6 +100,8 @@ Fixes from the November 2026 audit, and a review of the frontend.
 - `GET /eval/results` read the reports on the event loop, and applied
   `limit` before it skipped the files that are not reports.
 - The eval CLI's reports showed metrics an old run did not save as 0.
+- On a phone, iOS zoomed into a search box, a select or TOP_K when it took
+  focus: every field is 16px there now.
 
 ### CI
 
@@ -106,6 +110,9 @@ Fixes from the November 2026 audit, and a review of the frontend.
 - Dependabot for Python, npm, GitHub Actions and Docker.
 - A frontend job: types, lint and format, build, and the unit and browser
   tests.
+- No test can reach a model or embedding API, even with credentials in
+  `.env`: a test that resolves a host other than this machine or the test
+  database fails.
 
 ## [1.0] - 2026-05-19
 
