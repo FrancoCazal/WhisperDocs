@@ -70,6 +70,10 @@ function ChatPage() {
   const [input, setInput] = useState("");
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [loadingThread, setLoadingThread] = useState(false);
+  // A WhatsApp thread is read-only here: its id is not a UUID4, which the
+  // chat endpoint requires, and a web reply would mix into that user's memory.
+  const [channel, setChannel] = useState("web");
+  const readOnly = channel !== "web";
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -149,7 +153,7 @@ function ChatPage() {
 
   async function send(message: string) {
     const trimmed = message.trim();
-    if (!trimmed || runRef.current || loadingThread) return;
+    if (!trimmed || runRef.current || loadingThread || readOnly) return;
     const view = viewRef.current;
     const run: StreamRun = { controller: new AbortController(), reason: null };
     runRef.current = run;
@@ -287,6 +291,7 @@ function ChatPage() {
   function startNew() {
     leaveThread();
     setThreadId(null);
+    setChannel("web");
     setTurns([]);
   }
 
@@ -296,6 +301,7 @@ function ChatPage() {
     leaveThread();
     const view = viewRef.current;
     setThreadId(c.thread_id);
+    setChannel(c.channel);
     setCollectionId(c.collection_id ?? null);
     setTurns([]);
     setLoadingThread(true);
@@ -411,6 +417,11 @@ function ChatPage() {
               <div className="label-sm text-text-secondary">
                 AGENT_THREAD:{" "}
                 <span className="text-text-primary">{threadId ? threadId.slice(0, 8) : "NEW"}</span>
+                {readOnly && (
+                  <span className="ml-2 label-xs px-2 py-0.5 border border-text-tertiary text-text-secondary">
+                    {channel.toUpperCase()} · READ ONLY
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex items-center flex-wrap gap-2 sm:gap-4">
@@ -418,6 +429,7 @@ function ChatPage() {
                 COLLECTION:
                 <select
                   value={collectionId ?? ""}
+                  disabled={readOnly}
                   onChange={(e) => setCollectionId(e.target.value ? Number(e.target.value) : null)}
                   className="bg-surface-lowest border border-border-subtle px-2 h-7 text-text-primary body-sm focus:outline-none focus:border-border-focus"
                 >
@@ -519,7 +531,9 @@ function ChatPage() {
                       onPin={() => pinTurn(t)}
                       pinning={pinNoteMut.isPending && pinNoteMut.variables?.content === t.text}
                       onRetry={
-                        t.outcome && i === lastIndex && !streaming ? () => retry(i) : undefined
+                        t.outcome && i === lastIndex && !streaming && !readOnly
+                          ? () => retry(i)
+                          : undefined
                       }
                     />
                   ),
@@ -547,48 +561,59 @@ function ChatPage() {
                 </button>
               </div>
             )}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void send(input);
-              }}
-              className="max-w-4xl mx-auto flex items-center gap-3 border-b border-border-subtle focus-within:border-border-focus pb-2"
-            >
-              <span className="text-text-primary body-sm">{">"}</span>
-              {/* Typing stays open while an answer streams; sending waits for it. */}
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape" && streaming) stop();
+            {readOnly ? (
+              <div className="max-w-4xl mx-auto label-sm text-text-secondary border border-border-subtle bg-surface-container-low px-4 py-3">
+                {channel.toUpperCase()} THREAD · READ ONLY. Its user talks to the agent on{" "}
+                {channel === "whatsapp" ? "WhatsApp" : channel}; to ask here, start a{" "}
+                <button onClick={startNew} className="text-text-primary hover:text-primary-blue">
+                  + NEW
+                </button>{" "}
+                thread.
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void send(input);
                 }}
-                disabled={loadingThread}
-                maxLength={LIMITS.chatMessage}
-                placeholder="ASK THE AGENT..."
-                aria-label="Message to agent"
-                className="flex-1 min-w-0 bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-sm py-2 focus-visible:ring-0"
-              />
-              <LengthHint length={input.length} max={LIMITS.chatMessage} />
-              {streaming ? (
-                <button
-                  type="button"
-                  onClick={stop}
-                  title="Stop the answer (Esc)"
-                  className="label-sm text-error hover:bg-error hover:text-surface px-2 h-7 border border-error/40"
-                >
-                  ■ STOP
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={loadingThread || !input.trim()}
-                  className="label-sm text-text-primary disabled:text-text-tertiary hover:bg-text-primary hover:text-surface px-2 h-7 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
-                >
-                  ↵ SEND
-                </button>
-              )}
-            </form>
+                className="max-w-4xl mx-auto flex items-center gap-3 border-b border-border-subtle focus-within:border-border-focus pb-2"
+              >
+                <span className="text-text-primary body-sm">{">"}</span>
+                {/* Typing stays open while an answer streams; sending waits for it. */}
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape" && streaming) stop();
+                  }}
+                  disabled={loadingThread}
+                  maxLength={LIMITS.chatMessage}
+                  placeholder="ASK THE AGENT..."
+                  aria-label="Message to agent"
+                  className="flex-1 min-w-0 bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-sm py-2 focus-visible:ring-0"
+                />
+                <LengthHint length={input.length} max={LIMITS.chatMessage} />
+                {streaming ? (
+                  <button
+                    type="button"
+                    onClick={stop}
+                    title="Stop the answer (Esc)"
+                    className="label-sm text-error hover:bg-error hover:text-surface px-2 h-7 border border-error/40"
+                  >
+                    ■ STOP
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={loadingThread || !input.trim()}
+                    className="label-sm text-text-primary disabled:text-text-tertiary hover:bg-text-primary hover:text-surface px-2 h-7 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
+                  >
+                    ↵ SEND
+                  </button>
+                )}
+              </form>
+            )}
           </div>
         </section>
       </div>
