@@ -18,7 +18,10 @@ export const Route = createFileRoute("/documentos/$id")({
       <div>
         <ErrorBanner message={error.message} />
         <button
-          onClick={() => { router.invalidate(); reset(); }}
+          onClick={() => {
+            router.invalidate();
+            reset();
+          }}
           className="label-sm border border-text-primary text-text-primary px-3 h-8 hover:bg-text-primary hover:text-surface"
         >
           RETRY ↻
@@ -67,7 +70,10 @@ function DocumentDetailPage() {
             <Meta label="TYPE" value={doc.data.file_type.toUpperCase()} />
             <Meta
               label="COLLECTION"
-              value={collections.data?.find((c) => c.id === doc.data!.collection_id)?.name ?? `#${doc.data.collection_id}`}
+              value={
+                collections.data?.find((c) => c.id === doc.data!.collection_id)?.name ??
+                `#${doc.data.collection_id}`
+              }
             />
             <Meta label="CHUNKS" value={fmtNumber(doc.data.chunk_count)} />
             <Meta label="TOTAL TOKENS" value={fmtNumber(doc.data.total_tokens)} />

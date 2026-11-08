@@ -1,14 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, estimateCost, fmtTimestamp, type Citation, type QueryLog, type QueryMetadata } from "@/lib/api";
+import {
+  api,
+  estimateCost,
+  fmtTimestamp,
+  type Citation,
+  type QueryLog,
+  type QueryMetadata,
+} from "@/lib/api";
 import { ErrorBanner } from "@/components/ui-kit/EmptyState";
 
 export const Route = createFileRoute("/consulta")({
   head: () => ({
     meta: [
       { title: "Consulta — WhisperDocs" },
-      { name: "description", content: "Conversational query session against the WhisperDocs knowledge base." },
+      {
+        name: "description",
+        content: "Conversational query session against the WhisperDocs knowledge base.",
+      },
     ],
   }),
   component: ConsultaPage,
@@ -39,7 +49,9 @@ function newSession(): Session {
 }
 
 function logsToSession(sessionId: string, logs: QueryLog[]): Session {
-  const sorted = [...logs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const sorted = [...logs].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
   const turns: Turn[] = sorted.flatMap((log) => [
     { kind: "user" as const, ts: fmtTimestamp(log.created_at), text: log.question },
     {
@@ -65,11 +77,7 @@ const EXAMPLES = [
   "Compare OpenAI vs Anthropic pricing",
 ];
 
-const PROGRESS_STEPS = [
-  "EMBEDDING QUERY...",
-  "RETRIEVING CHUNKS...",
-  "GENERATING RESPONSE...",
-];
+const PROGRESS_STEPS = ["EMBEDDING QUERY...", "RETRIEVING CHUNKS...", "GENERATING RESPONSE..."];
 
 function ConsultaPage() {
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()]);
@@ -82,7 +90,11 @@ function ConsultaPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const historyQuery = useQuery({ queryKey: ["query-history"], queryFn: () => api.history(200), staleTime: Infinity });
+  const historyQuery = useQuery({
+    queryKey: ["query-history"],
+    queryFn: () => api.history(200),
+    staleTime: Infinity,
+  });
   const initialized = useRef(false);
 
   const active = useMemo(
@@ -91,7 +103,8 @@ function ConsultaPage() {
   );
 
   const queryMut = useMutation({
-    mutationFn: (q: string) => api.query({ question: q, collection_id: collectionId, top_k: topK, session_id: active.id }),
+    mutationFn: (q: string) =>
+      api.query({ question: q, collection_id: collectionId, top_k: topK, session_id: active.id }),
   });
 
   useEffect(() => {
@@ -162,7 +175,10 @@ function ConsultaPage() {
   return (
     <div className="-m-3 sm:-m-6 md:-m-8 flex h-[calc(100vh-48px)] md:h-[calc(100vh-48px-28px)]">
       {/* Conversation list — desktop only */}
-      <aside className="hidden md:flex w-64 shrink-0 border-r border-border-subtle bg-surface-low flex-col" aria-label="Sessions">
+      <aside
+        className="hidden md:flex w-64 shrink-0 border-r border-border-subtle bg-surface-low flex-col"
+        aria-label="Sessions"
+      >
         <div className="px-4 h-12 flex items-center justify-between border-b border-border-subtle">
           <span className="label-sm text-text-secondary">SESSIONS</span>
           <button
@@ -249,7 +265,9 @@ function ConsultaPage() {
 
           {active.turns.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto">
-              <div className="title-lg text-text-primary blink-cursor">WHISPER_SESSION INITIALIZED</div>
+              <div className="title-lg text-text-primary blink-cursor">
+                WHISPER_SESSION INITIALIZED
+              </div>
               <div className="body-sm text-text-secondary mt-3">
                 Ready to query. Select a collection and ask a question.
               </div>
@@ -395,7 +413,8 @@ function AssistantTurn({
             <div className="mt-3 space-y-2">
               {turn.citations.map((c, idx) => {
                 const rel = c.relevance;
-                const relClass = rel >= 0.7 ? "text-success" : rel >= 0.5 ? "text-text-tertiary" : "text-error";
+                const relClass =
+                  rel >= 0.7 ? "text-success" : rel >= 0.5 ? "text-text-tertiary" : "text-error";
                 const num = String(idx + 1).padStart(2, "0");
                 return (
                   <div
@@ -409,9 +428,7 @@ function AssistantTurn({
                       <span className="text-text-tertiary">·</span>
                       <span className="text-text-secondary">CHUNK {c.chunk_index}</span>
                       <span className="text-text-tertiary">·</span>
-                      <span className={`tabular-nums ${relClass}`}>
-                        RELEVANCE {rel.toFixed(3)}
-                      </span>
+                      <span className={`tabular-nums ${relClass}`}>RELEVANCE {rel.toFixed(3)}</span>
                     </div>
                   </div>
                 );

@@ -7,9 +7,7 @@ export function EmptyState({ label = "NO DATA AVAILABLE" }: { label?: string }) 
 }
 
 export function LoadingLine({ label = "LOADING" }: { label?: string }) {
-  return (
-    <div className="label-sm text-text-secondary blink-cursor">{label}...</div>
-  );
+  return <div className="label-sm text-text-secondary blink-cursor">{label}...</div>;
 }
 
 export function ErrorBanner({ message }: { message: string }) {

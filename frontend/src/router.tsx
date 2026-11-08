@@ -13,7 +13,10 @@ function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => vo
         </pre>
         <div className="flex gap-3">
           <button
-            onClick={() => { router.invalidate(); reset(); }}
+            onClick={() => {
+              router.invalidate();
+              reset();
+            }}
             className="h-9 px-4 label-sm bg-text-primary text-surface hover:bg-transparent hover:text-text-primary border border-text-primary"
           >
             RETRY ↻

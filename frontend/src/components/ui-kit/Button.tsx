@@ -15,8 +15,7 @@ export function Btn({
       "bg-primary-blue text-surface border border-primary-blue hover:bg-transparent hover:text-primary-blue",
     secondary:
       "border border-text-primary text-text-primary bg-transparent hover:border-primary-blue hover:text-primary-blue",
-    destructive:
-      "border border-error text-error bg-transparent hover:bg-error hover:text-surface",
+    destructive: "border border-error text-error bg-transparent hover:bg-error hover:text-surface",
   };
   return (
     <button {...rest} className={`${base} ${variants[variant]} ${className}`}>

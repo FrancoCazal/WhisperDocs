@@ -46,13 +46,7 @@ export function Modal({
   );
 }
 
-export function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block mb-4">
       <span className="label-sm text-text-secondary block mb-2">{label}</span>

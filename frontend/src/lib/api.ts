@@ -32,12 +32,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       detail = await res.json();
     } catch {
-      try { detail = await res.text(); } catch { /* ignore */ }
+      try {
+        detail = await res.text();
+      } catch {
+        /* ignore */
+      }
     }
     const msg =
-      (detail && typeof detail === "object" && "detail" in (detail as Record<string, unknown>)
+      detail && typeof detail === "object" && "detail" in (detail as Record<string, unknown>)
         ? String((detail as Record<string, unknown>).detail)
-        : `HTTP ${res.status}`);
+        : `HTTP ${res.status}`;
     throw new ApiError(res.status, detail, msg);
   }
   if (res.status === 204) return undefined as T;
@@ -272,8 +276,7 @@ export const api = {
   getCollection: (id: number) => request<Collection>(`/collections/${id}`),
   createCollection: (body: { name: string; description?: string }) =>
     request<Collection>("/collections", { method: "POST", body: JSON.stringify(body) }),
-  deleteCollection: (id: number) =>
-    request<void>(`/collections/${id}`, { method: "DELETE" }),
+  deleteCollection: (id: number) => request<void>(`/collections/${id}`, { method: "DELETE" }),
 
   listDocuments: async (collectionId?: number, limit = 50): Promise<DocumentRead[]> => {
     const q = new URLSearchParams();
@@ -291,8 +294,7 @@ export const api = {
   },
   getDocument: (id: number) => request<DocumentDetail>(`/documents/${id}`),
   getChunks: (id: number) => request<Chunk[]>(`/documents/${id}/chunks`),
-  deleteDocument: (id: number) =>
-    request<void>(`/documents/${id}`, { method: "DELETE" }),
+  deleteDocument: (id: number) => request<void>(`/documents/${id}`, { method: "DELETE" }),
   uploadBatch: (collectionId: number, files: File[]) => {
     const fd = new FormData();
     fd.append("collection_id", String(collectionId));
@@ -301,7 +303,12 @@ export const api = {
       total: number;
       succeeded: number;
       failed: number;
-      results: { status: string; filename: string; document: DocumentRead | null; error: string | null }[];
+      results: {
+        status: string;
+        filename: string;
+        document: DocumentRead | null;
+        error: string | null;
+      }[];
     }>("/documents/upload-batch", { method: "POST", body: fd });
   },
 
@@ -405,8 +412,12 @@ export const api = {
     }
   },
 
-  query: (body: { question: string; collection_id: number | null; top_k: number; session_id?: string }) =>
-    request<QueryResponse>("/query", { method: "POST", body: JSON.stringify(body) }),
+  query: (body: {
+    question: string;
+    collection_id: number | null;
+    top_k: number;
+    session_id?: string;
+  }) => request<QueryResponse>("/query", { method: "POST", body: JSON.stringify(body) }),
   history: async (limit = 50): Promise<QueryLog[]> => {
     const page = await request<Page<QueryLog>>(`/query/history?limit=${limit}`);
     return page.items;
@@ -419,7 +430,12 @@ export const api = {
     return request<Page<QueryLog>>(`/query/history?${q.toString()}`);
   },
 
-  agentChat: (body: { message: string; thread_id?: string | null; collection_id?: number | null; top_k?: number }) =>
+  agentChat: (body: {
+    message: string;
+    thread_id?: string | null;
+    collection_id?: number | null;
+    top_k?: number;
+  }) =>
     request<AgentChatResponse>("/agent/chat", {
       method: "POST",
       body: JSON.stringify({
@@ -430,7 +446,12 @@ export const api = {
     }),
 
   agentChatStream: async (
-    body: { message: string; thread_id?: string | null; collection_id?: number | null; top_k?: number },
+    body: {
+      message: string;
+      thread_id?: string | null;
+      collection_id?: number | null;
+      top_k?: number;
+    },
     onEvent: (e: AgentStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
@@ -474,10 +495,8 @@ export const api = {
           continue;
         }
         const data = parsed as Record<string, unknown>;
-        if (evtName === "thread")
-          onEvent({ type: "thread", thread_id: String(data.thread_id) });
-        else if (evtName === "node_start")
-          onEvent({ type: "node_start", node: String(data.node) });
+        if (evtName === "thread") onEvent({ type: "thread", thread_id: String(data.thread_id) });
+        else if (evtName === "node_start") onEvent({ type: "node_start", node: String(data.node) });
         else if (evtName === "node_end")
           onEvent({
             type: "node_end",
@@ -566,8 +585,7 @@ export const api = {
     return request<SavedNote[]>(`/notes${qs ? `?${qs}` : ""}`);
   },
 
-  deleteNote: (noteId: number) =>
-    request<void>(`/notes/${noteId}`, { method: "DELETE" }),
+  deleteNote: (noteId: number) => request<void>(`/notes/${noteId}`, { method: "DELETE" }),
 
   evalResults: (limit = 20) => request<EvalRunSummary[]>(`/eval/results?limit=${limit}`),
   runEval: (body: {
@@ -619,11 +637,11 @@ export function truncate(s: string, n = 60): string {
 }
 
 const MODEL_COST_PER_1M: Record<string, { input: number; output: number }> = {
-  "gpt-4o-mini":                                    { input: 0.15,  output: 0.60  },
-  "gpt-4o":                                         { input: 2.50,  output: 10.00 },
-  "gemini-2.5-flash":                               { input: 0.15,  output: 0.60  },
-  "us.anthropic.claude-sonnet-4-20250514-v1:0":     { input: 3.00,  output: 15.00 },
-  "us.anthropic.claude-haiku-4-5-20251001-v1:0":    { input: 0.80,  output: 4.00  },
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "gpt-4o": { input: 2.5, output: 10.0 },
+  "gemini-2.5-flash": { input: 0.15, output: 0.6 },
+  "us.anthropic.claude-sonnet-4-20250514-v1:0": { input: 3.0, output: 15.0 },
+  "us.anthropic.claude-haiku-4-5-20251001-v1:0": { input: 0.8, output: 4.0 },
 };
 
 export function estimateCost(
@@ -631,9 +649,9 @@ export function estimateCost(
   tokensOut: number,
   model: string | null | undefined,
 ): string {
-  if (!model) return fmtCost((tokensIn + tokensOut) / 1_000_000 * 0.5);
+  if (!model) return fmtCost(((tokensIn + tokensOut) / 1_000_000) * 0.5);
   const rates = MODEL_COST_PER_1M[model];
-  if (!rates) return fmtCost((tokensIn + tokensOut) / 1_000_000 * 0.5);
+  if (!rates) return fmtCost(((tokensIn + tokensOut) / 1_000_000) * 0.5);
   const cost = (tokensIn / 1_000_000) * rates.input + (tokensOut / 1_000_000) * rates.output;
   return fmtCost(cost);
 }

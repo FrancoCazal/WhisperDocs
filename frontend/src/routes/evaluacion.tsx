@@ -12,7 +12,10 @@ export const Route = createFileRoute("/evaluacion")({
   head: () => ({
     meta: [
       { title: "Evaluation — WhisperDocs" },
-      { name: "description", content: "Run and inspect benchmark evaluations of the RAG pipeline." },
+      {
+        name: "description",
+        content: "Run and inspect benchmark evaluations of the RAG pipeline.",
+      },
     ],
   }),
   component: EvaluacionPage,
@@ -20,10 +23,30 @@ export const Route = createFileRoute("/evaluacion")({
 
 const STARTER_DATASET = JSON.stringify(
   [
-    { question: "What distance metrics does pgvector support?", expected: "cosine, l2, inner_product", difficulty: "easy", category: "in_scope" },
-    { question: "How do you create an IVFFlat index in pgvector?", expected: "CREATE INDEX ... USING ivfflat", difficulty: "medium", category: "in_scope" },
-    { question: "Difference between selectinload and joinedload", expected: "selectinload uses IN; joinedload uses JOIN", difficulty: "medium", category: "in_scope" },
-    { question: "What is the capital of France?", expected: "out of scope", difficulty: "easy", category: "out_of_scope" },
+    {
+      question: "What distance metrics does pgvector support?",
+      expected: "cosine, l2, inner_product",
+      difficulty: "easy",
+      category: "in_scope",
+    },
+    {
+      question: "How do you create an IVFFlat index in pgvector?",
+      expected: "CREATE INDEX ... USING ivfflat",
+      difficulty: "medium",
+      category: "in_scope",
+    },
+    {
+      question: "Difference between selectinload and joinedload",
+      expected: "selectinload uses IN; joinedload uses JOIN",
+      difficulty: "medium",
+      category: "in_scope",
+    },
+    {
+      question: "What is the capital of France?",
+      expected: "out of scope",
+      difficulty: "easy",
+      category: "out_of_scope",
+    },
   ],
   null,
   2,
@@ -52,7 +75,12 @@ function EvaluacionPage() {
         throw new Error(`Invalid dataset JSON: ${e instanceof Error ? e.message : e}`);
       }
       if (collId === null) throw new Error("Select a collection");
-      return api.runEval({ dataset: parsed, collection_id: collId, top_k: topK, concurrency: conc });
+      return api.runEval({
+        dataset: parsed,
+        collection_id: collId,
+        top_k: topK,
+        concurrency: conc,
+      });
     },
     onSuccess: (r) => {
       setCurrentRun(r);
@@ -68,7 +96,13 @@ function EvaluacionPage() {
         title="EVALUATION"
         subtitle="BENCHMARK & TELEMETRY"
         actions={
-          <Btn variant="primary" onClick={() => { setFormError(null); setOpen(true); }}>
+          <Btn
+            variant="primary"
+            onClick={() => {
+              setFormError(null);
+              setOpen(true);
+            }}
+          >
             + RUN NEW EVALUATION
           </Btn>
         }
@@ -100,7 +134,9 @@ function EvaluacionPage() {
       <h2 className="title-sm text-text-primary mb-3">HISTORICAL RUNS</h2>
       <div className="border border-border-subtle bg-surface-container overflow-x-auto">
         {runs.isLoading ? (
-          <div className="p-4"><LoadingLine /></div>
+          <div className="p-4">
+            <LoadingLine />
+          </div>
         ) : !runs.data || runs.data.length === 0 ? (
           <EmptyState label="NO HISTORICAL RUNS" />
         ) : (
@@ -118,7 +154,10 @@ function EvaluacionPage() {
             </thead>
             <tbody>
               {runs.data.map((r) => (
-                <tr key={r.run_id} className="body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high">
+                <tr
+                  key={r.run_id}
+                  className="body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high"
+                >
                   <td className="pl-6 text-text-primary">{r.run_id}</td>
                   <td className="text-text-secondary tabular-nums">{fmtDate(r.timestamp)}</td>
                   <td
@@ -133,8 +172,12 @@ function EvaluacionPage() {
                   >
                     {fmtPct(r.hallucination_rate)}
                   </td>
-                  <td className="text-center"><StatDot ok={(r.status ?? "complete") === "complete"} /></td>
-                  <td className="text-right tabular-nums text-text-primary">{fmtCost(r.estimated_cost_usd)}</td>
+                  <td className="text-center">
+                    <StatDot ok={(r.status ?? "complete") === "complete"} />
+                  </td>
+                  <td className="text-right tabular-nums text-text-primary">
+                    {fmtCost(r.estimated_cost_usd)}
+                  </td>
                   <td className="text-right pr-6">
                     <button
                       onClick={() =>
@@ -173,7 +216,12 @@ function EvaluacionPage() {
         )}
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="EXECUTE EVALUATION" width="max-w-2xl">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="EXECUTE EVALUATION"
+        width="max-w-2xl"
+      >
         <Field label="DATASET (JSON ARRAY)">
           <div className="flex justify-end mb-1">
             <button
@@ -199,20 +247,28 @@ function EvaluacionPage() {
             >
               <option value="">— SELECT —</option>
               {collections.data?.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
             </select>
           </Field>
           <Field label="TOP_K">
             <input
-              type="number" min={1} max={20} value={topK}
+              type="number"
+              min={1}
+              max={20}
+              value={topK}
               onChange={(e) => setTopK(Number(e.target.value) || 5)}
               className={inputCls}
             />
           </Field>
           <Field label="CONCURRENCY">
             <input
-              type="number" min={1} max={16} value={conc}
+              type="number"
+              min={1}
+              max={16}
+              value={conc}
               onChange={(e) => setConc(Number(e.target.value) || 4)}
               className={inputCls}
             />
@@ -264,9 +320,17 @@ function CurrentRun({ report }: { report: EvalReport }) {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <BigMetric label="ACCURACY" value={fmtPct(m.accuracy)} color={accuracyColor(m.accuracy)} />
-        <BigMetric label="HALLUCINATION RATE" value={fmtPct(m.hallucination_rate)} color={halColor(m.hallucination_rate)} />
+        <BigMetric
+          label="HALLUCINATION RATE"
+          value={fmtPct(m.hallucination_rate)}
+          color={halColor(m.hallucination_rate)}
+        />
         <BigMetric label="RETRIEVAL PRECISION" value={fmtPct(m.avg_retrieval_precision)} />
-        <BigMetric label="AVG LATENCY" value={`${Math.round(m.avg_latency_ms)}MS`} color={latColor(m.avg_latency_ms)} />
+        <BigMetric
+          label="AVG LATENCY"
+          value={`${Math.round(m.avg_latency_ms)}MS`}
+          color={latColor(m.avg_latency_ms)}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -313,13 +377,22 @@ function BreakdownTable({
             </thead>
             <tbody>
               {Object.entries(data).map(([k, v]) => (
-                <tr key={k} className="body-sm h-9 hover:bg-surface-high border-b border-border-subtle/50">
+                <tr
+                  key={k}
+                  className="body-sm h-9 hover:bg-surface-high border-b border-border-subtle/50"
+                >
                   <td className="pl-6 text-text-primary">{k.toUpperCase()}</td>
                   <td className="text-right tabular-nums text-text-primary">{v.count}</td>
-                  <td className="text-right tabular-nums" style={{ color: accuracyColor(v.accuracy) }}>
+                  <td
+                    className="text-right tabular-nums"
+                    style={{ color: accuracyColor(v.accuracy) }}
+                  >
                     {fmtPct(v.accuracy)}
                   </td>
-                  <td className="text-right pr-6 tabular-nums" style={{ color: halColor(v.hallucination_rate) }}>
+                  <td
+                    className="text-right pr-6 tabular-nums"
+                    style={{ color: halColor(v.hallucination_rate) }}
+                  >
                     {fmtPct(v.hallucination_rate)}
                   </td>
                 </tr>

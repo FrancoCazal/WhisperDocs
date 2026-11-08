@@ -175,18 +175,38 @@ export function Shell() {
         className="hidden md:flex fixed bottom-0 left-0 right-0 h-7 bg-surface-lowest border-t border-border-subtle items-center justify-between px-4 label-xs text-text-secondary z-50"
       >
         <div className="flex items-center gap-3">
-          <span>TOKENS: <span className="text-text-primary">4,201</span></span>
-          <span className="text-text-tertiary" aria-hidden="true">|</span>
-          <span>LATENCY: <span className="text-text-primary">14MS</span></span>
-          <span className="text-text-tertiary" aria-hidden="true">|</span>
-          <span>MODEL: <span className="text-text-primary">gpt-4o-mini</span></span>
-          <span className="text-text-tertiary" aria-hidden="true">|</span>
-          <span>COST: <span className="text-text-primary">$0.0042</span></span>
+          <span>
+            TOKENS: <span className="text-text-primary">4,201</span>
+          </span>
+          <span className="text-text-tertiary" aria-hidden="true">
+            |
+          </span>
+          <span>
+            LATENCY: <span className="text-text-primary">14MS</span>
+          </span>
+          <span className="text-text-tertiary" aria-hidden="true">
+            |
+          </span>
+          <span>
+            MODEL: <span className="text-text-primary">gpt-4o-mini</span>
+          </span>
+          <span className="text-text-tertiary" aria-hidden="true">
+            |
+          </span>
+          <span>
+            COST: <span className="text-text-primary">$0.0042</span>
+          </span>
         </div>
         <div className="flex items-center gap-3">
-          <span>SYSTEM_STATUS: <span className="text-success">NORMAL</span></span>
-          <span className="text-text-tertiary" aria-hidden="true">|</span>
-          <span>ENCRYPTION_PROTOCOL: <span className="text-success">ACTIVE</span></span>
+          <span>
+            SYSTEM_STATUS: <span className="text-success">NORMAL</span>
+          </span>
+          <span className="text-text-tertiary" aria-hidden="true">
+            |
+          </span>
+          <span>
+            ENCRYPTION_PROTOCOL: <span className="text-success">ACTIVE</span>
+          </span>
         </div>
       </footer>
     </div>

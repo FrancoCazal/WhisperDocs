@@ -21,7 +21,10 @@ function CollectionsPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const documents = useQuery({ queryKey: ["documents", "all"], queryFn: () => api.listDocuments() });
+  const documents = useQuery({
+    queryKey: ["documents", "all"],
+    queryFn: () => api.listDocuments(),
+  });
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -53,14 +56,20 @@ function CollectionsPage() {
       <PageHeader
         title="COLLECTIONS"
         subtitle="KNOWLEDGE BASE NAMESPACES"
-        actions={<Btn variant="primary" onClick={() => setOpen(true)}>+ NEW COLLECTION</Btn>}
+        actions={
+          <Btn variant="primary" onClick={() => setOpen(true)}>
+            + NEW COLLECTION
+          </Btn>
+        }
       />
 
       {collections.error && <ErrorBanner message="failed to load collections" />}
 
       <div className="border border-border-subtle bg-surface-container overflow-x-auto">
         {collections.isLoading ? (
-          <div className="p-4"><LoadingLine /></div>
+          <div className="p-4">
+            <LoadingLine />
+          </div>
         ) : !collections.data || collections.data.length === 0 ? (
           <EmptyState label="NO COLLECTIONS · CREATE ONE TO BEGIN" />
         ) : (
@@ -85,19 +94,33 @@ function CollectionsPage() {
                   <tr
                     key={c.id}
                     className="body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high cursor-pointer"
-                    onClick={() => navigate({ to: "/documentos", search: { collection_id: c.id } as never })}
+                    onClick={() =>
+                      navigate({ to: "/documentos", search: { collection_id: c.id } as never })
+                    }
                   >
                     <td className="pl-6 text-text-primary">{c.name}</td>
                     <td className="text-text-secondary">{c.description || "—"}</td>
-                    <td className="text-right tabular-nums text-text-primary">{fmtNumber(docs.length)}</td>
-                    <td className="text-right tabular-nums text-text-primary">{fmtNumber(chunks)}</td>
-                    <td className="text-right tabular-nums text-text-secondary">{fmtNumber(tokens)}</td>
-                    <td className="pl-6 text-text-secondary tabular-nums">{fmtDate(c.created_at)}</td>
+                    <td className="text-right tabular-nums text-text-primary">
+                      {fmtNumber(docs.length)}
+                    </td>
+                    <td className="text-right tabular-nums text-text-primary">
+                      {fmtNumber(chunks)}
+                    </td>
+                    <td className="text-right tabular-nums text-text-secondary">
+                      {fmtNumber(tokens)}
+                    </td>
+                    <td className="pl-6 text-text-secondary tabular-nums">
+                      {fmtDate(c.created_at)}
+                    </td>
                     <td className="text-right pr-6">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (confirm(`Delete collection "${c.name}"? This cascades to all documents.`)) {
+                          if (
+                            confirm(
+                              `Delete collection "${c.name}"? This cascades to all documents.`,
+                            )
+                          ) {
                             del.mutate(c.id);
                           }
                         }}

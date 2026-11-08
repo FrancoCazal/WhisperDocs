@@ -9,7 +9,10 @@ export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
       { title: "Settings — WhisperDocs" },
-      { name: "description", content: "System configuration and backend connectivity for WhisperDocs." },
+      {
+        name: "description",
+        content: "System configuration and backend connectivity for WhisperDocs.",
+      },
     ],
   }),
   component: SettingsPage,

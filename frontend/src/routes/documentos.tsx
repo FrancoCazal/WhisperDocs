@@ -12,7 +12,10 @@ export const Route = createFileRoute("/documentos")({
   head: () => ({
     meta: [
       { title: "Documents — WhisperDocs" },
-      { name: "description", content: "Indexed corpus and document upload for the WhisperDocs RAG system." },
+      {
+        name: "description",
+        content: "Indexed corpus and document upload for the WhisperDocs RAG system.",
+      },
     ],
   }),
   validateSearch: (s: Record<string, unknown>): SearchParams => ({
@@ -44,7 +47,9 @@ function DocumentsPage() {
   const qc = useQueryClient();
   const search = Route.useSearch();
   const [filter, setFilter] = useState<number | null>(search.collection_id ?? null);
-  const [uploadCollection, setUploadCollection] = useState<number | null>(search.collection_id ?? null);
+  const [uploadCollection, setUploadCollection] = useState<number | null>(
+    search.collection_id ?? null,
+  );
   const [uploadStatuses, setUploadStatuses] = useState<UploadStatus[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -262,9 +267,7 @@ function DocumentsPage() {
           aria-label="Bulk actions"
           className="mb-3 flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 bg-surface-container-low border border-border-subtle"
         >
-          <span className="label-sm text-text-secondary">
-            {selected.size} SELECTED
-          </span>
+          <span className="label-sm text-text-secondary">{selected.size} SELECTED</span>
           <span className="flex-1 hidden sm:block" />
           <button
             onClick={() => setSelected(new Set())}
@@ -283,7 +286,9 @@ function DocumentsPage() {
 
       <div className="border border-border-subtle bg-surface-container overflow-x-auto">
         {documents.isLoading ? (
-          <div className="p-4"><LoadingLine /></div>
+          <div className="p-4">
+            <LoadingLine />
+          </div>
         ) : !documents.data || documents.data.length === 0 ? (
           <EmptyState label="NO DOCUMENTS INDEXED" />
         ) : (
@@ -296,9 +301,7 @@ function DocumentsPage() {
                     checked={selected.size > 0 && selected.size === documents.data.length}
                     onChange={(e) =>
                       setSelected(
-                        e.target.checked
-                          ? new Set(documents.data!.map((d) => d.id))
-                          : new Set(),
+                        e.target.checked ? new Set(documents.data!.map((d) => d.id)) : new Set(),
                       )
                     }
                     aria-label="Select all"
@@ -320,10 +323,7 @@ function DocumentsPage() {
                   onClick={() => navigate({ to: "/documentos/$id", params: { id: String(d.id) } })}
                   className="body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high cursor-pointer"
                 >
-                  <td
-                    className="w-10 pl-4"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+                  <td className="w-10 pl-4" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={selected.has(d.id)}
@@ -334,8 +334,12 @@ function DocumentsPage() {
                   <td className="pl-2 text-text-primary">{d.title}</td>
                   <td className="label-sm text-text-secondary">{d.file_type.toUpperCase()}</td>
                   <td className="text-text-secondary">{collectionName(d.collection_id)}</td>
-                  <td className="text-right tabular-nums text-text-primary">{fmtNumber(d.chunk_count)}</td>
-                  <td className="text-right tabular-nums text-text-primary">{fmtNumber(d.total_tokens)}</td>
+                  <td className="text-right tabular-nums text-text-primary">
+                    {fmtNumber(d.chunk_count)}
+                  </td>
+                  <td className="text-right tabular-nums text-text-primary">
+                    {fmtNumber(d.total_tokens)}
+                  </td>
                   <td className="pl-6 text-text-secondary tabular-nums">{fmtDate(d.created_at)}</td>
                   <td className="text-right pr-6">
                     <button

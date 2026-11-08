@@ -11,7 +11,10 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "System Overview — WhisperDocs" },
-      { name: "description", content: "Diagnostics & telemetry dashboard for the WhisperDocs RAG pipeline." },
+      {
+        name: "description",
+        content: "Diagnostics & telemetry dashboard for the WhisperDocs RAG pipeline.",
+      },
     ],
   }),
   component: Dashboard,
@@ -29,16 +32,31 @@ function accuracyClass(acc: number) {
   return "text-error";
 }
 
-function TokenBar({ label, value, max, colorClass }: { label: string; value: number; max: number; colorClass: string }) {
+function TokenBar({
+  label,
+  value,
+  max,
+  colorClass,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  colorClass: string;
+}) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
   return (
     <div>
       <div className="flex justify-between items-end mb-1">
         <span className="label-xs text-text-secondary">{label}</span>
-        <span className={`label-xs ${colorClass}`}>{value >= 1000 ? `${(value / 1000).toFixed(1)}K` : value}</span>
+        <span className={`label-xs ${colorClass}`}>
+          {value >= 1000 ? `${(value / 1000).toFixed(1)}K` : value}
+        </span>
       </div>
       <div className="w-full bg-surface-high h-[2px]">
-        <div className={`h-full ${colorClass.replace("text-", "bg-")}`} style={{ width: `${pct}%` }} />
+        <div
+          className={`h-full ${colorClass.replace("text-", "bg-")}`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
   );
@@ -47,7 +65,10 @@ function TokenBar({ label, value, max, colorClass }: { label: string; value: num
 function Dashboard() {
   const navigate = useNavigate();
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const documents = useQuery({ queryKey: ["documents", "all"], queryFn: () => api.listDocuments() });
+  const documents = useQuery({
+    queryKey: ["documents", "all"],
+    queryFn: () => api.listDocuments(),
+  });
   const history = useQuery({ queryKey: ["history", 10], queryFn: () => api.history(10) });
   const evals = useQuery({ queryKey: ["eval-results", 5], queryFn: () => api.evalResults(5) });
   const conversations = useQuery({
@@ -62,7 +83,11 @@ function Dashboard() {
   const recentLogs = history.data ?? [];
 
   const queryCostEst = recentLogs.reduce(
-    (s, q) => s + parseFloat(estimateCost(q.tokens_input, q.tokens_output, q.model_used).replace("$", "") || "0"),
+    (s, q) =>
+      s +
+      parseFloat(
+        estimateCost(q.tokens_input, q.tokens_output, q.model_used).replace("$", "") || "0",
+      ),
     0,
   );
 
@@ -109,10 +134,8 @@ function Dashboard() {
 
       {/* ASYMMETRIC GRID: stacks on mobile, 8/4 on lg */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
-
         {/* LEFT COLUMN */}
         <div className="lg:col-span-8 flex flex-col gap-6 min-w-0">
-
           {/* TOP STAT ROW */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
             <StatCard
@@ -133,13 +156,18 @@ function Dashboard() {
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="title-sm text-text-primary">RECENT INFERENCE STREAMS</h2>
-              <Link to="/historial" className="label-sm text-text-secondary hover:text-primary-blue">
+              <Link
+                to="/historial"
+                className="label-sm text-text-secondary hover:text-primary-blue"
+              >
                 VIEW ALL →
               </Link>
             </div>
             <div className="border border-border-subtle bg-surface-container overflow-x-auto">
               {history.isLoading ? (
-                <div className="p-4"><LoadingLine /></div>
+                <div className="p-4">
+                  <LoadingLine />
+                </div>
               ) : recentLogs.length === 0 ? (
                 <EmptyState label="NO QUERIES LOGGED" />
               ) : (
@@ -155,16 +183,25 @@ function Dashboard() {
                   </thead>
                   <tbody>
                     {recentLogs.map((q) => (
-                      <tr key={q.id} className="body-sm hover:bg-surface-high border-b border-border-subtle/50">
-                        <td className="pl-5 py-3 text-text-secondary tabular-nums whitespace-nowrap">{fmtDate(q.created_at)}</td>
+                      <tr
+                        key={q.id}
+                        className="body-sm hover:bg-surface-high border-b border-border-subtle/50"
+                      >
+                        <td className="pl-5 py-3 text-text-secondary tabular-nums whitespace-nowrap">
+                          {fmtDate(q.created_at)}
+                        </td>
                         <td className="py-3 text-text-primary pr-4">{truncate(q.question, 55)}</td>
-                        <td className={`py-3 text-right tabular-nums ${latencyClass(q.latency_ms)}`}>
+                        <td
+                          className={`py-3 text-right tabular-nums ${latencyClass(q.latency_ms)}`}
+                        >
                           {fmtNumber(q.latency_ms)}MS
                         </td>
                         <td className="py-3 text-right tabular-nums text-text-secondary">
                           {fmtNumber(q.tokens_input + q.tokens_output)}
                         </td>
-                        <td className="py-3 text-center pr-5"><StatDot ok={q.latency_ms < 5000} /></td>
+                        <td className="py-3 text-center pr-5">
+                          <StatDot ok={q.latency_ms < 5000} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -176,7 +213,6 @@ function Dashboard() {
 
         {/* RIGHT COLUMN */}
         <div className="lg:col-span-4 flex flex-col gap-4 min-w-0">
-
           {/* COST CARD */}
           <div className="border border-border-subtle bg-surface-container p-5">
             <div className="label-xs text-text-tertiary mb-1">EST. QUERY COST (LAST 10)</div>
@@ -192,7 +228,9 @@ function Dashboard() {
               </div>
               <div>
                 <div className="label-xs text-text-tertiary mb-1">LAST EVAL ACC.</div>
-                <div className={`title-sm ${lastAccuracy !== null ? accuracyClass(lastAccuracy) : "text-text-primary"}`}>
+                <div
+                  className={`title-sm ${lastAccuracy !== null ? accuracyClass(lastAccuracy) : "text-text-primary"}`}
+                >
                   {evals.isLoading ? "—" : lastAccuracy !== null ? fmtPct(lastAccuracy) : "—"}
                 </div>
               </div>
@@ -205,7 +243,6 @@ function Dashboard() {
               <h3 className="label-sm text-text-primary">ENGINE METADATA</h3>
             </div>
             <div className="p-5 space-y-6 flex-1 bg-surface-low">
-
               {/* TOKEN CONSUMPTION */}
               <div>
                 <div className="label-xs text-text-tertiary mb-3">TOKEN CONSUMPTION (LAST 10)</div>
@@ -215,8 +252,18 @@ function Dashboard() {
                   <div className="label-xs text-text-tertiary">NO DATA</div>
                 ) : (
                   <div className="space-y-3">
-                    <TokenBar label="INPUT" value={totalInputTokens} max={maxTokens} colorClass="text-primary-blue" />
-                    <TokenBar label="OUTPUT" value={totalOutputTokens} max={maxTokens} colorClass="text-text-secondary" />
+                    <TokenBar
+                      label="INPUT"
+                      value={totalInputTokens}
+                      max={maxTokens}
+                      colorClass="text-primary-blue"
+                    />
+                    <TokenBar
+                      label="OUTPUT"
+                      value={totalOutputTokens}
+                      max={maxTokens}
+                      colorClass="text-text-secondary"
+                    />
                   </div>
                 )}
               </div>
@@ -229,10 +276,14 @@ function Dashboard() {
                 ) : p95Latency !== null ? (
                   <>
                     <div className="flex items-baseline gap-2">
-                      <span className={`display-md ${latencyClass(p95Latency)}`}>{fmtNumber(p95Latency)}</span>
+                      <span className={`display-md ${latencyClass(p95Latency)}`}>
+                        {fmtNumber(p95Latency)}
+                      </span>
                       <span className="label-xs text-text-tertiary">MS</span>
                     </div>
-                    <div className="label-xs text-text-tertiary mt-1">WARN THRESHOLD: &gt;5000MS</div>
+                    <div className="label-xs text-text-tertiary mt-1">
+                      WARN THRESHOLD: &gt;5000MS
+                    </div>
                   </>
                 ) : (
                   <div className="display-md text-text-primary">—</div>
@@ -253,16 +304,13 @@ function Dashboard() {
                   <div className="label-xs text-text-tertiary">NO DATA</div>
                 )}
               </div>
-
             </div>
           </div>
-
         </div>
       </div>
 
       {/* BOTTOM ROW: EVAL + COLLECTIONS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
         {/* RECENT EVAL RUNS */}
         <section>
           <div className="flex items-center justify-between mb-3">
@@ -273,7 +321,9 @@ function Dashboard() {
           </div>
           <div className="border border-border-subtle bg-surface-container overflow-x-auto">
             {evals.isLoading ? (
-              <div className="p-4"><LoadingLine /></div>
+              <div className="p-4">
+                <LoadingLine />
+              </div>
             ) : !evals.data || evals.data.length === 0 ? (
               <EmptyState label="NO EVALUATION RUNS" />
             ) : (
@@ -288,9 +338,14 @@ function Dashboard() {
                 </thead>
                 <tbody>
                   {evals.data.map((r) => (
-                    <tr key={r.run_id} className="body-sm hover:bg-surface-high border-b border-border-subtle/50">
+                    <tr
+                      key={r.run_id}
+                      className="body-sm hover:bg-surface-high border-b border-border-subtle/50"
+                    >
                       <td className="pl-5 py-3 text-text-primary">{r.run_id}</td>
-                      <td className="py-3 text-text-secondary tabular-nums">{fmtDate(r.timestamp)}</td>
+                      <td className="py-3 text-text-secondary tabular-nums">
+                        {fmtDate(r.timestamp)}
+                      </td>
                       <td className={`py-3 text-right tabular-nums ${accuracyClass(r.accuracy)}`}>
                         {fmtPct(r.accuracy)}
                       </td>
@@ -309,13 +364,18 @@ function Dashboard() {
         <section>
           <div className="flex items-center justify-between mb-3">
             <h2 className="title-sm text-text-primary">COLLECTIONS</h2>
-            <Link to="/colecciones" className="label-sm text-text-secondary hover:text-primary-blue">
+            <Link
+              to="/colecciones"
+              className="label-sm text-text-secondary hover:text-primary-blue"
+            >
               MANAGE →
             </Link>
           </div>
           <div className="border border-border-subtle bg-surface-container overflow-x-auto">
             {collections.isLoading || documents.isLoading ? (
-              <div className="p-4"><LoadingLine /></div>
+              <div className="p-4">
+                <LoadingLine />
+              </div>
             ) : collectionRows.length === 0 ? (
               <EmptyState label="NO COLLECTIONS" />
             ) : (
@@ -330,11 +390,22 @@ function Dashboard() {
                 </thead>
                 <tbody>
                   {collectionRows.map((c) => (
-                    <tr key={c.id} className="body-sm hover:bg-surface-high border-b border-border-subtle/50">
-                      <td className="pl-5 py-3 text-text-primary font-medium">{c.name.toUpperCase()}</td>
-                      <td className="py-3 text-right tabular-nums text-text-primary">{fmtNumber(c.docCount)}</td>
-                      <td className="py-3 text-right tabular-nums text-text-secondary">{fmtNumber(c.chunkCount)}</td>
-                      <td className="py-3 pl-5 pr-5 text-text-tertiary">{truncate(c.description ?? "—", 50)}</td>
+                    <tr
+                      key={c.id}
+                      className="body-sm hover:bg-surface-high border-b border-border-subtle/50"
+                    >
+                      <td className="pl-5 py-3 text-text-primary font-medium">
+                        {c.name.toUpperCase()}
+                      </td>
+                      <td className="py-3 text-right tabular-nums text-text-primary">
+                        {fmtNumber(c.docCount)}
+                      </td>
+                      <td className="py-3 text-right tabular-nums text-text-secondary">
+                        {fmtNumber(c.chunkCount)}
+                      </td>
+                      <td className="py-3 pl-5 pr-5 text-text-tertiary">
+                        {truncate(c.description ?? "—", 50)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -342,7 +413,6 @@ function Dashboard() {
             )}
           </div>
         </section>
-
       </div>
     </div>
   );
