@@ -37,6 +37,22 @@ def test_format_messages_drops_a_failed_answer_with_its_question():
     ]
 
 
+def test_a_question_left_without_an_answer_is_dropped():
+    # A stream cut mid-turn checkpoints the question but no answer.
+    messages = [
+        HumanMessage(content="q1"),
+        AIMessage(content="a1"),
+        HumanMessage(content="q2, cut short"),
+        HumanMessage(content="q3"),
+    ]
+
+    assert format_messages(messages) == [
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "q3"},
+    ]
+
+
 def test_a_failed_answer_whose_question_was_compacted_goes_alone():
     # The tail after compaction can start right at the failed answer.
     messages = [failed_answer("I had a problem…"), HumanMessage(content="q3")]

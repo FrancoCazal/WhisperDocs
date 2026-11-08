@@ -17,9 +17,13 @@ def failed_answer(content: str, **additional_kwargs: Any) -> AIMessage:
 
 
 def _without_failed_turns(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
-    """Drop each failed answer together with the question it failed on.
+    """Drop each failed answer together with the question it failed on, and
+    each question left without an answer.
 
-    Dropping the answer alone would leave two user turns in a row.
+    A turn cut short (the client closed the stream, the process restarted)
+    leaves its question checkpointed with no answer after it. Followed by the
+    next question, that is two user turns in a row, which Bedrock Converse
+    rejects; dropping a failed answer alone would leave the same.
     """
     out: list[BaseMessage] = []
     for m in messages:
@@ -27,6 +31,8 @@ def _without_failed_turns(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
             if out and isinstance(out[-1], HumanMessage):
                 out.pop()
             continue
+        if isinstance(m, HumanMessage) and out and isinstance(out[-1], HumanMessage):
+            out.pop()
         out.append(m)
     return out
 

@@ -6,6 +6,8 @@ checkpointer persistence. No live LLM calls, no Postgres.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -52,6 +54,59 @@ def _stub_all_nodes(
         "app.agent.utils.query_rewrite.llm_service_for",
         lambda _n, _p=fake_provider: (_p, "fake", 0.0),
     )
+
+
+# ---------- a turn cut short ----------
+
+
+async def test_a_turn_cut_short_leaves_the_next_prompt_valid(
+    compiled_agent,
+    fake_provider,
+    classifier_response,
+    monkeypatch,
+):
+    """The client closing the stream cancels the run mid-generation: the
+    question stays checkpointed with no answer, and the next turn's prompt
+    must still alternate user and assistant."""
+    _stub_all_nodes(monkeypatch, fake_provider, classifier_response, action="answer_direct")
+    config = {"configurable": {"thread_id": "cut"}, "recursion_limit": 10}
+    generating = asyncio.Event()
+    answer_stream = fake_provider.generate_stream
+
+    async def hang(**_):
+        generating.set()
+        await asyncio.Event().wait()
+        yield  # pragma: no cover - never reached
+
+    fake_provider.generate_stream = hang  # type: ignore[assignment]
+
+    async def run() -> None:
+        async for _ in compiled_agent.astream_events(
+            {"messages": [HumanMessage(content="first, cut short")], "collection_id": None},
+            config=config,
+            version="v2",
+        ):
+            pass
+
+    task = asyncio.create_task(run())
+    await asyncio.wait_for(generating.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    cut = await compiled_agent.aget_state(config)
+    assert [m.content for m in cut.values["messages"]] == ["first, cut short"]
+
+    fake_provider.generate_stream = answer_stream  # type: ignore[assignment]
+    fake_provider.calls.clear()
+    await compiled_agent.ainvoke(
+        {"messages": [HumanMessage(content="second")], "collection_id": None}, config=config
+    )
+
+    (answer_call,) = [c for c in fake_provider.calls if c["method"] == "generate_stream"]
+    roles = [m["role"] for m in answer_call["kwargs"]["messages"]]
+    assert roles == ["user"]
+    assert answer_call["kwargs"]["messages"][0]["content"] == "second"
 
 
 # ---------- routing smoke tests ----------
