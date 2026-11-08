@@ -1,4 +1,4 @@
-import type { AgentCitation, AgentTurnMetadata } from "@/lib/api";
+import type { AgentCitation, AgentTurnMetadata, TurnError } from "@/lib/api";
 
 export type UserTurnData = { kind: "user"; ts: string; text: string };
 
@@ -21,6 +21,8 @@ export type AssistantTurnData = {
   // Null for a turn without an answer, and for messages saved without it.
   metadata: AgentTurnMetadata | null;
   outcome?: TurnOutcome;
+  // The calls that failed or fell back; an answered turn can have some.
+  errors?: TurnError[];
   // Measured in this tab, so only turns streamed here have them.
   trace?: NodeProgress[];
   elapsedMs?: number;

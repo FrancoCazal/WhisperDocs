@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // The chat end to end in a browser: a question, the streamed answer, the
-// thread in the URL, a citation that opens its source, and a chat that
-// searches one document. The backend is played below.
+// thread in the URL, a citation that opens its source, a chat that searches
+// one document, and an answer whose classifier failed. The backend is played
+// below.
 
 const THREAD = "5f0c2a8e-1d2b-4c3d-9e4f-a1b2c3d4e5f6";
 const NOW = "2026-11-08T12:00:00Z";
@@ -55,6 +56,7 @@ const STREAM = sse([
 async function playBackend(
   page: Page,
   extra: Record<string, unknown> = {},
+  stream: string = STREAM,
 ): Promise<{ unexpected: string[]; sent: unknown[] }> {
   const unexpected: string[] = [];
   const sent: unknown[] = [];
@@ -76,7 +78,7 @@ async function playBackend(
     const method = req.method();
     if (method === "POST" && path === "/agent/chat/stream") {
       sent.push(req.postDataJSON());
-      return route.fulfill({ status: 200, contentType: "text/event-stream", body: STREAM });
+      return route.fulfill({ status: 200, contentType: "text/event-stream", body: stream });
     }
     const page0 = { items: [], next_cursor: null, total: 0 };
     const answers: Record<string, unknown> = {
@@ -176,5 +178,62 @@ test("a document's ASK IN CHAT searches only that document", async ({ page }) =>
   // Leaving the document goes back to its collection, for the next question.
   await page.getByRole("button", { name: "Search the whole collection" }).click();
   await expect(page.getByRole("combobox", { name: /COLLECTION/ })).toHaveValue("1");
+  expect(unexpected).toEqual([]);
+});
+
+test("an answer says which call failed and what it did instead, reopened too", async ({ page }) => {
+  // Vertex refusing the classifier (a GCP project without billing): the turn
+  // searches the documents and answers, so only this row shows the outage.
+  const billing = { step: "classifier", kind: "billing", model: "gemini-3.8-flash" };
+  const outage = sse([
+    ["thread", { thread_id: THREAD }],
+    [
+      "final",
+      {
+        thread_id: THREAD,
+        action: "search_docs",
+        answer: ANSWER,
+        citations: [CITATION],
+        metadata: { model: "fake-model", tokens_input: 120, tokens_output: 12 },
+        failed: false,
+        errors: [billing],
+      },
+    ],
+  ]);
+  const { unexpected } = await playBackend(
+    page,
+    {
+      [`/conversations/${THREAD}/messages`]: [
+        { role: "user", content: "What is RAG?", timestamp: NOW, failed: false },
+        {
+          role: "assistant",
+          content: ANSWER,
+          timestamp: NOW,
+          action: "search_docs",
+          citations: [CITATION],
+          metadata: null,
+          failed: false,
+          errors: [billing],
+        },
+      ],
+    },
+    outage,
+  );
+  await page.goto("/chat");
+  const composer = page.getByRole("textbox", { name: "Message to agent" });
+  await composer.fill("What is RAG?");
+  await composer.press("Enter");
+
+  const row = "CLASSIFIER · BILLING OR QUOTA · gemini-3.8-flash · SEARCHED THE DOCUMENTS INSTEAD";
+  await expect(page.getByRole("list", { name: "Failed calls" })).toContainText(row);
+  // The chat's own status region; the layout's says "API ONLINE".
+  await expect(page.getByRole("status").filter({ hasText: "Answer ready" })).toHaveText(
+    "Answer ready; 1 call failed.",
+  );
+
+  // The thread keeps it: reopened from the URL, the answer says it again.
+  await page.reload();
+  await expect(page.getByText("RAG answers from retrieved passages")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Failed calls" })).toContainText(row);
   expect(unexpected).toEqual([]);
 });

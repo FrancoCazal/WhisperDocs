@@ -79,6 +79,7 @@ function savedTurn(m: ConversationMessage): Turn {
     citations: m.failed ? [] : (m.citations ?? []),
     metadata: m.failed ? null : m.metadata,
     outcome: m.failed ? "failed" : undefined,
+    errors: m.errors ?? [],
   };
 }
 
@@ -396,6 +397,7 @@ function ChatPage() {
         citations: f.failed ? [] : f.citations,
         metadata: f.failed ? null : f.metadata,
         outcome: f.failed ? "failed" : undefined,
+        errors: f.errors,
       };
     } else if (run.reason) {
       turn = {
@@ -417,7 +419,14 @@ function ChatPage() {
       };
     }
     setTurns((prev) => [...prev, turn]);
-    setStatus(turn.outcome ? OUTCOME_STATUS[turn.outcome] : "Answer ready.");
+    const failedCalls = turn.errors?.length ?? 0;
+    setStatus(
+      turn.outcome
+        ? OUTCOME_STATUS[turn.outcome]
+        : failedCalls
+          ? `Answer ready; ${failedCalls} ${failedCalls === 1 ? "call" : "calls"} failed.`
+          : "Answer ready.",
+    );
     qc.invalidateQueries({ queryKey: ["conversations", "list"] });
     // The query log: history pages and the layout's last-answer bar.
     if (f && !f.failed) qc.invalidateQueries({ queryKey: ["history"] });

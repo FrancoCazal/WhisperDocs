@@ -250,6 +250,18 @@ export type AgentTurnMetadata = {
   cost_usd: number;
 };
 
+// A call the turn made that failed or fell back. A turn can answer with
+// some: when the classifier fails, it searches the documents instead.
+export type TurnError = {
+  // summarize, classifier, query_rewrite, embedding, retrieval, generation,
+  // clarification, citation_check
+  step: string;
+  // billing, auth, rate_limit, timeout, unavailable, invalid_request,
+  // bad_response, unknown
+  kind: string;
+  model: string | null;
+};
+
 export type AgentChatResponse = {
   thread_id: string;
   action: string | null;
@@ -258,6 +270,7 @@ export type AgentChatResponse = {
   metadata: AgentTurnMetadata;
   // The answer reports a failure ("I had a problem…") and cites nothing.
   failed: boolean;
+  errors: TurnError[];
 };
 
 export type AgentStreamEvent =
@@ -340,6 +353,8 @@ export type ConversationMessage = {
   citations: Citation[] | null;
   metadata: AgentTurnMetadata | null;
   failed: boolean;
+  // None from a backend older than the field.
+  errors?: TurnError[];
 };
 
 // Which answers a query log holds: the agent's chat or the Query page.
@@ -462,6 +477,15 @@ function ingestionEvent({ event, data }: SseMessage): IngestionJobEvent | null {
   }
 }
 
+function turnErrors(v: unknown): TurnError[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(isRecord).flatMap((e) => {
+    const step = str(e.step);
+    const kind = str(e.kind);
+    return step && kind ? [{ step, kind, model: str(e.model) }] : [];
+  });
+}
+
 function turnMetadata(v: unknown): AgentTurnMetadata {
   const m = isRecord(v) ? v : {};
   return {
@@ -512,6 +536,7 @@ function agentEvent({ event, data }: SseMessage): AgentStreamEvent | null {
             : [],
           metadata: turnMetadata(data.metadata),
           failed: data.failed === true,
+          errors: turnErrors(data.errors),
         },
       };
     }

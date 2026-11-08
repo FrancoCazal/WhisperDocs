@@ -88,6 +88,7 @@ const PARSED: AgentStreamEvent[] = [
         cost_usd: 0,
       },
       failed: false,
+      errors: [],
     },
   },
 ];
@@ -120,6 +121,21 @@ describe("the agent's event stream", () => {
       ]),
     );
     expect(events).toEqual([{ type: "error", message: "boom" }]);
+  });
+
+  it("reads the turn's failed calls, and skips entries without a step or a kind", async () => {
+    const errors = [
+      { step: "classifier", kind: "billing", model: "gemini-3.8-flash" },
+      { step: "query_rewrite", kind: "timeout" },
+      { kind: "auth" },
+      3,
+    ];
+    const final = { thread_id: "t", answer: "a", citations: [], metadata: {}, errors };
+    const [event] = await agentEvents(sse([`event: final\ndata: ${JSON.stringify(final)}\n\n`]));
+    expect(event.type === "final" && event.payload.errors).toEqual([
+      { step: "classifier", kind: "billing", model: "gemini-3.8-flash" },
+      { step: "query_rewrite", kind: "timeout", model: null },
+    ]);
   });
 
   it("drops a message the end of the stream cut off", async () => {

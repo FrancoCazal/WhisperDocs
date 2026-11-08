@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { fmtCost, fmtNumber } from "@/lib/api";
+import { fmtCost, fmtNumber, type TurnError } from "@/lib/api";
 import { citedSources } from "./citations";
 import { Markdown } from "./Markdown";
 import { TurnTrace } from "./Trace";
@@ -31,6 +31,73 @@ const OUTCOME: Record<TurnOutcome, { badge: string; className: string; note: str
     note: `NO RESPONSE FOR ${IDLE_TIMEOUT_MS / 1000} S · PARTIAL ANSWER NOT SAVED`,
   },
 };
+
+// What each kind of failure says (app/services/llm/errors.py), and what to
+// do about it, as the row's tooltip.
+const ERROR_KIND: Record<string, { label: string; hint: string }> = {
+  billing: {
+    label: "BILLING OR QUOTA",
+    hint: "The provider refused the call over billing or quota: enable billing on the project, or add credit.",
+  },
+  auth: {
+    label: "CREDENTIALS REFUSED",
+    hint: "The provider refused the credentials, or they have no access to this model.",
+  },
+  rate_limit: {
+    label: "RATE LIMITED",
+    hint: "Over the provider's rate limit; a retry may pass.",
+  },
+  timeout: { label: "TIMED OUT", hint: "The call took longer than its timeout." },
+  unavailable: {
+    label: "UNAVAILABLE",
+    hint: "The provider or the database could not be reached, or failed on its side.",
+  },
+  invalid_request: {
+    label: "REQUEST REJECTED",
+    hint: "The provider rejected the request, for example an unknown model ID.",
+  },
+  bad_response: {
+    label: "UNREADABLE RESPONSE",
+    hint: "The model answered, but not in the expected format.",
+  },
+  unknown: { label: "ERROR", hint: "The API's logs have the exception." },
+};
+
+// The step that failed, and what the turn did instead; null when the answer
+// failed with it.
+const ERROR_STEP: Record<string, { label: string; fallback: string | null }> = {
+  summarize: { label: "COMPACTING", fallback: "HISTORY LEFT AS IT WAS" },
+  classifier: { label: "CLASSIFIER", fallback: "SEARCHED THE DOCUMENTS INSTEAD" },
+  query_rewrite: { label: "QUERY REWRITE", fallback: "SEARCHED WITH THE QUESTION AS WRITTEN" },
+  embedding: { label: "EMBEDDING", fallback: null },
+  retrieval: { label: "RETRIEVAL", fallback: null },
+  generation: { label: "ANSWER", fallback: null },
+  clarification: { label: "CLARIFICATION", fallback: "ASKED A FIXED QUESTION INSTEAD" },
+  citation_check: { label: "CITATION CHECK", fallback: "CITATIONS NOT CHECKED" },
+};
+
+function TurnErrors({ errors }: { errors: TurnError[] }) {
+  return (
+    <ul aria-label="Failed calls" className="mt-3 space-y-1">
+      {errors.map((e, i) => {
+        const step = ERROR_STEP[e.step];
+        const kind = ERROR_KIND[e.kind] ?? ERROR_KIND.unknown;
+        const fallback = step ? step.fallback : null;
+        return (
+          <li
+            key={i}
+            title={kind.hint}
+            className={`label-xs ${fallback ? "text-warning" : "text-error"}`}
+          >
+            {fallback ? "⚠" : "✕"} {step?.label ?? e.step.toUpperCase()} · {kind.label}
+            {e.model && <span className="text-text-secondary"> · {e.model}</span>}
+            {fallback && <span className="text-text-tertiary"> · {fallback}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 export function UserTurn({ turn }: { turn: UserTurnData }) {
   return (
@@ -114,6 +181,8 @@ export function AssistantTurn({
       ) : (
         <div className="body-sm text-text-tertiary">Stopped before the answer started.</div>
       )}
+
+      {turn.errors && turn.errors.length > 0 && <TurnErrors errors={turn.errors} />}
 
       {answered && turn.citations.length > 0 && (
         <button
