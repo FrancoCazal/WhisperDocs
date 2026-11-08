@@ -22,6 +22,8 @@ import { citedSources } from "@/components/chat/citations";
 import { StreamingTurn, type LiveTurn } from "@/components/chat/StreamingTurn";
 import { ThreadSidebar } from "@/components/chat/ThreadSidebar";
 import { PAGE_SIZE, usePagedList } from "@/lib/paged";
+import { useTopK } from "@/lib/topK";
+import { ScopeControls } from "@/components/ui-kit/ScopeControls";
 import {
   IDLE_TIMEOUT_MS,
   type AssistantTurnData,
@@ -83,7 +85,7 @@ function ChatPage() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [collectionId, setCollectionId] = useState<number | null>(null);
-  const [topK, setTopK] = useState(5);
+  const { topK, defaultTopK, setTopK } = useTopK();
   const [input, setInput] = useState("");
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -550,33 +552,15 @@ function ChatPage() {
               </div>
             </div>
             <div className="flex items-center flex-wrap gap-2 sm:gap-4">
-              <label className="flex items-center gap-2 label-sm text-text-secondary">
-                COLLECTION:
-                <select
-                  value={collectionId ?? ""}
-                  disabled={readOnly}
-                  onChange={(e) => setCollectionId(e.target.value ? Number(e.target.value) : null)}
-                  className="bg-surface-lowest border border-border-subtle px-2 h-7 text-text-primary body-sm focus:outline-none focus:border-border-focus"
-                >
-                  <option value="">ALL</option>
-                  {collections.data?.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-2 label-sm text-text-secondary">
-                TOP_K:
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={topK}
-                  onChange={(e) => setTopK(Math.max(1, Math.min(20, Number(e.target.value) || 5)))}
-                  className="bg-surface-lowest border border-border-subtle px-2 h-7 w-14 text-text-primary body-sm tabular-nums focus:outline-none focus:border-border-focus"
-                />
-              </label>
+              <ScopeControls
+                collections={collections.data}
+                collectionId={collectionId}
+                onCollection={setCollectionId}
+                topK={topK}
+                defaultTopK={defaultTopK}
+                onTopK={setTopK}
+                disabled={readOnly}
+              />
               {latestAnswer && (
                 <button
                   onClick={() => openSources(latestAnswer, null)}

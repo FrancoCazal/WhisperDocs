@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { api, fmtCost, fmtDate, fmtPct, type EvalRunSummary } from "@/lib/api";
 import { parseEvalDataset, STARTER_DATASET } from "@/lib/evalDataset";
+import { TOP_K_MAX, TOP_K_MIN, useTopK } from "@/lib/topK";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
 import {
@@ -61,7 +62,7 @@ function EvaluacionPage() {
   const [running, setRunning] = useState<{ since: number; items: number } | null>(null);
   const [dataset, setDataset] = useState(STARTER_TEXT);
   const [collId, setCollId] = useState<number | null>(null);
-  const [topK, setTopK] = useState(5);
+  const { topK, defaultTopK, setTopK } = useTopK();
   const [conc, setConc] = useState(4);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -293,10 +294,11 @@ function EvaluacionPage() {
           <Field label="TOP_K">
             <input
               type="number"
-              min={1}
-              max={20}
+              min={TOP_K_MIN}
+              max={TOP_K_MAX}
               value={topK}
-              onChange={(e) => setTopK(Number(e.target.value) || 5)}
+              onChange={(e) => setTopK(Number(e.target.value))}
+              title={`Chunks retrieved for each question. The backend's default is ${defaultTopK}.`}
               className={inputCls}
             />
           </Field>

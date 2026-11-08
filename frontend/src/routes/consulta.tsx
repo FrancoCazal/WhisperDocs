@@ -17,6 +17,8 @@ import {
 } from "@/lib/api";
 import { ErrorBanner } from "@/components/ui-kit/EmptyState";
 import { LengthHint } from "@/components/ui-kit/LengthHint";
+import { ScopeControls } from "@/components/ui-kit/ScopeControls";
+import { useTopK } from "@/lib/topK";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export const Route = createFileRoute("/consulta")({
@@ -156,7 +158,7 @@ function ConsultaPage() {
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()]);
   const [activeId, setActiveId] = useState<string>(() => sessions[0].id);
   const [collectionId, setCollectionId] = useState<number | null>(null);
-  const [topK, setTopK] = useState(5);
+  const { topK, defaultTopK, setTopK } = useTopK();
   const [input, setInput] = useState("");
   const [progressIdx, setProgressIdx] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -313,32 +315,14 @@ function ConsultaPage() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 label-sm text-text-secondary">
-              COLLECTION:
-              <select
-                value={collectionId ?? ""}
-                onChange={(e) => setCollectionId(e.target.value ? Number(e.target.value) : null)}
-                className="bg-surface-lowest border border-border-subtle px-2 h-7 text-text-primary body-sm focus:outline-none focus:border-border-focus"
-              >
-                <option value="">ALL</option>
-                {collections.data?.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-center gap-2 label-sm text-text-secondary">
-              TOP_K:
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={topK}
-                onChange={(e) => setTopK(Math.max(1, Math.min(20, Number(e.target.value) || 5)))}
-                className="bg-surface-lowest border border-border-subtle px-2 h-7 w-14 text-text-primary body-sm tabular-nums focus:outline-none focus:border-border-focus"
-              />
-            </label>
+            <ScopeControls
+              collections={collections.data}
+              collectionId={collectionId}
+              onCollection={setCollectionId}
+              topK={topK}
+              defaultTopK={defaultTopK}
+              onTopK={setTopK}
+            />
           </div>
         </div>
 
