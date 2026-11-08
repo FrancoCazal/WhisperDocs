@@ -38,6 +38,18 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Security
 
+- An API key (`API_KEY`, sent as `X-API-Key`). With it set, every route
+  needs it except `GET /health` and the WhatsApp webhook, which checks
+  Twilio's signature. `/health?deep=true` makes an embedding call and needs
+  it too. Unset, the API stays open, as the local demo is. The frontend
+  takes the key in SETTINGS.
+- Rate limits per client and minute: questions (30), uploads (60) and eval
+  runs (2), set by `RATE_LIMIT_*`. Past a limit the API answers 429 with
+  `Retry-After`. An eval run takes at most 200 items.
+- Error responses no longer carry exception text. Provider and database
+  messages stay in the logs. `/health` reports a failed check as
+  `error: <kind>`, and a failed ingestion job says what failed without
+  internals.
 - The checkpointer moves to `langgraph-checkpoint` 4.x and
   `langgraph-checkpoint-postgres` 3.x. A `<3.0` cap held versions with known
   advisories, including CVE-2025-64439 (deserialization of stored
@@ -50,6 +62,13 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Changed
 
+- Every error body is `{detail, code, request_id}`, with a stable `code`
+  (`not_found`, `rate_limited`, `upstream_error`, ...). A 5xx message quotes
+  the request id, which is also the `X-Request-ID` header and is on every
+  log line of the request. A failed model or embedding call on `/query` is a
+  502 with its `kind`, where a generation failure used to be a bare 500. An
+  error the routes did not handle is a 500 the browser can read, and it no
+  longer surfaces as a CORS error.
 - Models: the hot-path nodes and the eval judge run on `gemini-3.8-flash`,
   since `gemini-2.5-flash` was retired on 2026-10-20. Sampling parameters are
   sent per model, and startup fails on a model ID that cannot be routed.

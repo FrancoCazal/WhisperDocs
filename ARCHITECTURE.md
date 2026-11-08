@@ -492,11 +492,37 @@ A/B run.
 
 ---
 
+## API edge
+
+From the outside in: CORS, then `RequestContextMiddleware`
+(`app/api/errors.py`), then the body size limit, then the routes.
+
+- **Request id.** Each request gets an id: the caller's `X-Request-ID` when
+  it is a plain token, a new one otherwise. It is returned in that header and
+  bound to the structlog context, so every log line of the request carries
+  it. An exception no handler caught becomes a 500 here, inside CORS, so the
+  browser reads the 500 and not a CORS failure.
+- **Errors.** One body for every error: `{detail, code, request_id}`, plus
+  `kind` on a 502 from a model or embedding call (`classify_error`). Routes
+  raise `APIError(status, code, detail)`; a plain `HTTPException` gets its
+  code from its status. A 5xx message ends with the request id.
+- **Key** (`app/api/auth.py`). Every router except health and the WhatsApp
+  webhook is included with `Depends(require_api_key)`, a no-op while
+  `API_KEY` is unset. `tests/test_api_access.py` sends a bare request to
+  every route in the OpenAPI schema and expects 401, so a router added
+  without the key fails the tests.
+- **Rate limits** (`app/api/rate_limit.py`). A sliding 60 s window per
+  bucket and client, in process memory. The key names the client only when
+  auth is on: with it off, a made-up key per request would get a fresh
+  window.
+
+---
+
 ## Observability
 
 - **Logs** — `structlog` with JSON output in production (`LOG_JSON=1`),
-  console-pretty otherwise. `merge_contextvars` ready for `request_id` /
-  `trace_id` propagation.
+  console-pretty otherwise. Every line of a request carries its
+  `request_id` (see API edge).
 - **Metrics** — Prometheus `/metrics` endpoint:
   - `whisperdocs_agent_turn_duration_seconds{action}` — whole turn, recorded
     by `/agent/chat`, `/agent/chat/stream` and the WhatsApp webhook

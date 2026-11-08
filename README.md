@@ -118,6 +118,8 @@ AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=us-east-1
 
 # Optional
+API_KEY=...                      # required in X-API-Key; unset = open API (see Security posture)
+RATE_LIMIT_PER_MINUTE=30         # questions per client a minute; 0 = off
 TWILIO_ACCOUNT_SID=...           # WhatsApp
 TWILIO_AUTH_TOKEN=...
 RERANKER_ENABLED=false           # cross-encoder reranking (needs .[rerank])
@@ -153,11 +155,6 @@ See `.env.example` for every knob.
 | `GET` | `/api/v1/notes` | List saved notes |
 | `DELETE` | `/api/v1/notes/{note_id}` | Delete saved note |
 
-Uploads accept PDF, Markdown and plain text, up to 10 MB per file. Batches
-take up to 20 files and 50 MB in total. A larger body is rejected with 413
-before it is parsed. A `.pdf` must carry the PDF header, a `.md` or `.txt`
-must not contain binary data, and file names and titles are capped at 300
-characters. List endpoints take `limit` between 1 and 200.
 | `POST` | `/api/v1/webhook/whatsapp` | Twilio inbound webhook |
 | `POST` | `/api/v1/webhook/whatsapp/status` | Twilio delivery-status callback |
 | `POST` | `/api/v1/eval/run` | Eval suite |
@@ -166,7 +163,48 @@ characters. List endpoints take `limit` between 1 and 200.
 | `GET` | `/api/v1/health` | Health check (`?deep=true` for full probe) |
 | `GET` | `/api/v1/metrics` | Prometheus metrics |
 
+Uploads accept PDF, Markdown and plain text, up to 10 MB per file. Batches
+take up to 20 files and 50 MB in total. A larger body is rejected with 413
+before it is parsed. A `.pdf` must carry the PDF header, a `.md` or `.txt`
+must not contain binary data, and file names and titles are capped at 300
+characters. List endpoints take `limit` between 1 and 200.
+
 Full reference at `/docs` (FastAPI auto-generated OpenAPI).
+
+---
+
+## Security posture
+
+Out of the box, WhisperDocs runs as a local demo: the API has no key, and
+CORS admits only the local frontends. Before the API can be reached from any
+other machine, set `API_KEY`.
+
+- **API key.** With `API_KEY` set, every route needs it in the `X-API-Key`
+  header, with two exceptions. `GET /health` is a probe and needs no key. The
+  WhatsApp webhook checks Twilio's signature instead. `/health?deep=true`
+  makes an embedding call, so it does need the key. The frontend asks for the
+  key in SETTINGS and keeps it in the browser's local storage. It is one
+  shared key: it controls access, but it is not per-user authentication.
+- **Rate limits.** Each client gets a limit per minute: 30 questions
+  (`/query`, `/agent/chat*`, `/health?deep=true`), 60 uploads and 2 eval
+  runs. The client is the key when auth is on, the IP otherwise. Past a
+  limit, the API answers 429 with `Retry-After`. The counts live in the API
+  process's memory: one uvicorn process, starting over on a restart. Behind a
+  reverse proxy every client has the proxy's IP, unless uvicorn trusts the
+  proxy's `X-Forwarded-For` (`--forwarded-allow-ips`). An eval run takes at
+  most 200 items.
+- **Errors.** Every error body is `{detail, code, request_id}`. A 5xx message
+  quotes its request id, and that id finds the call in the logs. It is also
+  the `X-Request-ID` header, which a caller can send. Provider and database
+  messages stay in the logs. A failed model or embedding call is a 502 with
+  its `kind`: `billing`, `auth`, `rate_limit`, `timeout`, `unavailable`,
+  `invalid_request`, `bad_response` or `unknown`.
+- **Uploads.** Size limits are checked before the body is parsed (see above).
+- **Not covered.** There are no user accounts or roles: whoever has the key
+  can read and delete every document and thread. The API serves no TLS, so
+  put a TLS proxy in front of it. Documents and questions go to the
+  configured providers: OpenAI for embeddings, Vertex AI or Bedrock for
+  generation.
 
 ---
 
