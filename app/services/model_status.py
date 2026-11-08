@@ -16,11 +16,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 from app.config import settings
 from app.metrics import model_calls_total
-from app.services.llm.errors import ErrorKind, classify_error
+
+if TYPE_CHECKING:
+    from app.services.llm.errors import ErrorKind
 
 Role = Literal[
     "classifier",
@@ -94,6 +96,11 @@ class ModelStatus:
         model_calls_total.labels(role=role, model=model, outcome="ok").inc()
 
     def failed(self, role: Role, model: str, exc: BaseException) -> ErrorKind:
+        # Imported here: app.services.llm imports this module (TrackedProvider),
+        # so importing it at the top made a cycle that broke any process whose
+        # first import was this module or the embedder (the MCP server's).
+        from app.services.llm.errors import classify_error
+
         kind = classify_error(exc)
         record = self._record(role, model)
         record.calls += 1
