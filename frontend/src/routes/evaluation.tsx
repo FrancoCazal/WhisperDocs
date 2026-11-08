@@ -18,7 +18,7 @@ import { RunReport } from "@/components/eval/RunReport";
 import { GENERATION_COST_HINT } from "@/components/eval/costHint";
 import { toneText } from "@/lib/metricTone";
 
-export const Route = createFileRoute("/evaluacion")({
+export const Route = createFileRoute("/evaluation")({
   head: () => ({
     meta: [
       { title: "Evaluation — WhisperDocs" },
@@ -28,7 +28,7 @@ export const Route = createFileRoute("/evaluacion")({
       },
     ],
   }),
-  component: EvaluacionPage,
+  component: EvaluationPage,
 });
 
 const STARTER_TEXT = JSON.stringify(STARTER_DATASET, null, 2);
@@ -41,7 +41,7 @@ function estimateGeneration(runs: EvalRunSummary[] | undefined, items: number) {
   return { usd: (last.estimated_cost_usd / last.dataset_size) * items, from: last };
 }
 
-function EvaluacionPage() {
+function EvaluationPage() {
   const qc = useQueryClient();
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
   const runs = useQuery({ queryKey: ["eval-results", 20], queryFn: () => api.evalResults(20) });

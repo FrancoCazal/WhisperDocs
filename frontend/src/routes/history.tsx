@@ -15,7 +15,7 @@ import {
   emptyActionCls,
 } from "@/components/ui-kit/EmptyState";
 
-export const Route = createFileRoute("/historial")({
+export const Route = createFileRoute("/history")({
   head: () => ({
     meta: [
       { title: "History — WhisperDocs" },
@@ -25,13 +25,13 @@ export const Route = createFileRoute("/historial")({
       },
     ],
   }),
-  component: HistorialPage,
+  component: HistoryPage,
 });
 
 const fieldCls =
   "bg-surface-lowest border border-border-subtle px-2 h-9 text-text-primary body-sm focus:outline-none focus:border-border-focus";
 
-function HistorialPage() {
+function HistoryPage() {
   const [collFilter, setCollFilter] = useState<number | null>(null);
   const [source, setSource] = useState<LogSource | null>(null);
   // The search asks the server once the typing pauses.

@@ -687,7 +687,7 @@ function ChatPage() {
                     <div className="body-sm text-text-secondary mt-2">
                       The agent answers from your documents: upload some first.
                     </div>
-                    <Link to="/documentos" className={`inline-block mt-3 ${emptyActionCls}`}>
+                    <Link to="/documents" className={`inline-block mt-3 ${emptyActionCls}`}>
                       UPLOAD DOCUMENTS →
                     </Link>
                   </div>

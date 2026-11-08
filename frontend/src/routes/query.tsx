@@ -22,7 +22,7 @@ import { useTopK } from "@/lib/topK";
 import { Btn, btnCls } from "@/components/ui-kit/Button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
-export const Route = createFileRoute("/consulta")({
+export const Route = createFileRoute("/query")({
   // Client only: a new session's id is random, so a server render could never
   // match the client's, and the history comes from a client query anyway.
   ssr: false,
@@ -35,7 +35,7 @@ export const Route = createFileRoute("/consulta")({
       },
     ],
   }),
-  component: ConsultaPage,
+  component: QueryPage,
 });
 
 type Turn =
@@ -153,7 +153,7 @@ function SessionList({
 
 const PROGRESS_STEPS = ["EMBEDDING QUERY...", "RETRIEVING CHUNKS...", "GENERATING RESPONSE..."];
 
-function ConsultaPage() {
+function QueryPage() {
   const qc = useQueryClient();
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()]);
   const [activeId, setActiveId] = useState<string>(() => sessions[0].id);

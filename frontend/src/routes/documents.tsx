@@ -26,7 +26,7 @@ import {
 
 type SearchParams = { collection_id?: number };
 
-export const Route = createFileRoute("/documentos")({
+export const Route = createFileRoute("/documents")({
   head: () => ({
     meta: [
       { title: "Documents — WhisperDocs" },
@@ -338,7 +338,7 @@ function DocumentsPage() {
             <div className="label-xs text-text-tertiary mt-2">
               DOCUMENTS ARE INDEXED INTO A COLLECTION
             </div>
-            <Link to="/colecciones" className={`inline-block mt-3 ${emptyActionCls}`}>
+            <Link to="/collections" className={`inline-block mt-3 ${emptyActionCls}`}>
               GO TO COLLECTIONS →
             </Link>
           </div>
@@ -427,7 +427,7 @@ function DocumentsPage() {
                       {u.status === "running" && ` · ${u.progress}%`}
                       {u.status === "success" && u.documentId != null && (
                         <Link
-                          to="/documentos/$id"
+                          to="/documents/$id"
                           params={{ id: String(u.documentId) }}
                           className="ml-3 text-text-secondary hover:text-primary-blue"
                         >
@@ -552,7 +552,7 @@ function DocumentsPage() {
               {visible.map((d) => (
                 <tr
                   key={d.id}
-                  onClick={() => navigate({ to: "/documentos/$id", params: { id: String(d.id) } })}
+                  onClick={() => navigate({ to: "/documents/$id", params: { id: String(d.id) } })}
                   className="body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high cursor-pointer"
                 >
                   <td className="w-10 pl-4" onClick={(e) => e.stopPropagation()}>
@@ -566,7 +566,7 @@ function DocumentsPage() {
                   <td className="pl-2 text-text-primary">
                     {/* The row opens on a click; the link is the way in by keyboard. */}
                     <Link
-                      to="/documentos/$id"
+                      to="/documents/$id"
                       params={{ id: String(d.id) }}
                       onClick={(e) => e.stopPropagation()}
                       className="hover:text-primary-blue"

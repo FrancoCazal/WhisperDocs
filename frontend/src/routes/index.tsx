@@ -115,8 +115,8 @@ function Dashboard() {
         actions={
           <>
             <Btn onClick={() => navigate({ to: "/chat" })}>NEW QUERY</Btn>
-            <Btn onClick={() => navigate({ to: "/documentos" })}>UPLOAD</Btn>
-            <Btn onClick={() => navigate({ to: "/evaluacion" })}>RUN EVAL</Btn>
+            <Btn onClick={() => navigate({ to: "/documents" })}>UPLOAD</Btn>
+            <Btn onClick={() => navigate({ to: "/evaluation" })}>RUN EVAL</Btn>
           </>
         }
       />
@@ -165,10 +165,7 @@ function Dashboard() {
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2 className="title-sm text-text-primary">RECENT INFERENCE STREAMS</h2>
-              <Link
-                to="/historial"
-                className="label-sm text-text-secondary hover:text-primary-blue"
-              >
+              <Link to="/history" className="label-sm text-text-secondary hover:text-primary-blue">
                 VIEW ALL →
               </Link>
             </div>
@@ -321,7 +318,7 @@ function Dashboard() {
         <section>
           <div className="flex items-center justify-between mb-3">
             <h2 className="title-sm text-text-primary">RECENT EVALUATION RUNS</h2>
-            <Link to="/evaluacion" className="label-sm text-text-secondary hover:text-primary-blue">
+            <Link to="/evaluation" className="label-sm text-text-secondary hover:text-primary-blue">
               VIEW ALL →
             </Link>
           </div>
@@ -332,7 +329,7 @@ function Dashboard() {
               </div>
             ) : !evals.data || evals.data.length === 0 ? (
               <EmptyState label="NO EVALUATION RUNS">
-                <Link to="/evaluacion" className={emptyActionCls}>
+                <Link to="/evaluation" className={emptyActionCls}>
                   SET UP AN EVALUATION →
                 </Link>
               </EmptyState>
@@ -377,7 +374,7 @@ function Dashboard() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="title-sm text-text-primary">COLLECTIONS</h2>
             <Link
-              to="/colecciones"
+              to="/collections"
               className="label-sm text-text-secondary hover:text-primary-blue"
             >
               MANAGE →
@@ -390,7 +387,7 @@ function Dashboard() {
               </div>
             ) : collectionRows.length === 0 ? (
               <EmptyState label="NO COLLECTIONS">
-                <Link to="/colecciones" className={emptyActionCls}>
+                <Link to="/collections" className={emptyActionCls}>
                   CREATE A COLLECTION →
                 </Link>
               </EmptyState>

@@ -4,7 +4,7 @@ type Step = {
   done: boolean;
   label: string;
   hint: string;
-  to: "/colecciones" | "/documentos" | "/chat";
+  to: "/collections" | "/documents" | "/chat";
 };
 
 /** The three steps to a first answer; gone once all are done. */
@@ -22,13 +22,13 @@ export function GettingStarted({
       done: collections > 0,
       label: "CREATE A COLLECTION",
       hint: "A namespace for related documents.",
-      to: "/colecciones",
+      to: "/collections",
     },
     {
       done: documents > 0,
       label: "UPLOAD DOCUMENTS",
       hint: "PDF, Markdown or text: they are chunked and embedded.",
-      to: "/documentos",
+      to: "/documents",
     },
     {
       done: questions > 0,

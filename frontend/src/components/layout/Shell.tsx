@@ -8,22 +8,22 @@ import { useHydrated } from "@/lib/useHydrated";
 const NAV_ITEMS = [
   { to: "/", label: "OVERVIEW", glyph: "▦" },
   { to: "/chat", label: "CHAT", glyph: "◆" },
-  { to: "/consulta", label: "QUERY", glyph: "◇" },
-  { to: "/colecciones", label: "COLLECTIONS", glyph: "▣" },
-  { to: "/documentos", label: "DOCUMENTS", glyph: "▤" },
-  { to: "/historial", label: "HISTORY", glyph: "◷" },
-  { to: "/evaluacion", label: "EVALUATION", glyph: "◫" },
+  { to: "/query", label: "QUERY", glyph: "◇" },
+  { to: "/collections", label: "COLLECTIONS", glyph: "▣" },
+  { to: "/documents", label: "DOCUMENTS", glyph: "▤" },
+  { to: "/history", label: "HISTORY", glyph: "◷" },
+  { to: "/evaluation", label: "EVALUATION", glyph: "◫" },
   { to: "/settings", label: "SETTINGS", glyph: "⚙" },
 ] as const;
 
 const ROUTE_LABELS: Record<string, string> = {
   "/": "SYSTEM_OVERVIEW",
   "/chat": "CHAT // AGENT_THREAD",
-  "/consulta": "QUERY // SINGLE_TURN_RAG",
-  "/colecciones": "COLLECTIONS // NAMESPACES",
-  "/documentos": "DOCUMENTS // CORPUS_INDEX",
-  "/historial": "HISTORY // QUERY_LOG",
-  "/evaluacion": "EVALUATION // BENCHMARKS",
+  "/query": "QUERY // SINGLE_TURN_RAG",
+  "/collections": "COLLECTIONS // NAMESPACES",
+  "/documents": "DOCUMENTS // CORPUS_INDEX",
+  "/history": "HISTORY // QUERY_LOG",
+  "/evaluation": "EVALUATION // BENCHMARKS",
   "/settings": "SETTINGS // SYSTEM_CONFIG",
 };
 
@@ -115,7 +115,7 @@ export function Shell() {
     : unknownPath
       ? "PATH_NOT_FOUND"
       : (ROUTE_LABELS[pathname] ??
-        (pathname.startsWith("/documentos/")
+        (pathname.startsWith("/documents/")
           ? "DOCUMENTS // DOCUMENT_DETAIL"
           : pathname.replace("/", "").toUpperCase() || "SYSTEM_OVERVIEW"));
 

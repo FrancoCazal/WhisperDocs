@@ -13,9 +13,9 @@ import { LoadingLine, ErrorBanner } from "@/components/ui-kit/EmptyState";
 import { Btn, btnCls } from "@/components/ui-kit/Button";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 
-// "documentos_": the page renders on its own, not inside the list's layout,
+// "documents_": the page renders on its own, not inside the list's layout,
 // which has no outlet for it.
-export const Route = createFileRoute("/documentos_/$id")({
+export const Route = createFileRoute("/documents_/$id")({
   head: () => ({
     meta: [
       { title: "Document Detail — WhisperDocs" },
@@ -32,7 +32,7 @@ export const Route = createFileRoute("/documentos_/$id")({
   notFoundComponent: () => (
     <div>
       <div className="label-sm text-error">DOCUMENT_NOT_FOUND</div>
-      <Link to="/documentos" className="label-sm text-text-primary mt-3 inline-block">
+      <Link to="/documents" className="label-sm text-text-primary mt-3 inline-block">
         ← RETURN TO INDEX
       </Link>
     </div>
@@ -103,7 +103,7 @@ function DocumentDetailPage() {
       refreshLists();
       toast.success(`DELETED ${title}`);
       // Dropped once the page is gone: dropped before, it would refetch a 404.
-      void navigate({ to: "/documentos" }).then(() => {
+      void navigate({ to: "/documents" }).then(() => {
         qc.removeQueries({ queryKey: ["document", docId] });
         qc.removeQueries({ queryKey: ["chunks", docId] });
       });
@@ -138,7 +138,7 @@ function DocumentDetailPage() {
   return (
     <div>
       <div className="label-sm text-text-tertiary mb-2">
-        <Link to="/documentos" className="hover:text-primary-blue">
+        <Link to="/documents" className="hover:text-primary-blue">
           DOCUMENTS
         </Link>{" "}
         / <span className="text-text-secondary">{doc.data?.title ?? id}</span>
@@ -211,7 +211,7 @@ function DocumentDetailPage() {
       {notFound ? (
         <div className="body-sm text-text-secondary">
           No document with id {id}. It may have been deleted.{" "}
-          <Link to="/documentos" className="text-text-primary hover:text-primary-blue">
+          <Link to="/documents" className="text-text-primary hover:text-primary-blue">
             ← Back to documents
           </Link>
         </div>

@@ -61,7 +61,7 @@ export function RecentJobs({
             </span>
             {j.document_id !== null && (
               <Link
-                to="/documentos/$id"
+                to="/documents/$id"
                 params={{ id: String(j.document_id) }}
                 className="label-xs text-text-secondary hover:text-primary-blue"
               >

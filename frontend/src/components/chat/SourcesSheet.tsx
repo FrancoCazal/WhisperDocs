@@ -72,7 +72,7 @@ export function SourcesSheet({ view, onClose }: { view: SourcesView | null; onCl
                 )}
                 {/* A new tab, so the conversation stays as it is. */}
                 <Link
-                  to="/documentos/$id"
+                  to="/documents/$id"
                   params={{ id: String(c.document_id) }}
                   search={{ chunk: c.chunk_index }}
                   target="_blank"

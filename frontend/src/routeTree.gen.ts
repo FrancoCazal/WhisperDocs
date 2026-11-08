@@ -12,13 +12,13 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as ChatRouteImport } from './routes/chat'
-import { Route as ColeccionesRouteImport } from './routes/colecciones'
-import { Route as ConsultaRouteImport } from './routes/consulta'
-import { Route as DocumentosRouteImport } from './routes/documentos'
-import { Route as EvaluacionRouteImport } from './routes/evaluacion'
-import { Route as HistorialRouteImport } from './routes/historial'
+import { Route as CollectionsRouteImport } from './routes/collections'
+import { Route as DocumentsRouteImport } from './routes/documents'
+import { Route as EvaluationRouteImport } from './routes/evaluation'
+import { Route as HistoryRouteImport } from './routes/history'
+import { Route as QueryRouteImport } from './routes/query'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as DocumentosIdRouteImport } from './routes/documentos_.$id'
+import { Route as DocumentsIdRouteImport } from './routes/documents_.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -35,29 +35,29 @@ const ChatRoute = ChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ColeccionesRoute = ColeccionesRouteImport.update({
-  id: '/colecciones',
-  path: '/colecciones',
+const CollectionsRoute = CollectionsRouteImport.update({
+  id: '/collections',
+  path: '/collections',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ConsultaRoute = ConsultaRouteImport.update({
-  id: '/consulta',
-  path: '/consulta',
+const DocumentsRoute = DocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DocumentosRoute = DocumentosRouteImport.update({
-  id: '/documentos',
-  path: '/documentos',
+const EvaluationRoute = EvaluationRouteImport.update({
+  id: '/evaluation',
+  path: '/evaluation',
   getParentRoute: () => rootRouteImport,
 } as any)
-const EvaluacionRoute = EvaluacionRouteImport.update({
-  id: '/evaluacion',
-  path: '/evaluacion',
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
-const HistorialRoute = HistorialRouteImport.update({
-  id: '/historial',
-  path: '/historial',
+const QueryRoute = QueryRouteImport.update({
+  id: '/query',
+  path: '/query',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -65,9 +65,9 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DocumentosIdRoute = DocumentosIdRouteImport.update({
-  id: '/documentos_/$id',
-  path: '/documentos/$id',
+const DocumentsIdRoute = DocumentsIdRouteImport.update({
+  id: '/documents_/$id',
+  path: '/documents/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -75,38 +75,38 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/chat': typeof ChatRoute
-  '/colecciones': typeof ColeccionesRoute
-  '/consulta': typeof ConsultaRoute
-  '/documentos': typeof DocumentosRoute
-  '/evaluacion': typeof EvaluacionRoute
-  '/historial': typeof HistorialRoute
+  '/collections': typeof CollectionsRoute
+  '/documents': typeof DocumentsRoute
+  '/evaluation': typeof EvaluationRoute
+  '/history': typeof HistoryRoute
+  '/query': typeof QueryRoute
   '/settings': typeof SettingsRoute
-  '/documentos/$id': typeof DocumentosIdRoute
+  '/documents/$id': typeof DocumentsIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/chat': typeof ChatRoute
-  '/colecciones': typeof ColeccionesRoute
-  '/consulta': typeof ConsultaRoute
-  '/documentos': typeof DocumentosRoute
-  '/evaluacion': typeof EvaluacionRoute
-  '/historial': typeof HistorialRoute
+  '/collections': typeof CollectionsRoute
+  '/documents': typeof DocumentsRoute
+  '/evaluation': typeof EvaluationRoute
+  '/history': typeof HistoryRoute
+  '/query': typeof QueryRoute
   '/settings': typeof SettingsRoute
-  '/documentos/$id': typeof DocumentosIdRoute
+  '/documents/$id': typeof DocumentsIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/chat': typeof ChatRoute
-  '/colecciones': typeof ColeccionesRoute
-  '/consulta': typeof ConsultaRoute
-  '/documentos': typeof DocumentosRoute
-  '/evaluacion': typeof EvaluacionRoute
-  '/historial': typeof HistorialRoute
+  '/collections': typeof CollectionsRoute
+  '/documents': typeof DocumentsRoute
+  '/evaluation': typeof EvaluationRoute
+  '/history': typeof HistoryRoute
+  '/query': typeof QueryRoute
   '/settings': typeof SettingsRoute
-  '/documentos_/$id': typeof DocumentosIdRoute
+  '/documents_/$id': typeof DocumentsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -114,50 +114,50 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/chat'
-    | '/colecciones'
-    | '/consulta'
-    | '/documentos'
-    | '/evaluacion'
-    | '/historial'
+    | '/collections'
+    | '/documents'
+    | '/evaluation'
+    | '/history'
+    | '/query'
     | '/settings'
-    | '/documentos/$id'
+    | '/documents/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/$'
     | '/chat'
-    | '/colecciones'
-    | '/consulta'
-    | '/documentos'
-    | '/evaluacion'
-    | '/historial'
+    | '/collections'
+    | '/documents'
+    | '/evaluation'
+    | '/history'
+    | '/query'
     | '/settings'
-    | '/documentos/$id'
+    | '/documents/$id'
   id:
     | '__root__'
     | '/'
     | '/$'
     | '/chat'
-    | '/colecciones'
-    | '/consulta'
-    | '/documentos'
-    | '/evaluacion'
-    | '/historial'
+    | '/collections'
+    | '/documents'
+    | '/evaluation'
+    | '/history'
+    | '/query'
     | '/settings'
-    | '/documentos_/$id'
+    | '/documents_/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   ChatRoute: typeof ChatRoute
-  ColeccionesRoute: typeof ColeccionesRoute
-  ConsultaRoute: typeof ConsultaRoute
-  DocumentosRoute: typeof DocumentosRoute
-  EvaluacionRoute: typeof EvaluacionRoute
-  HistorialRoute: typeof HistorialRoute
+  CollectionsRoute: typeof CollectionsRoute
+  DocumentsRoute: typeof DocumentsRoute
+  EvaluationRoute: typeof EvaluationRoute
+  HistoryRoute: typeof HistoryRoute
+  QueryRoute: typeof QueryRoute
   SettingsRoute: typeof SettingsRoute
-  DocumentosIdRoute: typeof DocumentosIdRoute
+  DocumentsIdRoute: typeof DocumentsIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -183,39 +183,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/colecciones': {
-      id: '/colecciones'
-      path: '/colecciones'
-      fullPath: '/colecciones'
-      preLoaderRoute: typeof ColeccionesRouteImport
+    '/collections': {
+      id: '/collections'
+      path: '/collections'
+      fullPath: '/collections'
+      preLoaderRoute: typeof CollectionsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/consulta': {
-      id: '/consulta'
-      path: '/consulta'
-      fullPath: '/consulta'
-      preLoaderRoute: typeof ConsultaRouteImport
+    '/documents': {
+      id: '/documents'
+      path: '/documents'
+      fullPath: '/documents'
+      preLoaderRoute: typeof DocumentsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/documentos': {
-      id: '/documentos'
-      path: '/documentos'
-      fullPath: '/documentos'
-      preLoaderRoute: typeof DocumentosRouteImport
+    '/evaluation': {
+      id: '/evaluation'
+      path: '/evaluation'
+      fullPath: '/evaluation'
+      preLoaderRoute: typeof EvaluationRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/evaluacion': {
-      id: '/evaluacion'
-      path: '/evaluacion'
-      fullPath: '/evaluacion'
-      preLoaderRoute: typeof EvaluacionRouteImport
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/historial': {
-      id: '/historial'
-      path: '/historial'
-      fullPath: '/historial'
-      preLoaderRoute: typeof HistorialRouteImport
+    '/query': {
+      id: '/query'
+      path: '/query'
+      fullPath: '/query'
+      preLoaderRoute: typeof QueryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -225,11 +225,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/documentos_/$id': {
-      id: '/documentos_/$id'
-      path: '/documentos/$id'
-      fullPath: '/documentos/$id'
-      preLoaderRoute: typeof DocumentosIdRouteImport
+    '/documents_/$id': {
+      id: '/documents_/$id'
+      path: '/documents/$id'
+      fullPath: '/documents/$id'
+      preLoaderRoute: typeof DocumentsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -239,13 +239,13 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   ChatRoute: ChatRoute,
-  ColeccionesRoute: ColeccionesRoute,
-  ConsultaRoute: ConsultaRoute,
-  DocumentosRoute: DocumentosRoute,
-  EvaluacionRoute: EvaluacionRoute,
-  HistorialRoute: HistorialRoute,
+  CollectionsRoute: CollectionsRoute,
+  DocumentsRoute: DocumentsRoute,
+  EvaluationRoute: EvaluationRoute,
+  HistoryRoute: HistoryRoute,
+  QueryRoute: QueryRoute,
   SettingsRoute: SettingsRoute,
-  DocumentosIdRoute: DocumentosIdRoute,
+  DocumentsIdRoute: DocumentsIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

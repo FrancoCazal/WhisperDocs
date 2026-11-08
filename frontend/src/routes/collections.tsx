@@ -14,7 +14,7 @@ import {
 } from "@/components/ui-kit/EmptyState";
 import { Modal, Field, inputCls, textareaCls } from "@/components/ui-kit/Modal";
 
-export const Route = createFileRoute("/colecciones")({
+export const Route = createFileRoute("/collections")({
   head: () => ({
     meta: [
       { title: "Collections — WhisperDocs" },
@@ -123,13 +123,13 @@ function CollectionsPage() {
                     key={c.id}
                     className="body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high cursor-pointer"
                     onClick={() =>
-                      navigate({ to: "/documentos", search: { collection_id: c.id } as never })
+                      navigate({ to: "/documents", search: { collection_id: c.id } as never })
                     }
                   >
                     <td className="pl-6 text-text-primary">
                       {/* The row opens on a click; the link is the way in by keyboard. */}
                       <Link
-                        to="/documentos"
+                        to="/documents"
                         search={{ collection_id: c.id }}
                         onClick={(e) => e.stopPropagation()}
                         className="hover:text-primary-blue"
