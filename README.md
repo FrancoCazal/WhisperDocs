@@ -29,6 +29,9 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 - **Cost tracking** — per-call USD via `pricing.py`, persisted on `query_logs`. Single source for runner, API, dashboard.
 - **Structured logging + metrics** — `structlog` JSON output, Prometheus `/metrics` (turn duration, tokens, retrieval relevance, errors).
 - **WhatsApp integration** — full agent pipeline over Twilio webhooks.
+- **MCP server** — the knowledge base for Claude Code, Claude Desktop and Cursor:
+  search, answers with citations, the lists and a resource per document, over
+  stdio. Each tool calls the same service as its REST route.
 
 ---
 
@@ -178,6 +181,67 @@ so a client generated from the schema, or an agent's tool list, keeps its names;
 
 ---
 
+## MCP server
+
+WhisperDocs is also an MCP server, so Claude Code, Claude Desktop, Cursor or
+any other MCP client can use the knowledge base. It runs over stdio, against
+the compose Postgres, and no tool changes the knowledge base.
+
+| Tool | What it returns |
+|------|-----------------|
+| `search_documents` | The passages for a query, with their text and document, and nothing generated: the client answers with its own model. Scoped by `collection_id` or `document_id`; `top_k` from 1 to 20. |
+| `ask_documents` | WhisperDocs' own answer, with its citations: `[n]` in the answer is `citations[n-1]`. It pays for a model call and is saved to the query history. |
+| `list_collections` | The collections, with their document, chunk and token totals. |
+| `list_documents` | A page of documents, each with its resource URI. |
+
+Each document is also a resource, `whisperdocs://documents/{id}`, holding its
+full text. Each tool calls the service its REST route calls (`/retrieve`,
+`/query`, the lists), so both return the same thing. The server speaks the
+current MCP spec (2026-07-28) and the older `initialize` handshake that many
+clients still use. [ADR 0005](docs/adr/0005-mcp-server.md) has the design.
+
+With the stack up (`docker compose up`; after pulling this change, rebuild
+the API image once with `docker compose build api`), point the client at the
+API container. Use the absolute path to this repository's
+`docker-compose.yml`.
+
+**Claude Code**
+
+```bash
+claude mcp add whisperdocs -- docker compose -f /path/to/WhisperDocs/docker-compose.yml exec -T api python -m app.mcp
+```
+
+**Claude Desktop** (`claude_desktop_config.json`) and **Cursor**
+(`~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project) take the same
+entry:
+
+```json
+{
+  "mcpServers": {
+    "whisperdocs": {
+      "command": "docker",
+      "args": [
+        "compose", "-f", "/path/to/WhisperDocs/docker-compose.yml",
+        "exec", "-T", "api", "python", "-m", "app.mcp"
+      ]
+    }
+  }
+}
+```
+
+Without Docker, `uv run python -m app.mcp` starts it from a checkout whose
+`DATABASE_URL` reaches the database (`localhost:5435` with the compose
+defaults).
+
+- **No auth over stdio.** The client starts the process on your machine, and
+  the process has the database and keys the API has. Serving MCP over HTTP
+  waits for scoped keys.
+- **Its own process.** The API's rate limits and its model status do not see
+  the MCP server's calls; the server logs to stderr, which the client keeps
+  as its MCP log.
+
+---
+
 ## Security posture
 
 Out of the box, WhisperDocs runs as a local demo: the API has no key, and
@@ -316,13 +380,13 @@ TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test
 # 159 passed
 ```
 
-Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), database (`tests/test_retrieval_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`). No test reaches a model or embedding API, even with credentials in `.env`: `tests/conftest.py` fails any test that resolves a host other than this machine or the test database.
+Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), MCP (`tests/test_mcp.py`: an in-memory MCP client, and the stdio process), database (`tests/test_retrieval_db.py`, `test_mcp_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`). No test reaches a model or embedding API, even with credentials in `.env`: `tests/conftest.py` fails any test that resolves a host other than this machine or the test database.
 
 CI (`.github/workflows/tests.yml`) runs, on every push to `main` and every pull request:
 - `pre-commit run --all-files`: ruff, ruff format and file hygiene;
 - gitleaks over the full history;
 - pip-audit over every locked package;
-- mypy (`app/agent`, `app/eval` and what they import);
+- mypy (`app/agent`, `app/eval`, `app/mcp` and what they import);
 - the full suite against a pgvector Postgres service, database tests included.
 
 Dependabot proposes weekly updates for Python, npm, GitHub Actions and Docker images.
@@ -334,11 +398,14 @@ Dependabot proposes weekly updates for Python, npm, GitHub Actions and Docker im
 ```
 app/
   agent/          LangGraph agent (nodes, graph, state, prompts, utils)
-  api/v1/         FastAPI routers — agent, query, documents, conversations,
-                  notes, collections, eval, admin, webhooks, health, metrics
+  api/v1/         FastAPI routers — agent, query, retrieve, documents,
+                  conversations, notes, collections, eval, admin, webhooks,
+                  health, metrics
+  mcp/            MCP server (stdio): tools and document resources
   services/       llm/ (providers + pricing), retriever, embedder, chunker,
                   reranker, mmr, retrieval_pipeline, ingestion, text_extractor,
-                  rag, lang, whatsapp/, twilio_client
+                  rag, lang, whatsapp/, twilio_client; search, answering and
+                  catalog, shared by the API routes and the MCP tools
   models/         SQLAlchemy ORM
   schemas/        Pydantic
   eval/           Evaluation framework (runner, judge, evaluator, report, metrics)

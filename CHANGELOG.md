@@ -49,6 +49,14 @@ Fixes from the November 2026 audit, and a review of the frontend.
 - Every operation has a fixed `operationId` (`retrieve_chunks`,
   `answer_question`, ...), where FastAPI generated
   `query_api_v1_query_post`. A test lists them all.
+- An MCP server (`python -m app.mcp`, over stdio) for Claude Code, Claude
+  Desktop, Cursor and other MCP clients: `search_documents` (the passages,
+  nothing generated), `ask_documents` (an answer with its citations),
+  `list_collections`, `list_documents`, and a resource per document with
+  its full text. No tool changes the knowledge base. It runs on the
+  official `mcp` SDK 2.3, speaks the 2026-07-28 spec and the older
+  handshake, and each tool calls the service its REST route calls. The
+  README has the configuration for each client; ADR 0005 has the design.
 - History: filters by origin and by question text
   (`GET /query/history?source=&q=`), and pagination.
 - Frontend tests: vitest for the API client's stream parser, and a

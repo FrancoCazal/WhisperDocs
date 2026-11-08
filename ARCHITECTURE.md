@@ -519,10 +519,55 @@ From the outside in: CORS, then `RequestContextMiddleware`
   `retrieval_pipeline.retrieve`, the search the chat and `/query` use, and
   returns the chunks with their text; nothing is generated. A
   `document_id` implies its collection.
+- **Shared services.** The routes for `/retrieve`, `/query` and the
+  collection and document lists are thin: their logic lives in
+  `app/services/search.py`, `answering.py` and `catalog.py`, which the MCP
+  server calls too. A route maps the services' errors to HTTP (a missing
+  scope is a 404, a failed provider a 502); a tool, to a tool error.
 - **Rate limits** (`app/api/rate_limit.py`). A sliding 60 s window per
   bucket and client, in process memory. The key names the client only when
   auth is on: with it off, a made-up key per request would get a fresh
   window.
+
+---
+
+## MCP server
+
+`app/mcp/server.py` builds an `MCPServer` (official `mcp` SDK 2.3) and
+`python -m app.mcp` serves it over stdio. Clients start it with
+`docker compose exec -T api python -m app.mcp`. See
+[ADR 0005](docs/adr/0005-mcp-server.md).
+
+```
+MCP client (Claude Code, Claude Desktop, Cursor)
+  │ stdio: JSON-RPC, 2026-07-28 or the older initialize handshake
+  ▼
+app/mcp/server.py
+  search_documents ──► services/search.py    ──► retrieval_pipeline
+  ask_documents    ──► services/answering.py ──► retrieval_pipeline + rag model
+  list_collections, list_documents ──► services/catalog.py
+  resources: whisperdocs://documents/{id} ──► documents.raw_text
+  ▼
+Postgres (the compose database)
+```
+
+- **Read-only.** No tool uploads, moves or deletes. `ask_documents` writes
+  its `query_logs` row, as `/query` does.
+- **Arguments** are bounded like the API's (`top_k` 1-20, `limit` 1-100) and
+  checked before the tool runs.
+- **Errors are tool results**, for the model to read: a missing scope names
+  the lists that give the ids, and comes before the embedding is paid for;
+  a failed provider call gives its kind, not the provider's text.
+- **Resources.** `resources/list` names the newest 200 documents, with
+  their size; the template `whisperdocs://documents/{id}` reads any.
+- **Its own process.** The API's rate limits and model status are per
+  process and do not see these calls. stdout is the protocol's: the SDK
+  points the process's stdout at stderr while it serves, and the logs go
+  to stderr.
+- **Tests.** `tests/test_mcp.py` runs an in-memory client against fakes,
+  compares each tool with its route, covers both protocol eras, and starts
+  the stdio process to check that it writes only JSON-RPC to stdout.
+  `tests/test_mcp_db.py` runs the tools and resources against Postgres.
 
 ---
 
@@ -587,3 +632,4 @@ See [`docs/adr/`](docs/adr/) for short rationale notes:
 - [0002 — pgvector over a dedicated vector DB](docs/adr/0002-pgvector-over-dedicated-vectordb.md)
 - [0003 — Hybrid retrieval with RRF](docs/adr/0003-hybrid-retrieval-rrf.md)
 - [0004 — Dual LLM provider routing](docs/adr/0004-dual-llm-provider-routing.md)
+- [0005 — An MCP server over the same services as the API](docs/adr/0005-mcp-server.md)
