@@ -39,11 +39,14 @@ export function interleaveCitations(
           <HoverCard key={`${keyPrefix}-cite-${n}-${out.length}`} openDelay={120}>
             <HoverCardTrigger asChild>
               <sup className="px-0.5">
+                {/* leading-none: a sup's line-height is 0 (Tailwind's
+                    preflight), which left the button no height to click,
+                    hover or outline. */}
                 <button
                   type="button"
                   onClick={() => onCite?.(n)}
                   aria-label={`Source ${n}: ${c.document_title}`}
-                  className="text-primary-blue font-medium hover:underline focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary-blue"
+                  className="leading-none text-primary-blue font-medium hover:underline focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary-blue"
                 >
                   [{n}]
                 </button>

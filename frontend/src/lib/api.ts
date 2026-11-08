@@ -387,10 +387,10 @@ async function* readSse(res: Response): AsyncGenerator<SseMessage> {
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) return;
-      let text = buf + decoder.decode(value, { stream: true });
-      // A CR at the end may be the first half of a CRLF: keep it for the next chunk.
-      const held = text.endsWith("\r") ? "\r" : "";
+      let text = buf + (done ? decoder.decode() : decoder.decode(value, { stream: true }));
+      // A CR at the end may be the first half of a CRLF: keep it for the next
+      // chunk. At the end of the stream there is none, and it ends its line.
+      const held = !done && text.endsWith("\r") ? "\r" : "";
       if (held) text = text.slice(0, -1);
       const lines = text.split(/\r\n|\r|\n/);
       buf = (lines.pop() ?? "") + held;
@@ -410,6 +410,8 @@ async function* readSse(res: Response): AsyncGenerator<SseMessage> {
           else if (field === "data") data.push(val);
         }
       }
+      // What is left in buf is a line the stream cut off: dropped.
+      if (done) return;
     }
   } finally {
     // Also when the reader stops early: the request is not left open.

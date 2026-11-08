@@ -55,7 +55,7 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -80,6 +80,22 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      # The runner's own Chrome (Playwright's channel "chrome"), against a
+      # backend each test plays: nothing is downloaded, no API is called.
+      - name: Browser tests
+        run: npm run test:e2e
+
+      - name: Keep the failed browser tests' traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: frontend/test-results
+          retention-days: 7
 
   test:
     name: Types and tests
