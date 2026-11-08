@@ -407,11 +407,18 @@ async def test_search_docs_uses_the_top_k_the_client_sent(
 # ---------- summarize ----------
 
 
-async def test_summarize_early_return_when_short():
-    # len(messages) <= K (default 8) → no-op
+async def test_summarize_early_return_when_short(fake_provider, mock_llm_service_for, monkeypatch):
+    from app.config import settings
+
+    # len(messages) <= K → no-op. K pinned: a K_RECENT from the environment
+    # (the container's .env sets 2) would make this compact. And a fake
+    # provider, so a broken early return fails here instead of calling a model.
+    monkeypatch.setattr(settings.agent, "k_recent", 8)
+    mock_llm_service_for("app.agent.nodes.summarize", fake_provider)
     state = {"messages": [HumanMessage(content="hi")] * 3}
     result = await summarize_node(state)
     assert result == {"pending_action": None}
+    assert fake_provider.calls == []
 
 
 async def test_summarize_writes_progressive_summary(
