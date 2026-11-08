@@ -1,4 +1,4 @@
-import type { AgentCitation } from "@/lib/api";
+import { COSINE_HINT, fmtCosine, type AgentCitation } from "@/lib/api";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export function SourcesSheet({ citations }: { citations: AgentCitation[] }) {
@@ -19,30 +19,30 @@ export function SourcesSheet({ citations }: { citations: AgentCitation[] }) {
           </SheetTitle>
         </SheetHeader>
         <div className="mt-4 space-y-3">
-          {[...citations]
-            .sort((a, b) => b.relevance - a.relevance)
-            .map((c, idx) => {
-              const rel = c.relevance;
-              const relClass =
-                rel >= 0.7 ? "text-success" : rel >= 0.5 ? "text-text-tertiary" : "text-error";
-              return (
-                <div
-                  key={`src-${c.chunk_id}-${idx}`}
-                  className="border border-border-subtle bg-surface-container-low p-3"
-                >
-                  <div className="label-sm flex items-center justify-between mb-2">
-                    <span className="text-text-secondary truncate">{c.document_title}</span>
-                    <span className={`tabular-nums shrink-0 ${relClass}`}>{rel.toFixed(3)}</span>
-                  </div>
-                  <div className="label-xs text-text-tertiary mb-2">CHUNK {c.chunk_index}</div>
-                  {c.text_preview && (
-                    <div className="body-sm text-text-secondary whitespace-pre-wrap">
-                      {c.text_preview}
-                    </div>
-                  )}
+          {/* In citation order, so [n] in the answer is the n-th source. */}
+          {citations.map((c, idx) => {
+            return (
+              <div
+                key={`src-${c.chunk_id}-${idx}`}
+                className="border border-border-subtle bg-surface-container-low p-3"
+              >
+                <div className="label-sm flex items-center justify-between gap-3 mb-2">
+                  <span className="text-text-secondary truncate">
+                    <span className="text-text-primary">[{idx + 1}]</span> {c.document_title}
+                  </span>
+                  <span className="tabular-nums shrink-0 text-text-secondary" title={COSINE_HINT}>
+                    {fmtCosine(c.cosine)}
+                  </span>
                 </div>
-              );
-            })}
+                <div className="label-xs text-text-tertiary mb-2">CHUNK {c.chunk_index}</div>
+                {c.text_preview && (
+                  <div className="body-sm text-text-secondary whitespace-pre-wrap">
+                    {c.text_preview}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </SheetContent>
     </Sheet>

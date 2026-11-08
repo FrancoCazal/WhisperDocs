@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { AgentCitation } from "@/lib/api";
+import { fmtCosine, type AgentCitation } from "@/lib/api";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 
 const CITATION_RE = /\[(\d+)\]/g;
@@ -31,7 +31,7 @@ export function interleaveCitations(children: ReactNode, citations: AgentCitatio
               className="w-[460px] max-h-[300px] overflow-auto bg-surface-container border border-border-subtle"
             >
               <div className="label-xs text-text-tertiary mb-2">
-                {c.document_title} · CHUNK {c.chunk_index} · REL {c.relevance.toFixed(3)}
+                {c.document_title} · CHUNK {c.chunk_index} · {fmtCosine(c.cosine)}
               </div>
               <div className="body-sm text-text-secondary whitespace-pre-wrap">
                 {c.text_preview ?? "(no preview)"}

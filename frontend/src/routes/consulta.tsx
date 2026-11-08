@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  COSINE_HINT,
+  fmtCosine,
   fmtCost,
   fmtTimestamp,
   type Citation,
@@ -415,9 +417,6 @@ function AssistantTurn({
           {turn.expanded && (
             <div className="mt-3 space-y-2">
               {turn.citations.map((c, idx) => {
-                const rel = c.relevance;
-                const relClass =
-                  rel >= 0.7 ? "text-success" : rel >= 0.5 ? "text-text-tertiary" : "text-error";
                 const num = String(idx + 1).padStart(2, "0");
                 return (
                   <div
@@ -431,7 +430,9 @@ function AssistantTurn({
                       <span className="text-text-tertiary">·</span>
                       <span className="text-text-secondary">CHUNK {c.chunk_index}</span>
                       <span className="text-text-tertiary">·</span>
-                      <span className={`tabular-nums ${relClass}`}>RELEVANCE {rel.toFixed(3)}</span>
+                      <span className="tabular-nums text-text-secondary" title={COSINE_HINT}>
+                        {fmtCosine(c.cosine)}
+                      </span>
                     </div>
                   </div>
                 );

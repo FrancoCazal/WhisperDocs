@@ -84,7 +84,12 @@ export type Citation = {
   document_id: number;
   document_title: string;
   chunk_index: number;
+  // The fused rank score the citations are ordered by: relative to the other
+  // results of the same query, so not a quality measure.
   relevance: number;
+  // Cosine similarity to the question. null when only full-text search found
+  // the chunk; missing in citations stored before the field existed.
+  cosine?: number | null;
   text_preview?: string | null;
 };
 
@@ -629,6 +634,13 @@ export function fmtNumber(n: number | null | undefined): string {
 export function fmtCost(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
   return `$${n.toFixed(4)}`;
+}
+
+export const COSINE_HINT =
+  "Cosine similarity between the chunk and the question. — means only full-text search found it.";
+
+export function fmtCosine(cosine: number | null | undefined): string {
+  return cosine === null || cosine === undefined ? "COS —" : `COS ${cosine.toFixed(3)}`;
 }
 
 export function fmtPct(n: number | null | undefined, decimals = 1): string {

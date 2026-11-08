@@ -2,7 +2,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
-import { fmtCost } from "@/lib/api";
+import { COSINE_HINT, fmtCosine, fmtCost } from "@/lib/api";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { interleaveCitations } from "./citations";
 import type { AssistantTurnData, UserTurnData } from "./types";
@@ -87,9 +87,6 @@ export function AssistantTurn({
           {turn.expanded && (
             <div className="mt-3 space-y-2">
               {turn.citations.map((c, idx) => {
-                const rel = c.relevance;
-                const relClass =
-                  rel >= 0.7 ? "text-success" : rel >= 0.5 ? "text-text-tertiary" : "text-error";
                 const num = String(idx + 1).padStart(2, "0");
                 return (
                   <HoverCard key={`${c.chunk_id}-${idx}`} openDelay={150}>
@@ -104,8 +101,8 @@ export function AssistantTurn({
                           <span className="text-text-tertiary">·</span>
                           <span className="text-text-secondary">CHUNK {c.chunk_index}</span>
                           <span className="text-text-tertiary">·</span>
-                          <span className={`tabular-nums ${relClass}`}>
-                            RELEVANCE {rel.toFixed(3)}
+                          <span className="tabular-nums text-text-secondary" title={COSINE_HINT}>
+                            {fmtCosine(c.cosine)}
                           </span>
                         </div>
                       </div>
