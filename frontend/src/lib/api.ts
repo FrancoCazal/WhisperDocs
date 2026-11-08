@@ -6,6 +6,38 @@ export const API_BASE_URL =
 
 const ROOT = `${API_BASE_URL}/api/v1`;
 
+// The API key, sent as X-API-Key on every call: the API asks for it when it
+// runs with API_KEY set (audit R6). It is kept in this browser's storage; where
+// storage is blocked (a private window, say) it lasts until the page reloads.
+const API_KEY_STORAGE = "whisperdocs.api-key";
+let keyInMemory = "";
+
+export function getApiKey(): string {
+  try {
+    return localStorage.getItem(API_KEY_STORAGE) ?? "";
+  } catch {
+    return keyInMemory;
+  }
+}
+
+/** Keep `key` for the next calls; an empty one removes it. False when the
+ *  browser would not store it, so it is gone on reload. */
+export function setApiKey(key: string): boolean {
+  keyInMemory = key.trim();
+  try {
+    if (keyInMemory) localStorage.setItem(API_KEY_STORAGE, keyInMemory);
+    else localStorage.removeItem(API_KEY_STORAGE);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function keyHeader(): Record<string, string> {
+  const key = getApiKey();
+  return key ? { "X-API-Key": key } : {};
+}
+
 // Text limits the backend validates (app/schemas): past them it answers 422.
 export const LIMITS = {
   chatMessage: 5000,
@@ -17,12 +49,29 @@ export const LIMITS = {
 export class ApiError extends Error {
   status: number;
   detail: unknown;
-  constructor(status: number, detail: unknown, message: string) {
+  // The API's error `code` (not_found, rate_limited, ...) and the request id
+  // that finds the call in its logs; null when the response had none.
+  code: string | null;
+  requestId: string | null;
+  constructor(
+    status: number,
+    detail: unknown,
+    message: string,
+    { code = null, requestId = null }: { code?: string | null; requestId?: string | null } = {},
+  ) {
     super(message);
     this.status = status;
     this.detail = detail;
+    this.code = code;
+    this.requestId = requestId;
   }
 }
+
+// Messages for the codes the user acts on here, in place of the API's.
+const CODE_MESSAGES: Record<string, string> = {
+  api_key_required: "The API needs a key: set it in SETTINGS.",
+  api_key_invalid: "The API refused the key: check it in SETTINGS.",
+};
 
 // FastAPI's `detail`: a string, or for a 422 a list of {loc, msg}.
 function detailMessage(detail: unknown): string | null {
@@ -51,11 +100,14 @@ async function toApiError(res: Response): Promise<ApiError> {
   } catch {
     /* not JSON: a proxy's error page, say; keep it as the detail */
   }
-  const detail =
-    body && typeof body === "object" && "detail" in body
-      ? (body as { detail: unknown }).detail
-      : null;
-  return new ApiError(res.status, body, detailMessage(detail) ?? `HTTP ${res.status}`);
+  const fields = isRecord(body) ? body : {};
+  const code = str(fields.code);
+  const message =
+    (code && CODE_MESSAGES[code]) ?? detailMessage(fields.detail ?? null) ?? `HTTP ${res.status}`;
+  return new ApiError(res.status, body, message, {
+    code,
+    requestId: str(fields.request_id) ?? res.headers.get("X-Request-ID"),
+  });
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -66,6 +118,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.body && !(init.body instanceof FormData)
         ? { "Content-Type": "application/json" }
         : {}),
+      ...keyHeader(),
       ...(init?.headers ?? {}),
     },
   });
@@ -621,7 +674,7 @@ export const api = {
   ): Promise<void> => {
     const res = await fetch(`${ROOT}/documents/jobs/${jobId}/stream`, {
       method: "GET",
-      headers: { Accept: "text/event-stream" },
+      headers: { Accept: "text/event-stream", ...keyHeader() },
       signal,
     });
     if (!res.ok) throw await toApiError(res);
@@ -676,7 +729,11 @@ export const api = {
   ): Promise<void> => {
     const res = await fetch(`${ROOT}/agent/chat/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        ...keyHeader(),
+      },
       body: JSON.stringify({
         message: body.message,
         thread_id: body.thread_id ?? null,

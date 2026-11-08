@@ -6,6 +6,7 @@ import {
   fmtDate,
   fmtNumber,
   fmtTurnTime,
+  setApiKey,
   type AgentStreamEvent,
   type IngestionJobEvent,
 } from "./api";
@@ -230,6 +231,90 @@ describe("the ingestion stream", () => {
       { type: "complete", job_id: 4, document_id: 12 },
       { type: "error", job_id: undefined, message: "ingestion error" },
     ]);
+  });
+});
+
+/** A Storage over a Map; with `blocked`, one whose every call throws, as a
+ *  browser's does when it blocks site data. */
+function storage({ blocked = false } = {}): Storage {
+  const items = new Map<string, string>();
+  const guard = () => {
+    if (blocked) throw new DOMException("blocked", "SecurityError");
+  };
+  return {
+    get length() {
+      return items.size;
+    },
+    clear: () => items.clear(),
+    key: (i: number) => [...items.keys()][i] ?? null,
+    getItem: (k: string) => (guard(), items.get(k) ?? null),
+    setItem: (k: string, v: string) => (guard(), void items.set(k, v)),
+    removeItem: (k: string) => (guard(), void items.delete(k)),
+  };
+}
+
+function sentKey(fetchMock: ReturnType<typeof stubFetch>): string | undefined {
+  const init = (fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit])[1];
+  return (init.headers as Record<string, string>)["X-API-Key"];
+}
+
+describe("the API key", () => {
+  it("goes with every call once set, and stops once cleared", async () => {
+    vi.stubGlobal("localStorage", storage());
+    expect(setApiKey(" test ")).toBe(true);
+
+    let fetchMock = stubFetch(Response.json({ status: "ok" }));
+    await api.health();
+    expect(sentKey(fetchMock)).toBe("test");
+
+    fetchMock = stubFetch(sse([]));
+    await api.agentChatStream({ message: "hi" }, () => {});
+    expect(sentKey(fetchMock)).toBe("test");
+
+    fetchMock = stubFetch(sse([]));
+    await api.streamIngestionJob(1, () => {});
+    expect(sentKey(fetchMock)).toBe("test");
+
+    setApiKey("");
+    fetchMock = stubFetch(Response.json({ status: "ok" }));
+    await api.health();
+    expect(sentKey(fetchMock)).toBeUndefined();
+  });
+
+  it("lasts until reload where the browser blocks storage", async () => {
+    vi.stubGlobal("localStorage", storage({ blocked: true }));
+    expect(setApiKey("test")).toBe(false);
+
+    const fetchMock = stubFetch(Response.json({ status: "ok" }));
+    await api.health();
+    expect(sentKey(fetchMock)).toBe("test");
+    setApiKey("");
+  });
+
+  it("says where to set it when the API asks for one", async () => {
+    vi.stubGlobal("localStorage", storage());
+    stubFetch(
+      Response.json(
+        { detail: "This API needs a key.", code: "api_key_required", request_id: "r-1" },
+        { status: 401 },
+      ),
+    );
+    const error = (await api.health().catch((e: unknown) => e)) as ApiError;
+
+    expect(error.message).toBe("The API needs a key: set it in SETTINGS.");
+    expect([error.status, error.code, error.requestId]).toEqual([401, "api_key_required", "r-1"]);
+  });
+
+  it("keeps the API's message for any other code", async () => {
+    stubFetch(
+      Response.json(
+        { detail: "Too many requests.", code: "rate_limited", request_id: "r-2" },
+        { status: 429 },
+      ),
+    );
+    const error = (await api.health().catch((e: unknown) => e)) as ApiError;
+
+    expect([error.message, error.code]).toEqual(["Too many requests.", "rate_limited"]);
   });
 });
 

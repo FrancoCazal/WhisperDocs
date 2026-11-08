@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { api, API_BASE_URL } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, API_BASE_URL, getApiKey, setApiKey } from "@/lib/api";
+import { Btn } from "@/components/ui-kit/Button";
+import { inputCls } from "@/components/ui-kit/Modal";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { StatDot } from "@/components/ui-kit/StatDot";
 import { LoadingLine } from "@/components/ui-kit/EmptyState";
@@ -63,11 +66,12 @@ function SettingsPage() {
           }
         />
         <Row label="ENV_VAR" value="VITE_API_BASE_URL" />
+        <Row label="API_KEY" value={<ApiKeyField />} />
       </Section>
 
       <Section title="AGENT MODELS">
         {adminSettings.isLoading && <LoadingLine />}
-        {adminSettings.error && <Row label="ERROR" value="failed to fetch /admin/settings" />}
+        {adminSettings.error && <Row label="ERROR" value={adminSettings.error.message} />}
         {adminSettings.data &&
           Object.entries(adminSettings.data.models).map(([node, cfg]) => (
             <Row
@@ -123,6 +127,57 @@ function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** The key the API asks for when it runs with API_KEY set. It is never shown
+ *  back: the field says whether one is set, and a new one replaces it. */
+function ApiKeyField() {
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState("");
+  const [isSet, setIsSet] = useState(() => getApiKey() !== "");
+  const [note, setNote] = useState<string | null>(null);
+
+  function keep(key: string) {
+    const stored = setApiKey(key);
+    const kept = key.trim() !== "";
+    setIsSet(kept);
+    setDraft("");
+    setNote(kept && !stored ? "KEPT UNTIL RELOAD: THIS BROWSER BLOCKS STORAGE" : null);
+    // Every query again, now with the new key.
+    void qc.invalidateQueries();
+  }
+
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2 py-2 sm:py-0"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (draft.trim()) keep(draft);
+      }}
+    >
+      <input
+        type="password"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={
+          isSet ? "SET · TYPE A NEW ONE TO REPLACE IT" : "NOT SET · NEEDED WHEN THE API HAS ONE"
+        }
+        aria-label="API key"
+        autoComplete="off"
+        spellCheck={false}
+        className={`${inputCls} sm:max-w-sm h-8`}
+      />
+      <Btn type="submit" size="sm" variant="quiet" disabled={!draft.trim()}>
+        SAVE
+      </Btn>
+      {isSet && (
+        <Btn size="sm" variant="destructive-ghost" onClick={() => keep("")}>
+          CLEAR
+        </Btn>
+      )}
+      {note && <span className="label-xs text-warning">{note}</span>}
+    </form>
   );
 }
 

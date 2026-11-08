@@ -50,6 +50,7 @@ const PAGES: [string, number][] = [
   ["/chat", 4],
   ["/history", 3],
   ["/documents", 2],
+  ["/settings", 1],
 ];
 
 for (const [path, count] of PAGES) {
