@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.thread_id import thread_title
 from app.agent.utils.messages import stamped
 from app.db import SessionLocal, get_db
 from app.logging_config import get_logger
@@ -71,6 +72,7 @@ async def agent_chat(
         await db.flush()
     else:
         apply_turn_collection(conv, payload)
+    ensure_title(conv, payload.message)
 
     agent = request.app.state.agent
     turn_started = time.perf_counter()
@@ -141,6 +143,13 @@ def apply_turn_collection(conv: Conversation, payload: AgentChatRequest) -> None
         conv.collection_id = payload.collection_id
 
 
+def ensure_title(conv: Conversation, message: str) -> None:
+    """A thread without a title takes this message: its first question, or
+    for a thread from before titles, the first one since."""
+    if conv.title is None:
+        conv.title = thread_title(message)
+
+
 def _sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
@@ -184,6 +193,7 @@ async def agent_chat_stream(
                 await db.flush()
             else:
                 apply_turn_collection(conv, payload)
+            ensure_title(conv, payload.message)
             await db.commit()
             active_collection_id = conv.collection_id
 

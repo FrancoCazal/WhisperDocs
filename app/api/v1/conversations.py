@@ -29,9 +29,16 @@ async def list_conversations(
     user_number: str | None = None,
     is_saved: bool | None = None,
     channel: str | None = None,
+    q: str | None = Query(
+        default=None, max_length=200, description="Text the thread's title contains"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> Page[ConversationRead]:
     filters = []
+    if q and q.strip():
+        # Literal text: the LIKE wildcards in it match themselves.
+        literal = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        filters.append(Conversation.title.ilike(f"%{literal}%", escape="\\"))
     if user_number is not None:
         filters.append(Conversation.user_number == user_number)
     if is_saved is not None:
@@ -158,7 +165,7 @@ async def create_note_in_conversation(
     thread_id: str,
     payload: SavedNoteCreate,
     db: AsyncSession = Depends(get_db),
-) -> SavedNote:
+) -> SavedNoteRead:
     conv = await _get_conversation_or_404(db, thread_id)
     note = SavedNote(
         conversation_id=conv.id,
@@ -169,4 +176,4 @@ async def create_note_in_conversation(
     db.add(note)
     await db.commit()
     await db.refresh(note)
-    return note
+    return SavedNoteRead.model_validate(note).model_copy(update={"thread_id": conv.thread_id})

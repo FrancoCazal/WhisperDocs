@@ -11,6 +11,8 @@ class ConversationRead(BaseModel):
     user_number: str | None
     channel: str
     collection_id: int | None
+    # The thread's first question; null until it has one.
+    title: str | None = None
     is_saved: bool
     last_active_at: datetime
     created_at: datetime

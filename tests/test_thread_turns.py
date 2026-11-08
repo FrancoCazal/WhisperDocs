@@ -13,8 +13,9 @@ import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.agent.thread_id import thread_title
 from app.agent.utils.messages import stamped
-from app.api.v1.agent import apply_turn_collection
+from app.api.v1.agent import apply_turn_collection, ensure_title
 from app.db import get_db
 from app.main import app
 from app.models import Conversation
@@ -136,3 +137,24 @@ async def test_a_reopened_thread_has_each_turns_time_and_action(conv):
     assert question["timestamp"] is not None and question["action"] is None
     assert answer["timestamp"] is not None and answer["action"] == "search_docs"
     assert old_question["timestamp"] is None and old_answer["action"] is None
+
+
+@pytest.mark.parametrize(
+    ("message", "title"),
+    [
+        ("  ¿Qué es\n\tpgvector?  ", "¿Qué es pgvector?"),
+        ("x" * 200, "x" * 200),
+        ("x" * 201, "x" * 199 + "…"),
+    ],
+    ids=["one-line", "fits", "cut"],
+)
+def test_a_thread_title_is_its_question_on_one_line(message, title):
+    assert thread_title(message) == title
+    assert len(thread_title(message)) <= 200
+
+
+def test_a_thread_keeps_its_first_title():
+    conv = Conversation(thread_id="t", channel="web")
+    ensure_title(conv, "first question")
+    ensure_title(conv, "second question")
+    assert conv.title == "first question"

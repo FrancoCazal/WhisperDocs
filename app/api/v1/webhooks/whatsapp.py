@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.thread_id import normalize_phone, whatsapp_thread_id
+from app.agent.thread_id import normalize_phone, thread_title, whatsapp_thread_id
 from app.agent.utils.messages import stamped
 from app.config import settings
 from app.db import get_db
@@ -163,6 +163,10 @@ async def whatsapp_webhook(
         except Exception:
             logger.exception("twilio_send_failed thread_id=%s", thread_id)
         return
+
+    # A fresh memory is a new thread: its first message is the title.
+    if is_new_thread or conv.title is None:
+        conv.title = thread_title(body)
 
     agent = request.app.state.agent
     turn_started = time.perf_counter()

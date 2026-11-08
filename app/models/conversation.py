@@ -18,6 +18,9 @@ class Conversation(Base):
     collection_id: Mapped[int | None] = mapped_column(
         ForeignKey("collections.id", ondelete="SET NULL"), nullable=True
     )
+    # The thread's first question (see thread_title); null for a thread with
+    # none yet, or one from before the column whose query log had none.
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     is_saved: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False, index=True
     )

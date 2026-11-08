@@ -321,6 +321,8 @@ export type Conversation = {
   user_number: string | null;
   channel: string;
   collection_id: number | null;
+  // The thread's first question; null until it has one.
+  title: string | null;
   is_saved: boolean;
   last_active_at: string;
   created_at: string;
@@ -341,6 +343,8 @@ export type ConversationMessage = {
 export type SavedNote = {
   id: number;
   conversation_id: number | null;
+  // The note's thread, for a link to it; null for a note without one.
+  thread_id: string | null;
   collection_id: number | null;
   source_message_content: string;
   user_note: string | null;
@@ -653,6 +657,8 @@ export const api = {
     user_number?: string;
     is_saved?: boolean;
     channel?: string;
+    // Text the thread's title contains (literal, case-insensitive).
+    q?: string;
   }) => {
     const q = new URLSearchParams();
     if (params.limit !== undefined) q.set("limit", String(params.limit));
@@ -660,6 +666,7 @@ export const api = {
     if (params.user_number) q.set("user_number", params.user_number);
     if (params.is_saved !== undefined) q.set("is_saved", String(params.is_saved));
     if (params.channel) q.set("channel", params.channel);
+    if (params.q?.trim()) q.set("q", params.q.trim());
     return request<Page<Conversation>>(`/conversations?${q.toString()}`);
   },
 

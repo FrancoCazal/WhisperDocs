@@ -21,8 +21,9 @@ import { AssistantTurn, UserTurn } from "@/components/chat/Turns";
 import { SourcesSheet, type SourcesView } from "@/components/chat/SourcesSheet";
 import { citedSources } from "@/components/chat/citations";
 import { StreamingTurn, type LiveTurn } from "@/components/chat/StreamingTurn";
-import { ThreadSidebar } from "@/components/chat/ThreadSidebar";
+import { ThreadSidebar, type ThreadFilters } from "@/components/chat/ThreadSidebar";
 import { PAGE_SIZE, usePagedList } from "@/lib/paged";
+import { useDebounced } from "@/lib/useDebounced";
 import { useTopK } from "@/lib/topK";
 import { ScopeControls } from "@/components/ui-kit/ScopeControls";
 import {
@@ -110,8 +111,25 @@ function ChatPage() {
   const streaming = live !== null;
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const threadList = usePagedList(["conversations", "list", "pages"], (cursor) =>
-    api.listConversationsPage({ limit: PAGE_SIZE, cursor }),
+  // The thread list's search (asked once the typing pauses) and SAVED filter.
+  const [threadQ, setThreadQ] = useState("");
+  const [savedOnly, setSavedOnly] = useState(false);
+  const threadSearch = useDebounced(threadQ.trim(), 300);
+  const threadFilters: ThreadFilters = {
+    q: threadQ,
+    onQ: setThreadQ,
+    saved: savedOnly,
+    onSaved: setSavedOnly,
+  };
+  const threadList = usePagedList(
+    ["conversations", "list", "pages", { q: threadSearch, saved: savedOnly }],
+    (cursor) =>
+      api.listConversationsPage({
+        limit: PAGE_SIZE,
+        cursor,
+        q: threadSearch || undefined,
+        is_saved: savedOnly ? true : undefined,
+      }),
   );
   const conversations = { data: threadList.items, isLoading: threadList.query.isLoading };
   const threadsMore = {
@@ -124,10 +142,21 @@ function ChatPage() {
   const noDocuments =
     collections.isSuccess && collections.data.every((c) => c.document_count === 0);
 
-  const activeConv: Conversation | undefined = useMemo(
+  const listedConv = useMemo(
     () => conversations.data?.find((c) => c.thread_id === threadId),
     [conversations.data, threadId],
   );
+  // The open thread when the filters or the paging leave it out of the list:
+  // its SAVE button still needs it. Under "list", so a refresh of the list
+  // refreshes it too.
+  const shownConv = useQuery({
+    queryKey: ["conversations", "list", "one", threadId],
+    queryFn: () => api.getConversation(threadId!),
+    enabled: threadId !== null && threadList.query.isSuccess && !listedConv,
+    retry: false,
+  });
+  const activeConv: Conversation | undefined =
+    listedConv ?? (shownConv.data?.thread_id === threadId ? shownConv.data : undefined);
 
   // The header's sources are the latest answer's: an older turn's chunks
   // shown as the last turn's would be wrong.
@@ -476,6 +505,8 @@ function ChatPage() {
             more={threadsMore}
             collections={collections.data}
             activeThreadId={threadId}
+            activeConversationId={activeConv?.id ?? null}
+            filters={threadFilters}
             onOpen={openConversation}
             onNew={() => startNew()}
           />
@@ -510,6 +541,9 @@ function ChatPage() {
                     more={threadsMore}
                     collections={collections.data}
                     activeThreadId={threadId}
+                    activeConversationId={activeConv?.id ?? null}
+                    filters={threadFilters}
+                    onNavigate={() => setThreadsOpen(false)}
                     onOpen={(c) => {
                       setThreadsOpen(false);
                       void openConversation(c);

@@ -4,6 +4,16 @@ import uuid
 WHATSAPP_NAMESPACE = uuid.UUID("a1b2c3d4-5678-4abc-def0-123456789abc")
 
 
+# conversations.title is String(200).
+TITLE_MAX = 200
+
+
+def thread_title(message: str) -> str:
+    """A thread's title: its first question on one line, cut to fit the column."""
+    line = " ".join(message.split())
+    return line if len(line) <= TITLE_MAX else line[: TITLE_MAX - 1] + "…"
+
+
 def normalize_phone(raw: str) -> str:
     """'whatsapp:+595981234567' → '595981234567'"""
     return raw.replace("whatsapp:", "").replace("+", "").strip()
