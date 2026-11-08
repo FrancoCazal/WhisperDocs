@@ -15,3 +15,8 @@ class CollectionRead(BaseModel):
     name: str
     description: str
     created_at: datetime
+    # Over all the collection's documents, summed by the server: a client
+    # holding one page of documents would undercount.
+    document_count: int = 0
+    chunk_count: int = 0
+    total_tokens: int = 0

@@ -13,6 +13,8 @@ class SavedNoteRead(BaseModel):
 
     id: int
     conversation_id: int | None
+    # The note's thread, for a link to it; null for a note without one.
+    thread_id: str | None = None
     collection_id: int | None
     source_message_content: str
     user_note: str | None

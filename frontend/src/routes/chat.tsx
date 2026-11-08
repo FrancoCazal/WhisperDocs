@@ -1,34 +1,39 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github-dark.css";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   api,
-  estimateCost,
-  fmtDate,
+  fmtCost,
+  fmtNumber,
   fmtTimestamp,
-  type AgentCitation,
-  type AgentTurnMetadata,
+  fmtTurnTime,
+  LIMITS,
+  type AgentChatResponse,
   type Conversation,
+  type ConversationMessage,
 } from "@/lib/api";
-import { ErrorBanner } from "@/components/ui-kit/EmptyState";
-import { Modal } from "@/components/ui-kit/Modal";
+import { LoadingLine, emptyActionCls } from "@/components/ui-kit/EmptyState";
+import { Composer } from "@/components/ui-kit/Composer";
+import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
+import { toast } from "sonner";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { AssistantTurn, UserTurn } from "@/components/chat/Turns";
+import { SourcesSheet, type SourcesView } from "@/components/chat/SourcesSheet";
+import { citedSources } from "@/components/chat/citations";
+import { StreamingTurn, type LiveTurn } from "@/components/chat/StreamingTurn";
+import { ThreadSidebar, type ThreadFilters } from "@/components/chat/ThreadSidebar";
+import { PAGE_SIZE, usePagedList } from "@/lib/paged";
+import { useDebounced } from "@/lib/useDebounced";
+import { useTopK } from "@/lib/topK";
+import { ScopeControls } from "@/components/ui-kit/ScopeControls";
+import { Btn, btnCls } from "@/components/ui-kit/Button";
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/skeleton";
+  IDLE_TIMEOUT_MS,
+  type AssistantTurnData,
+  type NodeProgress,
+  type Turn,
+  type TurnOutcome,
+} from "@/components/chat/types";
 
 export const Route = createFileRoute("/chat")({
   head: () => ({
@@ -40,232 +45,489 @@ export const Route = createFileRoute("/chat")({
       },
     ],
   }),
+  // ?thread=<id>: the thread on screen, so a reload or a link reopens it.
+  // ?document=<id>: a new chat that searches only that document (its ASK IN CHAT).
+  validateSearch: (search: Record<string, unknown>): { thread?: string; document?: number } => {
+    const out: { thread?: string; document?: number } = {};
+    if (typeof search.thread === "string" && search.thread) out.thread = search.thread;
+    const d = Number(search.document);
+    if (search.document !== undefined && Number.isInteger(d) && d > 0) out.document = d;
+    return out;
+  },
   component: ChatPage,
 });
 
-type Turn =
-  | { kind: "user"; ts: string; text: string }
-  | {
-      kind: "assistant";
-      ts: string;
-      text: string;
-      action: string | null;
-      citations: AgentCitation[];
-      metadata: AgentTurnMetadata;
-      expanded?: boolean;
-    };
-
-type NodeProgress = { node: string; status: "running" | "done"; summary?: { action?: string; chunks?: number } };
-
+// Questions the seed collections answer; offered only once there are documents.
 const EXAMPLES = [
   "What distance metrics does pgvector support?",
   "How does selectinload work in SQLAlchemy async?",
   "Hello, what can you do?",
 ];
 
-const NODE_LABELS: Record<string, string> = {
-  check_compaction: "CHECK MEMORY",
-  summarize: "COMPACTING HISTORY",
-  decide_action: "CLASSIFYING INTENT",
-  search_docs: "RETRIEVING + GENERATING",
-  ask_clarification: "ASKING CLARIFICATION",
-  answer_direct: "ANSWERING DIRECTLY",
-};
+// The stream being read, and why it was aborted when it was.
+type StreamRun = { controller: AbortController; reason: "stopped" | "timeout" | null };
 
-const ACTION_CLASS: Record<string, string> = {
-  search_docs: "text-success border-success",
-  answer_direct: "text-text-primary border-text-primary",
-  ask_clarification: "text-text-tertiary border-text-tertiary",
+function savedTurn(m: ConversationMessage): Turn {
+  // Messages saved before they were stamped have no time of their own.
+  const ts = m.timestamp ? fmtTurnTime(m.timestamp) : "—";
+  if (m.role === "user") return { kind: "user", ts, text: m.content };
+  return {
+    kind: "assistant",
+    ts,
+    text: m.content,
+    action: m.action,
+    citations: m.failed ? [] : (m.citations ?? []),
+    metadata: m.failed ? null : m.metadata,
+    outcome: m.failed ? "failed" : undefined,
+  };
+}
+
+// An answer pinned from this tab: its button says PINNED, so a second click
+// does not save the same note twice.
+const pinKey = (threadId: string, text: string) => `${threadId}\n${text}`;
+
+// What the status region says when a turn ends without an answer.
+const OUTCOME_STATUS: Record<TurnOutcome, string> = {
+  failed: "The answer failed.",
+  error: "The answer failed.",
+  stopped: "Answer stopped.",
+  timeout: "The answer timed out.",
 };
 
 function ChatPage() {
   const qc = useQueryClient();
+  const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
+  const navigate = useNavigate({ from: "/chat" });
+  const { thread: urlThread = null, document: urlDocument } = Route.useSearch();
 
   const [threadId, setThreadId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [collectionId, setCollectionId] = useState<number | null>(null);
-  const [topK, setTopK] = useState(5);
+  // The one document the thread searches, in place of the collection.
+  const [documentId, setDocumentId] = useState<number | null>(null);
+  const { topK, defaultTopK, setTopK } = useTopK();
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [streamProgress, setStreamProgress] = useState<NodeProgress[]>([]);
-  const [streamingText, setStreamingText] = useState("");
+  const [live, setLive] = useState<LiveTurn | null>(null);
+  // What a screen reader hears: a turn starting and how it ended, not every
+  // token the stream writes into the log.
+  const [status, setStatus] = useState("");
+  const [loadingThread, setLoadingThread] = useState(false);
+  // A WhatsApp thread is read-only here: its id is not a UUID4, which the
+  // chat endpoint requires, and a web reply would mix into that user's memory.
+  const [channel, setChannel] = useState("web");
+  const readOnly = channel !== "web";
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"threads" | "notes">("threads");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const runRef = useRef<StreamRun | null>(null);
+  // Bumped whenever another thread is shown: a stream or a load started for
+  // the previous one sees the change and leaves the screen alone.
+  const viewRef = useRef(0);
+  // The thread on screen, set at once (state lags a render): the URL effect
+  // compares against it, so a stream's new id is not taken for navigation.
+  const shownRef = useRef<string | null>(null);
+  // Follow new output only while the reader is at the bottom.
+  const stickRef = useRef(true);
+  const streaming = live !== null;
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const conversations = useQuery({
-    queryKey: ["conversations", "list"],
-    queryFn: () => api.listConversations({ limit: 50 }),
+  // Its title for the scope, and its collection for when the thread leaves it.
+  const scopeDocument = useQuery({
+    queryKey: ["document", documentId],
+    queryFn: () => api.getDocument(documentId as number),
+    enabled: documentId !== null,
   });
-  const notes = useQuery({
-    queryKey: ["notes"],
-    queryFn: () => api.listNotes({ limit: 100 }),
-    enabled: sidebarTab === "notes",
-  });
+  // The thread list's search (asked once the typing pauses) and SAVED filter.
+  const [threadQ, setThreadQ] = useState("");
+  const [savedOnly, setSavedOnly] = useState(false);
+  const threadSearch = useDebounced(threadQ.trim(), 300);
+  const threadFilters: ThreadFilters = {
+    q: threadQ,
+    onQ: setThreadQ,
+    saved: savedOnly,
+    onSaved: setSavedOnly,
+  };
+  const threadList = usePagedList(
+    ["conversations", "list", "pages", { q: threadSearch, saved: savedOnly }],
+    (cursor) =>
+      api.listConversationsPage({
+        limit: PAGE_SIZE,
+        cursor,
+        q: threadSearch || undefined,
+        is_saved: savedOnly ? true : undefined,
+      }),
+  );
+  const conversations = { data: threadList.items, isLoading: threadList.query.isLoading };
+  const threadsMore = {
+    total: threadList.total,
+    hasMore: threadList.query.hasNextPage,
+    loading: threadList.query.isFetchingNextPage,
+    onLoad: () => void threadList.query.fetchNextPage(),
+  };
+  // The examples need documents; the collections carry their counts.
+  const noDocuments =
+    collections.isSuccess && collections.data.every((c) => c.document_count === 0);
 
-  const activeConv: Conversation | undefined = useMemo(
+  const listedConv = useMemo(
     () => conversations.data?.find((c) => c.thread_id === threadId),
     [conversations.data, threadId],
   );
+  // The open thread when the filters or the paging leave it out of the list:
+  // its SAVE button still needs it. Under "list", so a refresh of the list
+  // refreshes it too.
+  const shownConv = useQuery({
+    queryKey: ["conversations", "list", "one", threadId],
+    queryFn: () => api.getConversation(threadId!),
+    enabled: threadId !== null && threadList.query.isSuccess && !listedConv,
+    retry: false,
+  });
+  const activeConv: Conversation | undefined =
+    listedConv ?? (shownConv.data?.thread_id === threadId ? shownConv.data : undefined);
 
-  const lastAssistantTurn = useMemo(() => {
-    for (let i = turns.length - 1; i >= 0; i--) {
-      const t = turns[i];
-      if (t.kind === "assistant" && t.citations.length > 0) return t;
-    }
-    return null;
+  // The header's sources are the latest answer's: an older turn's chunks
+  // shown as the last turn's would be wrong.
+  const latestAnswer = useMemo(() => {
+    const last = turns[turns.length - 1];
+    return last?.kind === "assistant" && !last.outcome && last.citations.length > 0 ? last : null;
   }, [turns]);
+
+  // The thread's answers so far, and their model calls' tokens and cost.
+  const threadUsage = useMemo(() => {
+    let answers = 0;
+    let tokens = 0;
+    let cost = 0;
+    for (const t of turns) {
+      if (t.kind !== "assistant" || t.outcome || !t.metadata) continue;
+      answers += 1;
+      tokens += t.metadata.tokens_input + t.metadata.tokens_output;
+      cost += t.metadata.cost_usd;
+    }
+    return answers > 0 ? { answers, tokens, cost } : null;
+  }, [turns]);
+
+  // The mobile threads panel: controlled, so picking a thread closes it.
+  const [threadsOpen, setThreadsOpen] = useState(false);
+
+  // One sheet for every answer's sources, opened by a turn or an "[n]".
+  const [sources, setSources] = useState<SourcesView | null>(null);
+  const openSources = useCallback(
+    (t: AssistantTurnData, focus: number | null) =>
+      setSources({
+        citations: t.citations,
+        focus,
+        label: `ANSWER ${t.ts}`,
+        cited: citedSources(t.text, t.citations.length),
+      }),
+    [],
+  );
 
   const patchSaveMut = useMutation({
     mutationFn: ({ tid, saved }: { tid: string; saved: boolean }) =>
       api.patchConversation(tid, { is_saved: saved }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["conversations", "list"] }),
+    onError: (e, v) =>
+      toast.error(v.saved ? "COULD NOT SAVE THE THREAD" : "COULD NOT UNSAVE THE THREAD", {
+        description: e.message,
+      }),
   });
 
   const deleteConvMut = useMutation({
     mutationFn: (tid: string) => api.deleteConversation(tid),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["conversations", "list"] }),
+    onSuccess: (_r, tid) => {
+      toast.success(`THREAD ${tid.slice(0, 8)} DELETED`);
+      return qc.invalidateQueries({ queryKey: ["conversations", "list"] });
+    },
+    onError: (e, tid) =>
+      toast.error(`COULD NOT DELETE THREAD ${tid.slice(0, 8)}`, { description: e.message }),
   });
 
   const pinNoteMut = useMutation({
     mutationFn: ({ tid, content }: { tid: string; content: string }) =>
       api.createNote(tid, { content }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notes"] }),
-  });
-
-  const deleteNoteMut = useMutation({
-    mutationFn: (noteId: number) => api.deleteNote(noteId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["notes"] }),
+    onSuccess: (_note, v) => {
+      setPinned((s) => new Set(s).add(pinKey(v.tid, v.content)));
+      return qc.invalidateQueries({ queryKey: ["notes"] });
+    },
+    onError: (e) => toast.error("COULD NOT PIN THE ANSWER", { description: e.message }),
   });
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [turns.length, streaming, streamProgress.length, streamingText]);
+    const el = scrollRef.current;
+    if (el && stickRef.current) el.scrollTo({ top: el.scrollHeight });
+  }, [turns, live]);
 
   useEffect(() => {
     if (!streaming) inputRef.current?.focus();
   }, [streaming]);
 
   useEffect(() => {
-    return () => abortRef.current?.abort();
+    return () => runRef.current?.controller.abort();
   }, []);
+
+  /** Before another thread is shown: what runs for the current one stops. */
+  function leaveThread() {
+    viewRef.current += 1;
+    if (runRef.current) {
+      // The server stops the run; the question stays in the thread unanswered.
+      runRef.current.controller.abort();
+      runRef.current = null;
+      qc.invalidateQueries({ queryKey: ["conversations", "list"] });
+    }
+    setLive(null);
+    setStatus("");
+    setErrorMsg(null);
+    setSources(null);
+    setLoadingThread(false);
+  }
 
   async function send(message: string) {
     const trimmed = message.trim();
-    if (!trimmed || streaming) return;
-    setErrorMsg(null);
+    if (!trimmed || runRef.current || loadingThread || readOnly) return;
+    const view = viewRef.current;
+    const run: StreamRun = { controller: new AbortController(), reason: null };
+    runRef.current = run;
+    // send() runs from event handlers only (submit, an example, RETRY), never
+    // during render; the compiler's purity check cannot tell.
+    // eslint-disable-next-line react-hooks/purity
+    const startedAt = performance.now();
+    // What the stream has sent so far; the finished turn is built from it.
+    const got: {
+      text: string;
+      trace: NodeProgress[];
+      final: AgentChatResponse | null;
+      error: string | null;
+    } = { text: "", trace: [], final: null, error: null };
+    const show = () => setLive({ startedAt, progress: got.trace, text: got.text });
+    // Tokens are drawn once per frame: each draw parses the whole answer's
+    // markdown again, and a fast stream sends several per frame.
+    let frame = 0;
+    const showSoon = () => {
+      frame ||= requestAnimationFrame(() => {
+        frame = 0;
+        if (viewRef.current === view) show();
+      });
+    };
+
     const userTurn: Turn = { kind: "user", ts: fmtTimestamp(), text: trimmed };
+    setErrorMsg(null);
     setTurns((prev) => [...prev, userTurn]);
     setInput("");
-    setStreamProgress([]);
-    setStreamingText("");
-    setStreaming(true);
+    stickRef.current = true;
+    show();
+    setStatus("The agent is answering.");
 
-    const controller = new AbortController();
-    abortRef.current = controller;
-    let finalPayload: import("@/lib/api").AgentChatResponse | null = null;
-    let streamErr: string | null = null;
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const resetIdle = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => {
+        run.reason = "timeout";
+        run.controller.abort();
+      }, IDLE_TIMEOUT_MS);
+    };
+    resetIdle();
 
     try {
       await api.agentChatStream(
-        { message: trimmed, thread_id: threadId, collection_id: collectionId, top_k: topK },
+        {
+          message: trimmed,
+          thread_id: threadId,
+          collection_id: collectionId,
+          document_id: documentId,
+          top_k: topK,
+        },
         (e) => {
+          if (viewRef.current !== view) return;
+          resetIdle();
           if (e.type === "thread") {
-            if (!threadId) setThreadId(e.thread_id);
+            if (shownRef.current !== e.thread_id) showThread(e.thread_id, "replace");
           } else if (e.type === "node_start") {
-            setStreamProgress((prev) => [...prev, { node: e.node, status: "running" }]);
+            got.trace = [
+              ...got.trace,
+              { node: e.node, status: "running", startedAt: performance.now() },
+            ];
+            show();
           } else if (e.type === "node_end") {
-            setStreamProgress((prev) =>
-              prev.map((p) =>
-                p.node === e.node && p.status === "running"
-                  ? { ...p, status: "done", summary: e.summary }
-                  : p,
-              ),
+            const now = performance.now();
+            got.trace = got.trace.map((p) =>
+              p.node === e.node && p.status === "running"
+                ? { ...p, status: "done", summary: e.summary, ms: now - p.startedAt }
+                : p,
             );
+            show();
           } else if (e.type === "token") {
-            setStreamingText((prev) => prev + e.delta);
+            got.text += e.delta;
+            showSoon();
           } else if (e.type === "final") {
-            finalPayload = e.payload;
+            got.final = e.payload;
           } else if (e.type === "error") {
-            streamErr = e.message;
+            got.error = e.message;
           }
         },
-        controller.signal,
+        run.controller.signal,
       );
     } catch (e) {
-      streamErr = e instanceof Error ? e.message : String(e);
+      // An abort is a stop, a timeout or a thread change, not an error.
+      if (!run.controller.signal.aborted) got.error = e instanceof Error ? e.message : String(e);
     } finally {
-      setStreaming(false);
-      abortRef.current = null;
+      clearTimeout(idle);
+      // A frame still pending would bring the live turn back after it ends.
+      cancelAnimationFrame(frame);
     }
+    // Another thread is on screen: this turn is not its.
+    if (viewRef.current !== view) return;
+    runRef.current = null;
+    setLive(null);
 
-    if (streamErr) {
-      setErrorMsg(streamErr);
-      return;
-    }
-    if (!finalPayload) {
-      setErrorMsg("Stream ended without final response");
-      return;
-    }
-    const resp = finalPayload as import("@/lib/api").AgentChatResponse;
-    const aTurn: Turn = {
-      kind: "assistant",
+    const base = {
+      kind: "assistant" as const,
       ts: fmtTimestamp(),
-      text: resp.answer,
-      action: resp.action,
-      citations: resp.citations,
-      metadata: resp.metadata,
+      trace: got.trace.map((p) => (p.status === "running" ? { ...p, status: "cut" as const } : p)),
+      // eslint-disable-next-line react-hooks/purity -- an event handler, as above
+      elapsedMs: performance.now() - startedAt,
     };
-    setTurns((prev) => [...prev, aTurn]);
-    setStreamProgress([]);
-    setStreamingText("");
+    const f = got.final;
+    let turn: AssistantTurnData;
+    if (f) {
+      turn = {
+        ...base,
+        text: f.answer,
+        action: f.action,
+        citations: f.failed ? [] : f.citations,
+        metadata: f.failed ? null : f.metadata,
+        outcome: f.failed ? "failed" : undefined,
+      };
+    } else if (run.reason) {
+      turn = {
+        ...base,
+        text: got.text,
+        action: null,
+        citations: [],
+        metadata: null,
+        outcome: run.reason,
+      };
+    } else {
+      turn = {
+        ...base,
+        text: got.error ?? "The stream ended without an answer.",
+        action: null,
+        citations: [],
+        metadata: null,
+        outcome: "error",
+      };
+    }
+    setTurns((prev) => [...prev, turn]);
+    setStatus(turn.outcome ? OUTCOME_STATUS[turn.outcome] : "Answer ready.");
     qc.invalidateQueries({ queryKey: ["conversations", "list"] });
+    // The query log: history pages and the layout's last-answer bar.
+    if (f && !f.failed) qc.invalidateQueries({ queryKey: ["history"] });
   }
 
-  function startNew() {
-    setThreadId(null);
+  function stop() {
+    const run = runRef.current;
+    if (!run) return;
+    run.reason = "stopped";
+    run.controller.abort();
+  }
+
+  /** Ask again the question that assistant turn `i` answered. */
+  function retry(i: number) {
+    for (let j = i - 1; j >= 0; j--) {
+      const t = turns[j];
+      if (t.kind === "user") {
+        void send(t.text);
+        return;
+      }
+    }
+  }
+
+  /** Show thread `id`; `url` says how ?thread= follows (keep: it already does). */
+  function showThread(id: string | null, url: "push" | "replace" | "keep") {
+    shownRef.current = id;
+    setThreadId(id);
+    if (url !== "keep") {
+      void navigate({ search: id ? { thread: id } : {}, replace: url === "replace" });
+    }
+  }
+
+  function startNew(url: "push" | "keep" = "push") {
+    leaveThread();
+    showThread(null, url);
+    setChannel("web");
+    setDocumentId(null);
     setTurns([]);
-    setErrorMsg(null);
   }
 
-  async function openConversation(c: Conversation) {
-    setThreadId(c.thread_id);
+  async function openConversation(c: Conversation, url: "push" | "keep" = "push") {
+    // The thread on screen; a failed load can be retried by opening it again.
+    if (c.thread_id === threadId && (turns.length > 0 || loadingThread)) return;
+    leaveThread();
+    const view = viewRef.current;
+    showThread(c.thread_id, url);
+    setChannel(c.channel);
     setCollectionId(c.collection_id ?? null);
-    setErrorMsg(null);
+    setDocumentId(c.document_id ?? null);
+    setTurns([]);
+    setLoadingThread(true);
     try {
       const msgs = await api.getConversationMessages(c.thread_id);
-      const loaded: Turn[] = msgs
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) =>
-          m.role === "user"
-            ? ({
-                kind: "user",
-                ts: m.timestamp ?? fmtTimestamp(c.last_active_at),
-                text: m.content,
-              } as Turn)
-            : ({
-                kind: "assistant",
-                ts: m.timestamp ?? fmtTimestamp(c.last_active_at),
-                text: m.content,
-                action: null,
-                citations: (m.citations as AgentCitation[]) ?? [],
-                metadata: m.metadata ?? {
-                  model: null,
-                  tokens_input: 0,
-                  tokens_output: 0,
-                  latency_ms: 0,
-                  chunks_retrieved: 0,
-                },
-              } as Turn),
-        );
-      setTurns(loaded);
+      if (viewRef.current !== view) return;
+      setTurns(msgs.filter((m) => m.role === "user" || m.role === "assistant").map(savedTurn));
     } catch (e) {
+      if (viewRef.current !== view) return;
       setErrorMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (viewRef.current === view) setLoadingThread(false);
     }
+  }
+
+  /** A thread named by the URL: from the list if it is there, else by id. */
+  async function openFromUrl(id: string) {
+    const listed = conversations.data?.find((c) => c.thread_id === id);
+    if (listed) return openConversation(listed, "keep");
+    leaveThread();
+    const view = viewRef.current;
+    shownRef.current = id;
+    setLoadingThread(true);
+    try {
+      const c = await api.getConversation(id);
+      if (viewRef.current === view) await openConversation(c, "keep");
+    } catch (e) {
+      if (viewRef.current !== view) return;
+      startNew("keep");
+      void navigate({ search: {}, replace: true });
+      setErrorMsg(`thread ${id.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // The URL changed by itself (a reload, back/forward, a link): show its thread.
+  const followUrl = useEffectEvent((id: string | null) => {
+    if (id === shownRef.current) return;
+    if (id) void openFromUrl(id);
+    else startNew("keep");
+  });
+  // Following the URL means aborting a stream and loading a thread, which cannot
+  // happen during render, so this is an effect that sets state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => followUrl(urlThread), [urlThread]);
+
+  // ?document=N starts a new chat that searches only it, then leaves the URL:
+  // the thread it becomes takes the URL over, and keeps the document.
+  const takeDocument = useEffectEvent((id: number) => {
+    if (urlThread) return;
+    startNew("keep");
+    setDocumentId(id);
+    void navigate({ search: {}, replace: true });
+  });
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (urlDocument !== undefined) takeDocument(urlDocument);
+  }, [urlDocument]);
+
+  // The next question searches the document's collection again.
+  function leaveDocument() {
+    if (scopeDocument.data) setCollectionId(scopeDocument.data.collection_id);
+    setDocumentId(null);
   }
 
   function toggleSaved() {
@@ -273,643 +535,298 @@ function ChatPage() {
     patchSaveMut.mutate({ tid: threadId, saved: !activeConv.is_saved });
   }
 
-  async function deleteCurrent() {
+  function confirmDeleteCurrent() {
     if (!threadId) return;
-    setConfirmDelete(true);
+    // A failure is a toast, and the thread stays on screen.
+    deleteConvMut.mutate(threadId, { onSuccess: () => startNew() });
   }
 
-  async function confirmDeleteCurrent() {
+  function pinTurn(t: AssistantTurnData) {
     if (!threadId) return;
-    setConfirmDelete(false);
-    try {
-      await deleteConvMut.mutateAsync(threadId);
-      startNew();
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-    }
+    pinNoteMut.mutate({ tid: threadId, content: t.text });
   }
 
-  function pinTurn(t: Extract<Turn, { kind: "assistant" }>) {
-    if (!threadId) return;
-    pinNoteMut.mutate(
-      { tid: threadId, content: t.text },
-      {
-        onSuccess: () => {
-          setErrorMsg(null);
-        },
-      },
-    );
-  }
+  const lastIndex = turns.length - 1;
 
   return (
     <>
-    <Modal
-      open={confirmDelete}
-      onClose={() => setConfirmDelete(false)}
-      title={`DELETE THREAD ${threadId?.slice(0, 8) ?? ""}?`}
-      width="max-w-sm"
-    >
-      <p className="body-sm text-text-secondary mb-6">
-        This action cannot be undone. Thread and all messages will be permanently removed.
-      </p>
-      <div className="flex items-center gap-3 justify-end">
-        <button
-          onClick={() => setConfirmDelete(false)}
-          className="label-sm text-text-secondary hover:bg-surface-container px-4 h-8 border border-border-subtle"
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`DELETE THREAD ${threadId?.slice(0, 8) ?? ""}?`}
+        confirmLabel="✕ DELETE"
+        destructive
+        onConfirm={confirmDeleteCurrent}
+      >
+        The thread and all its messages are removed for good. This cannot be undone.
+      </ConfirmDialog>
+      <SourcesSheet view={sources} onClose={() => setSources(null)} />
+      <div className="-m-3 sm:-m-6 md:-m-8 flex h-[calc(100vh-48px)] md:h-[calc(100vh-48px-28px)]">
+        {/* Sidebar — desktop only (mobile uses Sheet trigger in header) */}
+        <aside
+          className="hidden md:flex w-64 shrink-0 border-r border-border-subtle bg-surface-low flex-col"
+          aria-label="Threads and notes"
         >
-          CANCEL
-        </button>
-        <button
-          onClick={confirmDeleteCurrent}
-          disabled={deleteConvMut.isPending}
-          className="label-sm text-error hover:bg-error hover:text-surface px-4 h-8 border border-error/40 disabled:opacity-50"
-        >
-          {deleteConvMut.isPending ? "DELETING..." : "✕ DELETE"}
-        </button>
-      </div>
-    </Modal>
-    <div className="-m-3 sm:-m-6 md:-m-8 flex h-[calc(100vh-48px)] md:h-[calc(100vh-48px-28px)]">
-      {/* Sidebar — desktop only (mobile uses Sheet trigger in header) */}
-      <aside className="hidden md:flex w-64 shrink-0 border-r border-border-subtle bg-surface-low flex-col" aria-label="Threads and notes">
-        {/* Tab header */}
-        <div className="flex border-b border-border-subtle shrink-0">
-          <button
-            onClick={() => setSidebarTab("threads")}
-            className={`flex-1 h-12 label-sm transition-colors ${
-              sidebarTab === "threads"
-                ? "text-text-primary border-b-2 border-text-primary -mb-px"
-                : "text-text-tertiary hover:text-text-secondary"
-            }`}
-          >
-            THREADS
-          </button>
-          <button
-            onClick={() => setSidebarTab("notes")}
-            className={`flex-1 h-12 label-sm transition-colors ${
-              sidebarTab === "notes"
-                ? "text-text-primary border-b-2 border-text-primary -mb-px"
-                : "text-text-tertiary hover:text-text-secondary"
-            }`}
-          >
-            NOTES {(notes.data?.length ?? 0) > 0 && `[${notes.data!.length}]`}
-          </button>
-          {sidebarTab === "threads" && (
-            <button
-              onClick={startNew}
-              className="px-3 h-12 label-sm text-text-primary hover:bg-text-primary hover:text-surface border-l border-border-subtle"
-            >
-              + NEW
-            </button>
-          )}
-        </div>
+          <ThreadSidebar
+            conversations={conversations.data}
+            loading={conversations.isLoading}
+            more={threadsMore}
+            collections={collections.data}
+            activeThreadId={threadId}
+            activeConversationId={activeConv?.id ?? null}
+            filters={threadFilters}
+            onOpen={openConversation}
+            onNew={() => startNew()}
+          />
+        </aside>
 
-        <div className="flex-1 overflow-auto">
-          {/* Threads tab */}
-          {sidebarTab === "threads" && (
-            <>
-              {conversations.isLoading && (
-                <div className="px-4 py-3 space-y-2">
-                  {[0, 1, 2, 3].map((i) => (
-                    <Skeleton key={i} className="h-12 w-full bg-surface-container" />
-                  ))}
-                </div>
-              )}
-              {!conversations.isLoading && (conversations.data?.length ?? 0) === 0 && (
-                <div className="px-4 py-3 label-sm text-text-tertiary">(no threads yet)</div>
-              )}
-              {conversations.data?.map((c) => {
-                const isActive = c.thread_id === threadId;
-                const colName = c.collection_id
-                  ? (collections.data?.find((col) => col.id === c.collection_id)?.name ?? `COL ${c.collection_id}`)
-                  : "ALL COLLECTIONS";
-                const channelTag = c.channel === "whatsapp" ? "WA" : "WEB";
-                return (
-                  <button
-                    key={c.thread_id}
-                    onClick={() => openConversation(c)}
-                    className={`relative w-full text-left px-4 py-3 border-b border-border-subtle/50 hover:bg-surface-container transition-colors ${
-                      isActive ? "bg-surface-container" : ""
-                    }`}
-                  >
-                    {isActive && (
-                      <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-text-primary" />
-                    )}
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="label-sm text-text-primary truncate">{colName.toUpperCase()}</div>
-                      {c.is_saved && <span className="label-xs text-success shrink-0">★</span>}
-                    </div>
-                    <div className="label-xs text-text-secondary mt-1">
-                      {channelTag} · {c.thread_id.slice(0, 8)}
-                    </div>
-                    <div className="label-xs text-text-tertiary mt-0.5 tabular-nums">
-                      {fmtDate(c.last_active_at)}
-                    </div>
-                  </button>
-                );
-              })}
-            </>
-          )}
-
-          {/* Notes tab */}
-          {sidebarTab === "notes" && (
-            <>
-              {notes.isLoading && (
-                <div className="px-4 py-3 label-sm text-text-tertiary">LOADING...</div>
-              )}
-              {!notes.isLoading && (notes.data?.length ?? 0) === 0 && (
-                <div className="px-4 py-3 label-sm text-text-tertiary">(no pinned notes)</div>
-              )}
-              {notes.data?.map((n) => (
-                <div
-                  key={n.id}
-                  className="px-4 py-3 border-b border-border-subtle/50 group"
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="label-xs text-text-tertiary tabular-nums">
-                      {n.conversation_id ? `THREAD · ` : ""}
-                      {new Date(n.created_at).toLocaleString("en-GB")}
-                    </span>
-                    <button
-                      onClick={() => deleteNoteMut.mutate(n.id)}
-                      disabled={deleteNoteMut.isPending}
-                      className="label-xs text-text-tertiary hover:text-error opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div className="body-sm text-text-secondary line-clamp-3">
-                    {n.source_message_content}
-                  </div>
-                  {n.user_note && (
-                    <div className="label-xs text-text-tertiary mt-1 italic">
-                      {n.user_note}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </>
-          )}
-        </div>
-      </aside>
-
-      {/* Main */}
-      <section className="flex-1 min-w-0 flex flex-col bg-surface">
-        {/* Header */}
-        <div className="min-h-12 px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle shrink-0">
-          <div className="flex items-center gap-2">
-            <Sheet>
-              <SheetTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Open threads panel"
-                  className="md:hidden inline-flex items-center justify-center w-8 h-8 border border-border-subtle text-text-primary hover:bg-surface-container focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue"
-                >
-                  <span aria-hidden="true">☰</span>
-                </button>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-72 max-w-[85vw] bg-surface-low border-r border-border-subtle p-0 overflow-auto">
-                <SheetHeader className="px-4 py-3 border-b border-border-subtle">
-                  <SheetTitle className="label-sm text-text-primary">THREADS / NOTES</SheetTitle>
-                </SheetHeader>
-                <div className="p-2 label-xs text-text-tertiary">Tap a thread to open it.</div>
-              </SheetContent>
-            </Sheet>
-            <div className="label-sm text-text-secondary">
-              AGENT_THREAD:{" "}
-              <span className="text-text-primary">
-                {threadId ? threadId.slice(0, 8) : "NEW"}
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center flex-wrap gap-2 sm:gap-4">
-            <label className="flex items-center gap-2 label-sm text-text-secondary">
-              COLLECTION:
-              <select
-                value={collectionId ?? ""}
-                onChange={(e) =>
-                  setCollectionId(e.target.value ? Number(e.target.value) : null)
-                }
-                className="bg-surface-lowest border border-border-subtle px-2 h-7 text-text-primary body-sm focus:outline-none focus:border-border-focus"
-              >
-                <option value="">ALL</option>
-                {collections.data?.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-center gap-2 label-sm text-text-secondary">
-              TOP_K:
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={topK}
-                onChange={(e) => setTopK(Math.max(1, Math.min(20, Number(e.target.value) || 5)))}
-                className="bg-surface-lowest border border-border-subtle px-2 h-7 w-14 text-text-primary body-sm tabular-nums focus:outline-none focus:border-border-focus"
-              />
-            </label>
-            {lastAssistantTurn && (
-              <Sheet>
+        {/* Main */}
+        <section className="flex-1 min-w-0 flex flex-col bg-surface">
+          {/* Header */}
+          <div className="min-h-12 px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle shrink-0">
+            <div className="flex items-center gap-2">
+              <Sheet open={threadsOpen} onOpenChange={setThreadsOpen}>
                 <SheetTrigger asChild>
-                  <button className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-7 border border-border-subtle">
-                    ☰ SOURCES [{lastAssistantTurn.citations.length}]
+                  <button
+                    type="button"
+                    aria-label="Open threads panel"
+                    className={btnCls("quiet", "icon", "md:hidden")}
+                  >
+                    <span aria-hidden="true">☰</span>
                   </button>
                 </SheetTrigger>
                 <SheetContent
-                  side="right"
-                  className="w-full sm:w-[480px] sm:max-w-[480px] bg-surface-low border-l border-border-subtle overflow-auto"
+                  side="left"
+                  className="w-72 max-w-[85vw] bg-surface-low border-r border-border-subtle p-0 flex flex-col gap-0"
                 >
-                  <SheetHeader>
-                    <SheetTitle className="label-sm text-text-primary">
-                      RETRIEVED CHUNKS · LAST TURN
-                    </SheetTitle>
+                  <SheetHeader className="px-4 py-3 border-b border-border-subtle">
+                    <SheetTitle className="label-sm text-text-primary">THREADS / NOTES</SheetTitle>
                   </SheetHeader>
-                  <div className="mt-4 space-y-3">
-                    {[...lastAssistantTurn.citations]
-                      .sort((a, b) => b.relevance - a.relevance)
-                      .map((c, idx) => {
-                        const rel = c.relevance;
-                        const relClass =
-                          rel >= 0.7 ? "text-success" : rel >= 0.5 ? "text-text-tertiary" : "text-error";
-                        return (
-                          <div
-                            key={`src-${c.chunk_id}-${idx}`}
-                            className="border border-border-subtle bg-surface-container-low p-3"
-                          >
-                            <div className="label-sm flex items-center justify-between mb-2">
-                              <span className="text-text-secondary truncate">
-                                {c.document_title}
-                              </span>
-                              <span className={`tabular-nums shrink-0 ${relClass}`}>
-                                {rel.toFixed(3)}
-                              </span>
-                            </div>
-                            <div className="label-xs text-text-tertiary mb-2">
-                              CHUNK {c.chunk_index}
-                            </div>
-                            {c.text_preview && (
-                              <div className="body-sm text-text-secondary whitespace-pre-wrap">
-                                {c.text_preview}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                  </div>
+                  {/* The desktop sidebar's list; picking a thread closes the panel. */}
+                  <ThreadSidebar
+                    conversations={conversations.data}
+                    loading={conversations.isLoading}
+                    more={threadsMore}
+                    collections={collections.data}
+                    activeThreadId={threadId}
+                    activeConversationId={activeConv?.id ?? null}
+                    filters={threadFilters}
+                    onNavigate={() => setThreadsOpen(false)}
+                    onOpen={(c) => {
+                      setThreadsOpen(false);
+                      void openConversation(c);
+                    }}
+                    onNew={() => {
+                      setThreadsOpen(false);
+                      startNew();
+                    }}
+                  />
                 </SheetContent>
               </Sheet>
-            )}
-            {threadId && (
-              <>
-                <button
-                  onClick={toggleSaved}
-                  disabled={patchSaveMut.isPending}
-                  className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-7 border border-border-subtle"
-                >
-                  {activeConv?.is_saved ? "★ SAVED" : "☆ SAVE"}
-                </button>
-                <button
-                  onClick={deleteCurrent}
-                  disabled={deleteConvMut.isPending}
-                  className="label-sm text-error hover:bg-error hover:text-surface px-2 h-7 border border-error/40"
-                >
-                  ✕ DELETE
-                </button>
-              </>
+              <div className="label-sm text-text-secondary">
+                AGENT_THREAD:{" "}
+                <span className="text-text-primary">{threadId ? threadId.slice(0, 8) : "NEW"}</span>
+                {threadUsage && (
+                  <span
+                    className="hidden sm:inline ml-3 label-xs text-text-tertiary tabular-nums"
+                    title="The answers' model calls. The classifier, the query rewrite and the embeddings are not counted."
+                  >
+                    {threadUsage.answers} {threadUsage.answers === 1 ? "ANSWER" : "ANSWERS"} ·{" "}
+                    {fmtNumber(threadUsage.tokens)} TOKENS · {fmtCost(threadUsage.cost)}
+                  </span>
+                )}
+                {readOnly && (
+                  <span className="ml-2 label-xs px-2 py-0.5 border border-text-tertiary text-text-secondary">
+                    {channel.toUpperCase()} · READ ONLY
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center flex-wrap gap-2 sm:gap-4">
+              <ScopeControls
+                collections={collections.data}
+                collectionId={collectionId}
+                onCollection={setCollectionId}
+                scopeDocument={
+                  documentId === null
+                    ? null
+                    : { id: documentId, title: scopeDocument.data?.title ?? null }
+                }
+                onLeaveDocument={leaveDocument}
+                topK={topK}
+                defaultTopK={defaultTopK}
+                onTopK={setTopK}
+                disabled={readOnly}
+              />
+              {latestAnswer && (
+                <Btn size="sm" variant="quiet" onClick={() => openSources(latestAnswer, null)}>
+                  ☰ SOURCES [{latestAnswer.citations.length}]
+                </Btn>
+              )}
+              {threadId && (
+                <>
+                  <Btn
+                    size="sm"
+                    variant="quiet"
+                    onClick={toggleSaved}
+                    disabled={patchSaveMut.isPending}
+                    aria-pressed={activeConv?.is_saved ?? false}
+                  >
+                    {activeConv?.is_saved ? "★ SAVED" : "☆ SAVE"}
+                  </Btn>
+                  <Btn
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setConfirmDelete(true)}
+                    disabled={deleteConvMut.isPending || streaming}
+                  >
+                    ✕ DELETE
+                  </Btn>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Conversation area */}
+          <div
+            ref={scrollRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            }}
+            className="flex-1 overflow-auto px-3 sm:px-6 md:px-8 py-4 sm:py-6"
+          >
+            <div role="status" className="sr-only">
+              {status}
+            </div>
+            {turns.length === 0 && loadingThread ? (
+              <div className="max-w-4xl mx-auto">
+                <LoadingLine label="LOADING THREAD" />
+              </div>
+            ) : turns.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto">
+                <div className="title-lg text-text-primary blink-cursor">AGENT_SESSION READY</div>
+                <div className="body-sm text-text-secondary mt-3">
+                  LangGraph · classifier → RAG / direct / clarify · persistent memory.
+                </div>
+                {noDocuments ? (
+                  <div className="mt-10 w-full border border-dashed border-border-subtle px-4 py-6">
+                    <div className="label-sm text-text-primary">NO DOCUMENTS INDEXED YET</div>
+                    <div className="body-sm text-text-secondary mt-2">
+                      The agent answers from your documents: upload some first.
+                    </div>
+                    <Link to="/documents" className={`inline-block mt-3 ${emptyActionCls}`}>
+                      UPLOAD DOCUMENTS →
+                    </Link>
+                  </div>
+                ) : (
+                  collections.isSuccess && (
+                    <div className="mt-10 w-full text-left space-y-2">
+                      <div className="label-sm text-text-tertiary mb-3">EXAMPLE QUERIES</div>
+                      {EXAMPLES.map((q) => (
+                        <button
+                          key={q}
+                          onClick={() => send(q)}
+                          className="block w-full text-left px-4 py-2 body-sm text-text-secondary hover:bg-surface-container hover:text-text-primary transition-colors border border-border-subtle"
+                        >
+                          <span className="text-text-primary mr-2">{">"}</span>
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                )}
+              </div>
+            ) : (
+              <div className="space-y-6 max-w-4xl mx-auto pb-4">
+                {turns.map((t, i) =>
+                  t.kind === "user" ? (
+                    <UserTurn key={i} turn={t} />
+                  ) : (
+                    <AssistantTurn
+                      key={i}
+                      turn={t}
+                      canPin={!!threadId}
+                      onOpenSources={openSources}
+                      onPin={() => pinTurn(t)}
+                      pinning={pinNoteMut.isPending && pinNoteMut.variables?.content === t.text}
+                      pinned={!!threadId && pinned.has(pinKey(threadId, t.text))}
+                      onRetry={
+                        t.outcome && i === lastIndex && !streaming && !readOnly
+                          ? () => retry(i)
+                          : undefined
+                      }
+                    />
+                  ),
+                )}
+
+                {live && <StreamingTurn live={live} />}
+              </div>
             )}
           </div>
-        </div>
 
-        {/* Conversation area */}
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-auto px-3 sm:px-6 md:px-8 py-4 sm:py-6"
-          aria-live="polite"
-          aria-atomic="false"
-        >
-          {errorMsg && (
-            <div className="mb-4">
-              <ErrorBanner message={errorMsg} />
-              <button
-                onClick={() => {
-                  const lastUser = [...turns].reverse().find((t) => t.kind === "user");
-                  if (lastUser && lastUser.kind === "user") {
-                    setTurns((prev) => prev.filter((t) => t !== lastUser));
-                    setErrorMsg(null);
-                    void send(lastUser.text);
-                  }
-                }}
-                className="mt-2 label-sm text-text-primary hover:bg-text-primary hover:text-surface px-3 h-7 border border-border-subtle"
+          {/* Input */}
+          <div className="border-t border-border-subtle px-3 sm:px-6 md:px-8 py-3 sm:py-4 shrink-0">
+            {errorMsg && (
+              <div
+                role="alert"
+                className="max-w-4xl mx-auto mb-3 flex items-start gap-3 border border-error/40 bg-error/5 px-4 py-2 label-sm text-error"
               >
-                ↻ RETRY
-              </button>
-            </div>
-          )}
-
-          {turns.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto">
-              <div className="title-lg text-text-primary blink-cursor">
-                AGENT_SESSION READY
+                <span className="flex-1 min-w-0 break-words">ERROR: {errorMsg}</span>
+                <button
+                  onClick={() => setErrorMsg(null)}
+                  aria-label="Dismiss error"
+                  className="text-error hover:text-text-primary"
+                >
+                  ✕
+                </button>
               </div>
-              <div className="body-sm text-text-secondary mt-3">
-                LangGraph · classifier → RAG / direct / clarify · persistent memory.
+            )}
+            {readOnly ? (
+              <div className="max-w-4xl mx-auto label-sm text-text-secondary border border-border-subtle bg-surface-container-low px-4 py-3">
+                {channel.toUpperCase()} THREAD · READ ONLY. Its user talks to the agent on{" "}
+                {channel === "whatsapp" ? "WhatsApp" : channel}; to ask here, start a{" "}
+                <button
+                  onClick={() => startNew()}
+                  className="text-text-primary hover:text-primary-blue"
+                >
+                  + NEW
+                </button>{" "}
+                thread.
               </div>
-              <div className="mt-10 w-full text-left space-y-2">
-                <div className="label-sm text-text-tertiary mb-3">EXAMPLE QUERIES</div>
-                {EXAMPLES.map((q) => (
-                  <button
-                    key={q}
-                    onClick={() => send(q)}
-                    className="block w-full text-left px-4 py-2 body-sm text-text-secondary hover:bg-surface-container hover:text-text-primary transition-colors border border-border-subtle"
-                  >
-                    <span className="text-text-primary mr-2">{">"}</span>
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-6 max-w-4xl mx-auto pb-4">
-              {turns.map((t, i) =>
-                t.kind === "user" ? (
-                  <UserTurn key={i} turn={t} />
+            ) : (
+              // Typing stays open while an answer streams; sending waits for it.
+              <Composer
+                textareaRef={inputRef}
+                value={input}
+                onChange={setInput}
+                onSubmit={() => void send(input)}
+                onEscape={() => streaming && stop()}
+                disabled={loadingThread}
+                maxLength={LIMITS.chatMessage}
+                placeholder="ASK THE AGENT..."
+                label="Message to agent"
+                hint="ENTER SENDS · SHIFT+ENTER ADDS A LINE · ESC STOPS AN ANSWER"
+              >
+                {streaming ? (
+                  <Btn size="sm" variant="destructive" onClick={stop} title="Stop the answer (Esc)">
+                    ■ STOP
+                  </Btn>
                 ) : (
-                  <AssistantTurn
-                    key={i}
-                    turn={t}
-                    canPin={!!threadId}
-                    onToggle={() =>
-                      setTurns((prev) =>
-                        prev.map((tt, j) =>
-                          j === i && tt.kind === "assistant"
-                            ? { ...tt, expanded: !tt.expanded }
-                            : tt,
-                        ),
-                      )
-                    }
-                    onPin={() => pinTurn(t)}
-                    pinning={pinNoteMut.isPending}
-                  />
-                ),
-              )}
-
-              {streaming && (
-                <div className="border-l-2 border-text-primary pl-4 py-2 space-y-2">
-                  {streamProgress.length === 0 && !streamingText && (
-                    <div className="label-sm text-text-tertiary">CONNECTING...</div>
-                  )}
-                  {streamProgress.map((p, i) => {
-                    const label = NODE_LABELS[p.node] ?? p.node.toUpperCase();
-                    const detail =
-                      p.summary?.action
-                        ? ` → ${p.summary.action}`
-                        : p.summary?.chunks !== undefined
-                          ? ` · ${p.summary.chunks} chunks`
-                          : "";
-                    return (
-                      <div
-                        key={`${p.node}-${i}`}
-                        className={`label-sm ${
-                          p.status === "running" ? "text-text-primary" : "text-text-tertiary"
-                        }`}
-                      >
-                        {label}{detail} {p.status === "running" ? "▌" : "✓"}
-                      </div>
-                    );
-                  })}
-                  {streamingText && (
-                    <div className="prose prose-invert max-w-none text-text-primary">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-                      >
-                        {streamingText}
-                      </ReactMarkdown>
-                      <span className="inline-block w-2 h-4 bg-text-primary animate-pulse align-middle" />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Input */}
-        <div className="border-t border-border-subtle px-3 sm:px-6 md:px-8 py-3 sm:py-4 shrink-0">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!streaming) send(input);
-            }}
-            className="max-w-4xl mx-auto flex items-center gap-3 border-b border-border-subtle focus-within:border-border-focus pb-2"
-          >
-            <span className="text-text-primary body-sm">{">"}</span>
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              disabled={streaming}
-              placeholder="ASK THE AGENT..."
-              aria-label="Message to agent"
-              className="flex-1 min-w-0 bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-sm py-2 focus-visible:ring-0"
-            />
-            <button
-              type="submit"
-              disabled={streaming || !input.trim()}
-              className="label-sm text-text-primary disabled:text-text-tertiary hover:bg-text-primary hover:text-surface px-2 h-7 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
-            >
-              ↵ SEND
-            </button>
-          </form>
-        </div>
-      </section>
-    </div>
+                  <Btn
+                    type="submit"
+                    size="sm"
+                    variant="ghost"
+                    disabled={loadingThread || !input.trim()}
+                  >
+                    ↵ SEND
+                  </Btn>
+                )}
+              </Composer>
+            )}
+          </div>
+        </section>
+      </div>
     </>
-  );
-}
-
-const CITATION_RE = /\[(\d+)\]/g;
-
-function interleaveCitations(
-  children: React.ReactNode,
-  citations: AgentCitation[],
-): React.ReactNode {
-  const out: React.ReactNode[] = [];
-
-  function processNode(node: React.ReactNode, keyPrefix: string) {
-    if (typeof node === "string") {
-      let lastIdx = 0;
-      let match: RegExpExecArray | null;
-      const re = new RegExp(CITATION_RE.source, "g");
-      while ((match = re.exec(node)) !== null) {
-        const n = Number(match[1]);
-        if (n < 1 || n > citations.length) continue;
-        if (match.index > lastIdx) {
-          out.push(node.slice(lastIdx, match.index));
-        }
-        const c = citations[n - 1];
-        out.push(
-          <HoverCard key={`${keyPrefix}-cite-${n}-${out.length}`} openDelay={120}>
-            <HoverCardTrigger asChild>
-              <sup className="text-primary-blue cursor-help font-medium px-0.5">
-                [{n}]
-              </sup>
-            </HoverCardTrigger>
-            <HoverCardContent
-              side="top"
-              align="start"
-              className="w-[460px] max-h-[300px] overflow-auto bg-surface-container border border-border-subtle"
-            >
-              <div className="label-xs text-text-tertiary mb-2">
-                {c.document_title} · CHUNK {c.chunk_index} · REL {c.relevance.toFixed(3)}
-              </div>
-              <div className="body-sm text-text-secondary whitespace-pre-wrap">
-                {c.text_preview ?? "(no preview)"}
-              </div>
-            </HoverCardContent>
-          </HoverCard>,
-        );
-        lastIdx = match.index + match[0].length;
-      }
-      if (lastIdx < node.length) out.push(node.slice(lastIdx));
-    } else if (Array.isArray(node)) {
-      node.forEach((child, i) => processNode(child, `${keyPrefix}-${i}`));
-    } else {
-      out.push(node);
-    }
-  }
-
-  processNode(children, "root");
-  return out.length === 0 ? children : out;
-}
-
-function UserTurn({ turn }: { turn: Extract<Turn, { kind: "user" }> }) {
-  return (
-    <div>
-      <div className="label-sm text-text-tertiary mb-2">
-        {">"} USER · <span className="text-text-secondary">{turn.ts}</span>
-      </div>
-      <div className="body text-text-primary whitespace-pre-wrap">{turn.text}</div>
-      <div className="border-b border-border-subtle mt-4" />
-    </div>
-  );
-}
-
-function AssistantTurn({
-  turn,
-  canPin,
-  pinning,
-  onToggle,
-  onPin,
-}: {
-  turn: Extract<Turn, { kind: "assistant" }>;
-  canPin: boolean;
-  pinning: boolean;
-  onToggle: () => void;
-  onPin: () => void;
-}) {
-  const actionClass = turn.action
-    ? (ACTION_CLASS[turn.action] ?? "text-text-tertiary border-text-tertiary")
-    : "text-text-tertiary border-text-tertiary";
-  return (
-    <div>
-      <div className="label-sm text-text-tertiary mb-2 flex items-center gap-2">
-        <span>
-          {"<"} AGENT · <span className="text-text-secondary">{turn.ts}</span>
-        </span>
-        {turn.action && (
-          <span className={`label-xs px-2 py-0.5 border ${actionClass}`}>
-            {turn.action.toUpperCase()}
-          </span>
-        )}
-        <span className="flex-1" />
-        {canPin && (
-          <button
-            onClick={onPin}
-            disabled={pinning}
-            className="label-xs text-text-tertiary hover:text-primary-blue"
-          >
-            {pinning ? "PINNING..." : "★ PIN NOTE"}
-          </button>
-        )}
-      </div>
-      <div className="body text-text-primary leading-relaxed markdown-body">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-          components={{
-            p: ({ children }) => <p>{interleaveCitations(children, turn.citations)}</p>,
-            li: ({ children }) => <li>{interleaveCitations(children, turn.citations)}</li>,
-          }}
-        >
-          {turn.text}
-        </ReactMarkdown>
-      </div>
-
-      {turn.citations.length > 0 && (
-        <div className="mt-4">
-          <button
-            onClick={onToggle}
-            className="label-sm text-text-secondary hover:text-primary-blue"
-          >
-            {turn.expanded ? "▾" : "▸"} CITATIONS [{turn.citations.length}]
-          </button>
-          {turn.expanded && (
-            <div className="mt-3 space-y-2">
-              {turn.citations.map((c, idx) => {
-                const rel = c.relevance;
-                const relClass = rel >= 0.7 ? "text-success" : rel >= 0.5 ? "text-text-tertiary" : "text-error";
-                const num = String(idx + 1).padStart(2, "0");
-                return (
-                  <HoverCard key={`${c.chunk_id}-${idx}`} openDelay={150}>
-                    <HoverCardTrigger asChild>
-                      <div
-                        id={`cite-${turn.ts}-${idx + 1}`}
-                        className="border border-border-subtle bg-surface-container-low p-3 cursor-help"
-                      >
-                        <div className="label-sm flex items-center gap-3">
-                          <span className="text-text-primary">[{num}]</span>
-                          <span className="text-text-secondary">{c.document_title}</span>
-                          <span className="text-text-tertiary">·</span>
-                          <span className="text-text-secondary">CHUNK {c.chunk_index}</span>
-                          <span className="text-text-tertiary">·</span>
-                          <span className={`tabular-nums ${relClass}`}>
-                            RELEVANCE {rel.toFixed(3)}
-                          </span>
-                        </div>
-                      </div>
-                    </HoverCardTrigger>
-                    {c.text_preview && (
-                      <HoverCardContent
-                        side="top"
-                        align="start"
-                        className="w-[480px] max-h-[320px] overflow-auto bg-surface-container border border-border-subtle"
-                      >
-                        <div className="label-xs text-text-tertiary mb-2">
-                          {c.document_title} · CHUNK {c.chunk_index}
-                        </div>
-                        <div className="body-sm text-text-secondary whitespace-pre-wrap">
-                          {c.text_preview}
-                        </div>
-                      </HoverCardContent>
-                    )}
-                  </HoverCard>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="label-xs text-text-tertiary mt-4 tabular-nums">
-        {turn.metadata.latency_ms}MS · {turn.metadata.tokens_input.toLocaleString()} IN /{" "}
-        {turn.metadata.tokens_output.toLocaleString()} OUT
-        {turn.metadata.model ? ` · ${turn.metadata.model}` : ""} ·{" "}
-        {estimateCost(turn.metadata.tokens_input, turn.metadata.tokens_output, turn.metadata.model)}
-      </div>
-      <div className="border-b border-border-subtle mt-4" />
-    </div>
   );
 }

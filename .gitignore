@@ -37,7 +37,5 @@ frontend/dist/
 frontend/.output/
 frontend/.nitro/
 frontend/.vite/
-frontend/.wrangler/
 frontend/.env
 frontend/.env.local
-

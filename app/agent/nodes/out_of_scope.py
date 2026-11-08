@@ -11,11 +11,8 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage
 
 from app.agent.state import AgentState
-
-_CANNED_RESPONSE_ES = (
-    "Esa pregunta está fuera del alcance de los documentos cargados. "
-    "Probá una pregunta sobre el contenido de tu colección."
-)
+from app.agent.utils.fixed_replies import fixed_reply
+from app.agent.utils.messages import stamped
 
 
 async def out_of_scope_node(state: AgentState) -> dict:
@@ -30,8 +27,8 @@ async def out_of_scope_node(state: AgentState) -> dict:
     return {
         "messages": [
             AIMessage(
-                content=_CANNED_RESPONSE_ES,
-                additional_kwargs={"metadata": msg_metadata},
+                content=fixed_reply("out_of_scope", state["messages"]),
+                additional_kwargs=stamped(metadata=msg_metadata, action="out_of_scope"),
             )
         ],
         "metadata": {**prev, "generation_model": None},

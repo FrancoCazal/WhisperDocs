@@ -14,6 +14,33 @@ class EmptyDocumentError(ValueError):
     pass
 
 
+class UnreadableDocumentError(ValueError):
+    """The file has the right extension but its content cannot be parsed."""
+
+
+# The PDF spec puts `%PDF-` first, but readers accept up to 1 KB of junk
+# before it, and so does pdfminer.
+_PDF_HEADER_WINDOW = 1024
+_TEXT_SNIFF_BYTES = 8192
+
+
+def check_content(file_bytes: bytes, file_type: str) -> None:
+    """Reject content that does not match the extension, before any parsing.
+
+    A `.pdf` must carry the `%PDF-` header. A `.md` or `.txt` must not contain
+    NUL bytes, which mark a binary file renamed to text (and `_clean` uses NUL
+    for its placeholders).
+    """
+    if file_type == "pdf":
+        if b"%PDF-" not in file_bytes[:_PDF_HEADER_WINDOW]:
+            raise UnsupportedFileTypeError("File has a .pdf extension but is not a PDF")
+    elif file_type in {"md", "txt"}:
+        if b"\x00" in file_bytes[:_TEXT_SNIFF_BYTES]:
+            raise UnsupportedFileTypeError(
+                f"File has a .{file_type} extension but contains binary data"
+            )
+
+
 def detect_file_type(filename: str) -> str:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in SUPPORTED_TYPES:
@@ -54,7 +81,19 @@ def _table_to_markdown(table: list[list[str | None]]) -> str:
 
 
 def _extract_pdf(file_bytes: bytes) -> str:
-    """Extract text + tables (rendered as markdown inline) from PDF."""
+    """Extract text + tables (rendered as markdown inline) from PDF.
+
+    pdfminer raises its own exception types on a damaged file, none of them a
+    ValueError, so they would surface as a 500. They become
+    UnreadableDocumentError.
+    """
+    try:
+        return _extract_pdf_pages(file_bytes)
+    except Exception as exc:
+        raise UnreadableDocumentError(f"Could not read the PDF: {exc}") from exc
+
+
+def _extract_pdf_pages(file_bytes: bytes) -> str:
     pages: list[str] = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         for page in pdf.pages:

@@ -1,9 +1,13 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+
+if TYPE_CHECKING:
+    from app.models.document import Document
 
 
 class Collection(Base):
@@ -16,6 +20,6 @@ class Collection(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    documents: Mapped[list["Document"]] = relationship(  # noqa: F821
+    documents: Mapped[list["Document"]] = relationship(
         back_populates="collection", cascade="all, delete-orphan"
     )

@@ -97,9 +97,7 @@ async def validate_citations_semantic(
     sentence_texts = [sentences[i] for i in relevant_sentence_idxs]
 
     try:
-        sentence_vecs, chunk_vecs = await _embed_pair(
-            embedder, sentence_texts, chunk_texts
-        )
+        sentence_vecs, chunk_vecs = await _embed_pair(embedder, sentence_texts, chunk_texts)
     except Exception:
         logger.exception("citation_semantic_validation_embed_failed")
         return {"low_confidence_refs": [], "scores": {}}

@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from app.eval.schemas import AggregateMetrics, EvalResult
+from app.eval.schemas import AggregateMetrics, Category, EvalResult
 from app.services.llm.pricing import estimate_cost_usd
 
 
@@ -10,6 +10,20 @@ def _percentile(values: list[float], pct: float) -> float:
     sorted_vals = sorted(values)
     idx = min(len(sorted_vals) - 1, int(pct * len(sorted_vals)))
     return float(sorted_vals[idx])
+
+
+def _retrieval_scope(results: list[EvalResult]) -> list[EvalResult]:
+    """Items that count toward retrieval precision/recall: the in-scope ones.
+
+    Out-of-scope items have no expected sources. Filtering on the scores
+    instead (`precision or recall`) also dropped in-scope items that retrieved
+    nothing relevant, which hid exactly the failures the metric exists to show.
+    """
+    return [r for r in results if r.category == Category.IN_SCOPE]
+
+
+def judge_error_count(results: list[EvalResult]) -> int:
+    return sum(1 for r in results if r.correctness.error or r.hallucination.error)
 
 
 def _bucket_metrics(results: list[EvalResult]) -> dict:
@@ -23,7 +37,7 @@ def _bucket_metrics(results: list[EvalResult]) -> dict:
         }
     correct = sum(1 for r in results if r.correctness.passed)
     hallucinated = sum(1 for r in results if not r.hallucination.passed)
-    scoped = [r for r in results if r.retrieval_precision or r.retrieval_recall]
+    scoped = _retrieval_scope(results)
     if scoped:
         avg_p = sum(r.retrieval_precision for r in scoped) / len(scoped)
         avg_r = sum(r.retrieval_recall for r in scoped) / len(scoped)
@@ -52,7 +66,7 @@ def compute_metrics(results: list[EvalResult], model: str) -> AggregateMetrics:
 
     cost = estimate_cost_usd(model, total_tokens_in, total_tokens_out)
 
-    scoped = [r for r in results if r.retrieval_precision or r.retrieval_recall]
+    scoped = _retrieval_scope(results)
     if scoped:
         avg_precision = sum(r.retrieval_precision for r in scoped) / len(scoped)
         avg_recall = sum(r.retrieval_recall for r in scoped) / len(scoped)
@@ -82,6 +96,7 @@ def compute_metrics(results: list[EvalResult], model: str) -> AggregateMetrics:
         total_tokens_input=total_tokens_in,
         total_tokens_output=total_tokens_out,
         estimated_cost_usd=round(cost, 6),
+        judge_errors=judge_error_count(results),
         by_difficulty={k: _bucket_metrics(v) for k, v in by_difficulty.items()},
         by_category={k: _bucket_metrics(v) for k, v in by_category.items()},
     )

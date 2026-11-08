@@ -7,7 +7,9 @@ class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     collection_id: int | None = None
     top_k: int = Field(default=5, ge=1, le=20)
-    session_id: str | None = None
+    # query_logs.session_id is String(50); longer failed the commit with a 500
+    # after the LLM call was already paid for.
+    session_id: str | None = Field(default=None, max_length=50)
 
 
 class Citation(BaseModel):
@@ -15,7 +17,10 @@ class Citation(BaseModel):
     document_id: int
     document_title: str
     chunk_index: int
+    # Score the citations are ordered by, 0-1 (see RetrievedChunk).
     relevance: float
+    # Cosine similarity to the question; None if only full-text search found it.
+    cosine: float | None = None
 
 
 class QueryMetadata(BaseModel):
@@ -24,6 +29,7 @@ class QueryMetadata(BaseModel):
     tokens_output: int
     latency_ms: int
     chunks_retrieved: int
+    cost_usd: float = 0.0
 
 
 class QueryResponse(BaseModel):
@@ -44,6 +50,7 @@ class QueryLogRead(BaseModel):
     tokens_input: int
     tokens_output: int
     latency_ms: int
+    cost_usd: float
     session_id: str | None
     agent_action: str | None
     created_at: datetime

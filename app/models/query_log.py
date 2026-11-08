@@ -20,7 +20,9 @@ class QueryLog(Base):
     tokens_input: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_output: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
+    cost_usd: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0.0"
+    )
     session_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     agent_action: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

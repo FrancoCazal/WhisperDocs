@@ -1,9 +1,14 @@
+from typing import TYPE_CHECKING
+
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config import settings
 from app.db import Base
+
+if TYPE_CHECKING:
+    from app.models.document import Document
 
 
 class Chunk(Base):
@@ -17,9 +22,12 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     text_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Copied from the document. Picks the text search configuration of the
+    # generated `tsv` column (alembic 0013), which the ORM does not map.
+    language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     embedding: Mapped[list[float]] = mapped_column(Vector(settings.embedding_dimension))
 
-    document: Mapped["Document"] = relationship(back_populates="chunks")  # noqa: F821
+    document: Mapped["Document"] = relationship(back_populates="chunks")
 
     __table_args__ = (
         Index(

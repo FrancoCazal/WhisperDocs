@@ -1,50 +1,123 @@
 import { Link, useRouterState, Outlet } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { fmtTimestamp } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { API_BASE_URL, api, fmtCost, fmtNumber, shortModel } from "@/lib/api";
+import { btnCls } from "@/components/ui-kit/Button";
+import { useHydrated } from "@/lib/useHydrated";
 
 const NAV_ITEMS = [
   { to: "/", label: "OVERVIEW", glyph: "▦" },
   { to: "/chat", label: "CHAT", glyph: "◆" },
-  { to: "/colecciones", label: "COLLECTIONS", glyph: "▣" },
-  { to: "/documentos", label: "DOCUMENTS", glyph: "▤" },
-  { to: "/historial", label: "HISTORY", glyph: "◷" },
-  { to: "/evaluacion", label: "EVALUATION", glyph: "◫" },
+  { to: "/query", label: "QUERY", glyph: "◇" },
+  { to: "/collections", label: "COLLECTIONS", glyph: "▣" },
+  { to: "/documents", label: "DOCUMENTS", glyph: "▤" },
+  { to: "/history", label: "HISTORY", glyph: "◷" },
+  { to: "/evaluation", label: "EVALUATION", glyph: "◫" },
   { to: "/settings", label: "SETTINGS", glyph: "⚙" },
 ] as const;
 
 const ROUTE_LABELS: Record<string, string> = {
   "/": "SYSTEM_OVERVIEW",
   "/chat": "CHAT // AGENT_THREAD",
-  "/colecciones": "COLLECTIONS // NAMESPACES",
-  "/documentos": "DOCUMENTS // CORPUS_INDEX",
-  "/historial": "HISTORY // QUERY_LOG",
-  "/evaluacion": "EVALUATION // BENCHMARKS",
+  "/query": "QUERY // SINGLE_TURN_RAG",
+  "/collections": "COLLECTIONS // NAMESPACES",
+  "/documents": "DOCUMENTS // CORPUS_INDEX",
+  "/history": "HISTORY // QUERY_LOG",
+  "/evaluation": "EVALUATION // BENCHMARKS",
   "/settings": "SETTINGS // SYSTEM_CONFIG",
 };
 
-function useTimestamp() {
-  const [ts, setTs] = useState(() => fmtTimestamp());
-  useEffect(() => {
-    const id = setInterval(() => setTs(fmtTimestamp()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return ts;
+type ApiState = "checking" | "online" | "degraded" | "offline";
+
+const API_STATE: Record<ApiState, { label: string; dot: string; text: string }> = {
+  checking: { label: "CHECKING", dot: "bg-text-tertiary", text: "text-text-tertiary" },
+  online: { label: "ONLINE", dot: "bg-success", text: "text-text-primary" },
+  degraded: { label: "DEGRADED", dot: "bg-warning", text: "text-warning" },
+  offline: { label: "OFFLINE", dot: "bg-error", text: "text-error" },
+};
+
+// Polls GET /health. Server and first client render both show "checking", so
+// the markup hydrates without a mismatch.
+function useApiState(): ApiState {
+  const health = useQuery({
+    queryKey: ["health"],
+    queryFn: api.health,
+    refetchInterval: 15_000,
+    retry: false,
+  });
+  if (health.isError) return "offline";
+  if (!health.data) return "checking";
+  return health.data.status === "ok" ? "online" : "degraded";
+}
+
+function ApiStatus({ state }: { state: ApiState }) {
+  const s = API_STATE[state];
+  return (
+    <span role="status" className={`flex items-center gap-2 ${s.text}`}>
+      <span className={`inline-block w-2 h-2 ${s.dot}`} aria-hidden="true" />
+      API {s.label}
+    </span>
+  );
+}
+
+// The last logged answer, from the query log (chat and query pages refresh it).
+function LastAnswer() {
+  const last = useQuery({ queryKey: ["history", 1], queryFn: () => api.history(1) });
+  const q = last.data?.[0];
+  if (!q) {
+    return (
+      <span>LAST ANSWER: {last.isLoading ? "—" : last.isError ? "UNAVAILABLE" : "NONE YET"}</span>
+    );
+  }
+  return (
+    <>
+      <span>
+        LAST ANSWER: <span className="text-text-primary">{shortModel(q.model_used)}</span>
+      </span>
+      <span className="text-text-tertiary" aria-hidden="true">
+        |
+      </span>
+      <span>
+        TOKENS:{" "}
+        <span className="text-text-primary">
+          {fmtNumber(q.tokens_input)} / {fmtNumber(q.tokens_output)}
+        </span>
+      </span>
+      <span className="text-text-tertiary" aria-hidden="true">
+        |
+      </span>
+      <span>
+        LATENCY: <span className="text-text-primary">{fmtNumber(q.latency_ms)}MS</span>
+      </span>
+      <span className="text-text-tertiary" aria-hidden="true">
+        |
+      </span>
+      <span>
+        COST: <span className="text-text-primary">{fmtCost(q.cost_usd)}</span>
+      </span>
+    </>
+  );
 }
 
 export function Shell() {
-  const ts = useTimestamp();
+  const apiState = useApiState();
+  // The SPA shell names no page and marks no link: it is built for "/" and
+  // served for every path.
+  const hydrated = useHydrated();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const [navOpen, setNavOpen] = useState(false);
-  const breadcrumb =
-    ROUTE_LABELS[pathname] ??
-    (pathname.startsWith("/documentos/")
-      ? "DOCUMENTS // DOCUMENT_DETAIL"
-      : pathname.replace("/", "").toUpperCase() || "RESUMEN");
-
-  // Close mobile drawer when route changes.
-  useEffect(() => {
-    setNavOpen(false);
-  }, [pathname]);
+  const unknownPath = useRouterState({ select: (s) => s.matches.some((m) => m.routeId === "/$") });
+  // The drawer is open on one path: navigating closes it, with no effect to sync.
+  const [navOpenAt, setNavOpenAt] = useState<string | null>(null);
+  const navOpen = navOpenAt === pathname;
+  const setNavOpen = (open: boolean) => setNavOpenAt(open ? pathname : null);
+  const breadcrumb = !hydrated
+    ? ""
+    : unknownPath
+      ? "PATH_NOT_FOUND"
+      : (ROUTE_LABELS[pathname] ??
+        (pathname.startsWith("/documents/")
+          ? "DOCUMENTS // DOCUMENT_DETAIL"
+          : pathname.replace("/", "").toUpperCase() || "SYSTEM_OVERVIEW"));
 
   return (
     <div className="min-h-screen flex flex-col bg-surface text-text-primary">
@@ -64,11 +137,11 @@ export function Shell() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setNavOpen((v) => !v)}
+            onClick={() => setNavOpen(!navOpen)}
             aria-label={navOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={navOpen}
             aria-controls="primary-nav"
-            className="md:hidden inline-flex items-center justify-center w-8 h-8 border border-border-subtle text-text-primary hover:bg-surface-container focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue"
+            className={btnCls("quiet", "icon", "md:hidden")}
           >
             <span aria-hidden="true">{navOpen ? "✕" : "☰"}</span>
           </button>
@@ -76,11 +149,7 @@ export function Shell() {
         </div>
         <div className="hidden md:block label-sm text-text-secondary">{breadcrumb}</div>
         <div className="flex items-center gap-2 sm:gap-4 label-sm">
-          <span className="hidden sm:inline text-text-secondary">{ts}</span>
-          <span className="flex items-center gap-2 text-text-primary">
-            <span className="inline-block w-2 h-2 bg-success" aria-hidden="true" />
-            ONLINE
-          </span>
+          <ApiStatus state={apiState} />
         </div>
       </header>
 
@@ -104,17 +173,20 @@ export function Shell() {
             navOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
           ].join(" ")}
         >
-          <div className="px-4 py-4 border-b border-border-subtle">
-            <div className="label-xs text-text-tertiary">ACCESS_LEVEL_01</div>
-            <div className="label-xs text-text-secondary mt-1">SESSION_ACCESS_GRANTED</div>
-          </div>
-
-          <nav className="flex-1 py-2 overflow-y-auto" aria-label="Main">
+          {/* Rebuilt once hydrated: Link sets aria-current and data-status from
+              the URL, the shell's are for "/", and hydration keeps the
+              attributes it finds. */}
+          <nav
+            key={hydrated ? "app" : "shell"}
+            className="flex-1 py-2 overflow-y-auto"
+            aria-label="Main"
+          >
             {NAV_ITEMS.map((item) => {
               const active =
-                item.to === "/"
+                hydrated &&
+                (item.to === "/"
                   ? pathname === "/"
-                  : pathname === item.to || pathname.startsWith(item.to + "/");
+                  : pathname === item.to || pathname.startsWith(item.to + "/"));
               return (
                 <Link
                   key={item.to}
@@ -122,7 +194,7 @@ export function Shell() {
                   aria-current={active ? "page" : undefined}
                   className={[
                     "relative flex items-center gap-3 h-10 px-4 label-sm transition-colors",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue focus-visible:ring-inset",
+                    "focus-visible:-outline-offset-2",
                     active
                       ? "text-primary-blue bg-surface-container"
                       : "text-text-secondary hover:text-primary-blue hover:bg-surface-container",
@@ -143,14 +215,9 @@ export function Shell() {
             })}
           </nav>
 
-          <div className="px-4 py-3 border-t border-border-subtle space-y-3">
-            <button
-              type="button"
-              className="label-xs text-text-tertiary hover:text-text-primary transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue"
-            >
-              <span aria-hidden="true">⏻ </span>LOGOUT
-            </button>
-            <div className="label-xs text-text-tertiary">WHISPER_PROTOCOL_V4.0</div>
+          <div className="px-4 py-3 border-t border-border-subtle">
+            <div className="label-xs text-text-tertiary">API</div>
+            <div className="label-xs text-text-secondary mt-1 break-all">{API_BASE_URL}</div>
           </div>
         </aside>
 
@@ -159,7 +226,7 @@ export function Shell() {
           id="main-content"
           role="main"
           tabIndex={-1}
-          className="flex-1 min-w-0 overflow-auto focus:outline-none"
+          className="relative flex-1 min-w-0 overflow-auto focus:outline-none"
         >
           <div className="p-3 sm:p-6 md:p-8 min-h-full pb-20">
             <Outlet />
@@ -172,19 +239,16 @@ export function Shell() {
         role="contentinfo"
         className="hidden md:flex fixed bottom-0 left-0 right-0 h-7 bg-surface-lowest border-t border-border-subtle items-center justify-between px-4 label-xs text-text-secondary z-50"
       >
-        <div className="flex items-center gap-3">
-          <span>TOKENS: <span className="text-text-primary">4,201</span></span>
-          <span className="text-text-tertiary" aria-hidden="true">|</span>
-          <span>LATENCY: <span className="text-text-primary">14MS</span></span>
-          <span className="text-text-tertiary" aria-hidden="true">|</span>
-          <span>MODEL: <span className="text-text-primary">gpt-4o-mini</span></span>
-          <span className="text-text-tertiary" aria-hidden="true">|</span>
-          <span>COST: <span className="text-text-primary">$0.0042</span></span>
+        <div className="flex items-center gap-3 min-w-0 truncate">
+          <LastAnswer />
         </div>
-        <div className="flex items-center gap-3">
-          <span>SYSTEM_STATUS: <span className="text-success">NORMAL</span></span>
-          <span className="text-text-tertiary" aria-hidden="true">|</span>
-          <span>ENCRYPTION_PROTOCOL: <span className="text-success">ACTIVE</span></span>
+        <div className="flex items-center gap-3 shrink-0">
+          <span>
+            DATABASE:{" "}
+            <span className={apiState === "online" ? "text-success" : API_STATE[apiState].text}>
+              {apiState === "online" ? "OK" : apiState === "degraded" ? "ERROR" : "—"}
+            </span>
+          </span>
         </div>
       </footer>
     </div>

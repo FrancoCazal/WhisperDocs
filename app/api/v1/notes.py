@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.models import SavedNote
+from app.models import Conversation, SavedNote
 from app.schemas.note import SavedNoteRead
 
 router = APIRouter(prefix="/notes", tags=["notes"])
@@ -15,14 +15,23 @@ async def list_notes(
     collection_id: int | None = None,
     conversation_id: int | None = None,
     db: AsyncSession = Depends(get_db),
-) -> list[SavedNote]:
-    stmt = select(SavedNote).order_by(SavedNote.created_at.desc()).limit(limit)
+) -> list[SavedNoteRead]:
+    # With each note's thread id, so a client can link the note to its thread.
+    stmt = (
+        select(SavedNote, Conversation.thread_id)
+        .outerjoin(Conversation, SavedNote.conversation_id == Conversation.id)
+        .order_by(SavedNote.created_at.desc())
+        .limit(limit)
+    )
     if collection_id is not None:
         stmt = stmt.where(SavedNote.collection_id == collection_id)
     if conversation_id is not None:
         stmt = stmt.where(SavedNote.conversation_id == conversation_id)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = (await db.execute(stmt)).all()
+    return [
+        SavedNoteRead.model_validate(note).model_copy(update={"thread_id": thread_id})
+        for note, thread_id in rows
+    ]
 
 
 @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)

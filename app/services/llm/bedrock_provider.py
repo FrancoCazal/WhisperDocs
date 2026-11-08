@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import time
@@ -13,28 +14,45 @@ from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.config import settings
-from app.services.llm.base import LLMResponse, LLMStreamDelta
+from app.logging_config import get_logger
+from app.services.llm.base import LLMResponse, LLMStreamDelta, extract_text
+from app.services.llm.model_policy import (
+    accepts_custom_sampling,
+    bedrock_converse_unsupported_reason,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
+logger = get_logger(__name__)
 
+
+# Compared lowercased: ConverseStream reports errors that arrive as stream
+# events with the event name as the code, e.g. "throttlingException".
 _BEDROCK_RETRY_CODES = {
-    "ThrottlingException",
-    "ServiceUnavailableException",
-    "InternalServerException",
-    "ModelTimeoutException",
+    "throttlingexception",
+    "serviceunavailableexception",
+    "internalserverexception",
+    "modeltimeoutexception",
+    "modelstreamerrorexception",
 }
+
+_MAX_ATTEMPTS = 3
 
 
 def _is_bedrock_retryable(exc: BaseException) -> bool:
     if isinstance(exc, ClientError):
         code = exc.response.get("Error", {}).get("Code", "")
-        return code in _BEDROCK_RETRY_CODES
+        return code.lower() in _BEDROCK_RETRY_CODES
     return isinstance(exc, TimeoutError)
 
 
+def _backoff_s(attempt: int) -> float:
+    """Wait before retry number `attempt` (1-based), as `_retry` waits."""
+    return min(5.0, 0.3 * 2 ** (attempt - 1))
+
+
 _retry = retry(
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(_MAX_ATTEMPTS),
     wait=wait_exponential(multiplier=0.3, min=0.3, max=5),
     retry=retry_if_exception(_is_bedrock_retryable),
     reraise=True,
@@ -55,19 +73,7 @@ def _to_lc_messages(system: str, messages: list[dict]) -> list:
     return lc
 
 
-def _extract_text(content) -> str:
-    if isinstance(content, str):
-        return content
-    # ChatBedrockConverse returns list of {"type":"text","text":...} blocks
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
-            elif isinstance(block, str):
-                parts.append(block)
-        return "".join(parts)
-    return str(content)
+_extract_text = extract_text
 
 
 class BedrockProvider:
@@ -86,12 +92,13 @@ class BedrockProvider:
         self._client = boto3.client("bedrock-runtime", **kwargs)
 
     def _build_chat(self, model: str, temperature: float, max_tokens: int) -> ChatBedrockConverse:
-        return ChatBedrockConverse(
-            client=self._client,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        unsupported = bedrock_converse_unsupported_reason(model)
+        if unsupported:
+            raise ValueError(unsupported)
+        kwargs: dict = {"client": self._client, "model": model, "max_tokens": max_tokens}
+        if accepts_custom_sampling(model):
+            kwargs["temperature"] = temperature
+        return ChatBedrockConverse(**kwargs)
 
     @_retry
     async def _invoke_raw(self, chat: ChatBedrockConverse, lc_messages: list):
@@ -129,21 +136,43 @@ class BedrockProvider:
         temperature: float = 0.7,
         max_tokens: int = 1000,
     ) -> AsyncIterator[LLMStreamDelta]:
+        """Stream the answer, retrying like `generate` until the first token.
+
+        botocore is set to one attempt, and `_retry` cannot wrap a generator,
+        so a throttled stream used to fail the turn at once (audit A3). A
+        retryable error before any text is out is retried with the same
+        backoff as `_retry`. After the first token the client has already
+        shown text, and a retry would start the answer over, so the error
+        propagates.
+        """
         chat = self._build_chat(model, temperature, max_tokens)
         lc_messages = _to_lc_messages(system, messages)
         t0 = time.perf_counter()
-        full_text = ""
-        usage_in = 0
-        usage_out = 0
-        async for chunk in chat.astream(lc_messages):
-            delta = _extract_text(getattr(chunk, "content", "") or "")
-            if delta:
-                full_text += delta
-                yield LLMStreamDelta(text_delta=delta, final=None)
-            usage = getattr(chunk, "usage_metadata", None) or {}
-            if usage:
-                usage_in = usage.get("input_tokens", usage_in) or usage_in
-                usage_out = usage.get("output_tokens", usage_out) or usage_out
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            full_text = ""
+            usage_in = 0
+            usage_out = 0
+            try:
+                async for chunk in chat.astream(lc_messages):
+                    delta = _extract_text(getattr(chunk, "content", "") or "")
+                    if delta:
+                        full_text += delta
+                        yield LLMStreamDelta(text_delta=delta, final=None)
+                    usage = getattr(chunk, "usage_metadata", None) or {}
+                    if usage:
+                        usage_in = usage.get("input_tokens", usage_in) or usage_in
+                        usage_out = usage.get("output_tokens", usage_out) or usage_out
+                break
+            except Exception as exc:
+                if full_text or attempt == _MAX_ATTEMPTS or not _is_bedrock_retryable(exc):
+                    raise
+                logger.warning(
+                    "bedrock_stream_retry",
+                    model=model,
+                    attempt=attempt,
+                    error=type(exc).__name__,
+                )
+                await asyncio.sleep(_backoff_s(attempt))
         latency = int((time.perf_counter() - t0) * 1000)
         yield LLMStreamDelta(
             text_delta="",

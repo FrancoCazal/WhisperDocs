@@ -5,6 +5,10 @@ class AgentChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=5000)
     thread_id: UUID4 | None = None
     collection_id: int | None = None
+    # One document to search in place of the collection. Like collection_id,
+    # a turn that names it changes the thread's, and null goes back to the
+    # collection (see apply_turn_scope).
+    document_id: int | None = None
     top_k: int = Field(default=5, ge=1, le=20)
 
 
@@ -13,7 +17,10 @@ class AgentCitation(BaseModel):
     document_id: int
     document_title: str
     chunk_index: int
+    # Score the citations are ordered by, 0-1 (see RetrievedChunk).
     relevance: float
+    # Cosine similarity to the question; None if only full-text search found it.
+    cosine: float | None = None
     text_preview: str | None = None
 
 
@@ -23,6 +30,8 @@ class AgentTurnMetadata(BaseModel):
     tokens_output: int = 0
     latency_ms: int = 0
     chunks_retrieved: int = 0
+    # The answer's model call, priced by the backend (`query_logs.cost_usd`).
+    cost_usd: float = 0.0
 
 
 class AgentChatResponse(BaseModel):
@@ -31,3 +40,6 @@ class AgentChatResponse(BaseModel):
     answer: str
     citations: list[AgentCitation]
     metadata: AgentTurnMetadata
+    # The answer reports a failure ("I had a problem…"): it cites nothing and
+    # later prompts leave it out (audit N4).
+    failed: bool = False

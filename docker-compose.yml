@@ -1,12 +1,16 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
+    # Pinned: retrieval needs hnsw.iterative_scan (pgvector >= 0.8.0).
+    image: pgvector/pgvector:0.8.2-pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-whisperdocs}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whisperdocs}
       POSTGRES_DB: ${POSTGRES_DB:-whisperdocs}
     ports:
-      - "5435:5432"
+      # The host's port, for tests and clients outside Docker; the API reaches
+      # the database as db:5432. Another project's Postgres on 5435 stops this
+      # one from starting: set DB_PORT in .env.
+      - "${DB_PORT:-5435}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -40,17 +44,16 @@ services:
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
+  # A production build. For hot reload, run `npm run dev` in frontend/ instead.
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
     depends_on:
       - api
-    environment:
-      VITE_API_BASE_URL: http://localhost:8000
     ports:
       - "8080:8080"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
 
 volumes:
   pgdata:

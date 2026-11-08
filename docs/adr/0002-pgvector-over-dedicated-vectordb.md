@@ -49,3 +49,36 @@ Use pgvector with HNSW indexing.
 
 Sharding strategy, replication topology — single-node Postgres is enough for
 the foreseeable future.
+
+## Amendment — 2026-11: filtered HNSW scans
+
+"Filter-rich queries work natively" was only half true. When Postgres walks
+the HNSW index in distance order, it applies `WHERE collection_id = ?` after
+the scan, over only `hnsw.ef_search` candidates (40 by default). A collection
+that is a small share of the corpus comes back short or empty: the same
+silent failure IVFFlat had, which the swap to HNSW did not remove. With one
+collection, as in the demo, it does not show. Whether it happens depends on
+the plan Postgres picks, which tends to be the index walk on large tables.
+
+Since pgvector 0.8.0, `SET LOCAL hnsw.iterative_scan = relaxed_order` keeps
+walking until LIMIT rows pass the filter. `VectorRetriever.retrieve` sets it
+on every query and re-sorts the rows by distance. The compose and CI images
+are pinned to `pgvector/pgvector:0.8.2-pg16`, because the `pg16` tag floats.
+`tests/test_retrieval_db.py` forces the index-walk plan and checks that a
+3-chunk collection next to a 400-chunk one still returns its 3 chunks. It
+returned none before the change.
+
+Iterative scan is not a guarantee either. It stops at `hnsw.max_scan_tuples`
+(20,000), and it can only visit elements the graph reaches. HNSW does not
+promise that every element is reachable, and near-duplicate vectors, or dead
+entries left by rolled-back inserts until VACUUM, make it worse. In the test
+above, the 400 near-duplicate vectors left the scan out of graph after 95 to
+350 rows, even with `ef_search = 400`, and the small collection came back
+empty. So when a filtered search returns fewer than `top_k` rows,
+`retrieve` repeats it as an exact scan: it orders by `distance + 0`, which
+the planner cannot serve from the index, and Postgres reaches the
+collection's chunks through `ix_documents_collection_id` and
+`ix_chunks_document_id`. The cost is one distance per chunk of the
+collection, paid only when the collection is small next to the corpus or has
+fewer than `top_k` chunks. A second test checks the plan, so that a planner
+change cannot quietly bring the index back into the exact path.

@@ -6,6 +6,14 @@ export const API_BASE_URL =
 
 const ROOT = `${API_BASE_URL}/api/v1`;
 
+// Text limits the backend validates (app/schemas): past them it answers 422.
+export const LIMITS = {
+  chatMessage: 5000,
+  queryQuestion: 2000,
+  collectionName: 200,
+  collectionDescription: 2000,
+} as const;
+
 export class ApiError extends Error {
   status: number;
   detail: unknown;
@@ -14,6 +22,40 @@ export class ApiError extends Error {
     this.status = status;
     this.detail = detail;
   }
+}
+
+// FastAPI's `detail`: a string, or for a 422 a list of {loc, msg}.
+function detailMessage(detail: unknown): string | null {
+  if (typeof detail === "string") return detail || null;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((d) => {
+      if (d && typeof d === "object" && "msg" in d) {
+        const { loc, msg } = d as { loc?: unknown; msg: unknown };
+        // ["body", "message"] -> "message"; the "body" prefix says nothing.
+        const where = Array.isArray(loc) ? loc.filter((p) => p !== "body").join(".") : "";
+        return where ? `${where}: ${String(msg)}` : String(msg);
+      }
+      return JSON.stringify(d);
+    });
+    return parts.join("; ") || null;
+  }
+  return detail == null ? null : JSON.stringify(detail);
+}
+
+/** The error for a failed response, with its `detail` readable as the message. */
+async function toApiError(res: Response): Promise<ApiError> {
+  const text = await res.text().catch(() => "");
+  let body: unknown = text || null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    /* not JSON: a proxy's error page, say; keep it as the detail */
+  }
+  const detail =
+    body && typeof body === "object" && "detail" in body
+      ? (body as { detail: unknown }).detail
+      : null;
+  return new ApiError(res.status, body, detailMessage(detail) ?? `HTTP ${res.status}`);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -27,19 +69,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  if (!res.ok) {
-    let detail: unknown = null;
-    try {
-      detail = await res.json();
-    } catch {
-      try { detail = await res.text(); } catch { /* ignore */ }
-    }
-    const msg =
-      (detail && typeof detail === "object" && "detail" in (detail as Record<string, unknown>)
-        ? String((detail as Record<string, unknown>).detail)
-        : `HTTP ${res.status}`);
-    throw new ApiError(res.status, detail, msg);
-  }
+  if (!res.ok) throw await toApiError(res);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
@@ -52,6 +82,10 @@ export type Collection = {
   name: string;
   description: string | null;
   created_at: string;
+  // Over every document in it, summed by the server.
+  document_count: number;
+  chunk_count: number;
+  total_tokens: number;
 };
 
 export type DocumentRead = {
@@ -80,7 +114,12 @@ export type Citation = {
   document_id: number;
   document_title: string;
   chunk_index: number;
+  // The fused rank score the citations are ordered by: relative to the other
+  // results of the same query, so not a quality measure.
   relevance: number;
+  // Cosine similarity to the question. null when only full-text search found
+  // the chunk; missing in citations stored before the field existed.
+  cosine?: number | null;
   text_preview?: string | null;
 };
 
@@ -90,6 +129,7 @@ export type QueryMetadata = {
   tokens_output: number;
   latency_ms: number;
   chunks_retrieved: number;
+  cost_usd: number;
 };
 
 export type QueryResponse = {
@@ -108,9 +148,21 @@ export type QueryLog = {
   tokens_input: number;
   tokens_output: number;
   latency_ms: number;
+  cost_usd: number;
   session_id: string | null;
   agent_action: string | null;
   created_at: string;
+};
+
+// One question of an eval dataset (TestItem in app/eval/schemas.py).
+export type EvalItem = {
+  id: number;
+  question: string;
+  expected_answer: string;
+  difficulty: "easy" | "medium" | "hard";
+  category: "in_scope" | "out_of_scope";
+  // Titles of the documents a good retrieval returns.
+  expected_sources?: string[];
 };
 
 export type EvalMetrics = {
@@ -118,17 +170,29 @@ export type EvalMetrics = {
   accuracy: number;
   hallucination_rate: number;
   avg_retrieval_precision: number;
-  avg_retrieval_recall: number;
+  // Reports from before these three were measured do not have them.
+  avg_retrieval_recall?: number;
   avg_latency_ms: number;
-  latency_p50_ms: number;
-  latency_p95_ms: number;
+  latency_p50_ms?: number;
+  latency_p95_ms?: number;
   avg_tokens_input: number;
   avg_tokens_output: number;
   total_tokens_input: number;
   total_tokens_output: number;
+  // Generation only: the judge's calls and the embeddings are not counted.
   estimated_cost_usd: number;
-  by_difficulty?: Record<string, { count: number; accuracy: number; hallucination_rate: number }>;
-  by_category?: Record<string, { count: number; accuracy: number; hallucination_rate: number }>;
+  // Items where a judge call failed: their verdicts say nothing.
+  judge_errors?: number;
+  by_difficulty?: Record<string, EvalBucket>;
+  by_category?: Record<string, EvalBucket>;
+};
+
+export type EvalBucket = {
+  total: number;
+  accuracy: number;
+  hallucination_rate: number;
+  avg_retrieval_precision?: number;
+  avg_retrieval_recall?: number;
 };
 
 export type EvalReport = {
@@ -137,7 +201,29 @@ export type EvalReport = {
   dataset_size: number;
   model: string;
   metrics: EvalMetrics;
-  results: unknown[];
+  results: EvalResult[];
+};
+
+// A judge's verdict. For hallucination, `passed` means grounded. `error`: the
+// judge call failed, so `passed` is false by construction.
+export type JudgeVerdict = { passed: boolean; reasoning: string; error?: boolean };
+
+export type EvalResult = {
+  item_id: number;
+  question: string;
+  expected_answer: string;
+  system_answer: string;
+  // Titles of the retrieved documents, in rank order.
+  citations: string[];
+  latency_ms: number;
+  tokens_input: number;
+  tokens_output: number;
+  correctness: JudgeVerdict;
+  hallucination: JudgeVerdict;
+  retrieval_precision: number;
+  retrieval_recall?: number;
+  difficulty: EvalItem["difficulty"];
+  category: EvalItem["category"];
 };
 
 export type EvalRunSummary = {
@@ -148,18 +234,20 @@ export type EvalRunSummary = {
   accuracy: number;
   hallucination_rate: number;
   estimated_cost_usd: number;
-  status?: string;
 };
 
 // ============ Agent / Conversations / Notes ============
 export type AgentCitation = Citation;
 
+// The answer's model call. `cost_usd` is priced by the backend, which keeps
+// the only pricing table.
 export type AgentTurnMetadata = {
   model: string | null;
   tokens_input: number;
   tokens_output: number;
   latency_ms: number;
   chunks_retrieved: number;
+  cost_usd: number;
 };
 
 export type AgentChatResponse = {
@@ -168,6 +256,8 @@ export type AgentChatResponse = {
   answer: string;
   citations: AgentCitation[];
   metadata: AgentTurnMetadata;
+  // The answer reports a failure ("I had a problem…") and cites nothing.
+  failed: boolean;
 };
 
 export type AgentStreamEvent =
@@ -179,17 +269,13 @@ export type AgentStreamEvent =
   | { type: "error"; message: string };
 
 export type IngestionStatus =
-  | "pending"
-  | "extracting"
-  | "chunking"
-  | "embedding"
-  | "persisting"
-  | "complete"
-  | "failed";
+  "pending" | "extracting" | "chunking" | "embedding" | "persisting" | "complete" | "failed";
 
 export type Page<T> = {
   items: T[];
   next_cursor: number | null;
+  // Matching items across every page; sent with the first page only.
+  total?: number | null;
 };
 
 export type BulkOpResult = {
@@ -235,6 +321,10 @@ export type Conversation = {
   user_number: string | null;
   channel: string;
   collection_id: number | null;
+  // The one document the thread searches, in place of its collection.
+  document_id?: number | null;
+  // The thread's first question; null until it has one.
+  title: string | null;
   is_saved: boolean;
   last_active_at: string;
   created_at: string;
@@ -243,19 +333,194 @@ export type Conversation = {
 export type ConversationMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  // When it was written (UTC ISO); messages saved before the stamp have none.
   timestamp: string | null;
+  // The node that answered (search_docs, answer_direct, ...); assistant only.
+  action: string | null;
   citations: Citation[] | null;
   metadata: AgentTurnMetadata | null;
+  failed: boolean;
 };
+
+// Which answers a query log holds: the agent's chat or the Query page.
+export type LogSource = "chat" | "query";
 
 export type SavedNote = {
   id: number;
   conversation_id: number | null;
+  // The note's thread, for a link to it; null for a note without one.
+  thread_id: string | null;
   collection_id: number | null;
   source_message_content: string;
   user_note: string | null;
   created_at: string;
 };
+
+// ============ Server-sent events ============
+// One message of a text/event-stream: its event name and its data, which the
+// backend always sends as a JSON object.
+type SseMessage = { event: string; data: Record<string, unknown> };
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** The messages of an event stream, as they arrive. Lines may end in CRLF, LF
+ *  or CR, and a message's data lines are joined with "\n", as the SSE spec
+ *  says. A message whose data is not a JSON object is skipped, and one cut
+ *  off by the end of the stream is dropped. */
+async function* readSse(res: Response): AsyncGenerator<SseMessage> {
+  if (!res.body) throw new ApiError(res.status, null, "Stream failed: empty response");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let event = "";
+  let data: string[] = [];
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      let text = buf + (done ? decoder.decode() : decoder.decode(value, { stream: true }));
+      // A CR at the end may be the first half of a CRLF: keep it for the next
+      // chunk. At the end of the stream there is none, and it ends its line.
+      const held = !done && text.endsWith("\r") ? "\r" : "";
+      if (held) text = text.slice(0, -1);
+      const lines = text.split(/\r\n|\r|\n/);
+      buf = (lines.pop() ?? "") + held;
+      for (const line of lines) {
+        if (line === "") {
+          const parsed = data.length > 0 ? parseJson(data.join("\n")) : null;
+          if (isRecord(parsed)) yield { event: event || "message", data: parsed };
+          event = "";
+          data = [];
+        } else if (!line.startsWith(":")) {
+          // "field: value"; a line starting with ":" is a comment (a keep-alive).
+          const colon = line.indexOf(":");
+          const field = colon === -1 ? line : line.slice(0, colon);
+          const raw = colon === -1 ? "" : line.slice(colon + 1);
+          const val = raw.startsWith(" ") ? raw.slice(1) : raw;
+          if (field === "event") event = val;
+          else if (field === "data") data.push(val);
+        }
+      }
+      // What is left in buf is a line the stream cut off: dropped.
+      if (done) return;
+    }
+  } finally {
+    // Also when the reader stops early: the request is not left open.
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
+const INGESTION_STATUSES: readonly string[] = [
+  "pending",
+  "extracting",
+  "chunking",
+  "embedding",
+  "persisting",
+  "complete",
+  "failed",
+] satisfies IngestionStatus[];
+
+/** An ingestion stream's message as an event; null for one that is not. */
+function ingestionEvent({ event, data }: SseMessage): IngestionJobEvent | null {
+  const jobId = num(data.job_id);
+  switch (event) {
+    case "progress": {
+      const status = str(data.status);
+      if (jobId === null || status === null || !INGESTION_STATUSES.includes(status)) return null;
+      return {
+        type: "progress",
+        job_id: jobId,
+        status: status as IngestionStatus,
+        progress: num(data.progress) ?? 0,
+        processed_chunks: num(data.processed_chunks) ?? 0,
+        total_chunks: num(data.total_chunks) ?? 0,
+      };
+    }
+    case "complete":
+      return jobId === null
+        ? null
+        : { type: "complete", job_id: jobId, document_id: num(data.document_id) };
+    case "error":
+      return {
+        type: "error",
+        job_id: jobId ?? undefined,
+        message: str(data.message) ?? "ingestion error",
+      };
+    default:
+      return null;
+  }
+}
+
+function turnMetadata(v: unknown): AgentTurnMetadata {
+  const m = isRecord(v) ? v : {};
+  return {
+    model: str(m.model),
+    tokens_input: num(m.tokens_input) ?? 0,
+    tokens_output: num(m.tokens_output) ?? 0,
+    latency_ms: num(m.latency_ms) ?? 0,
+    chunks_retrieved: num(m.chunks_retrieved) ?? 0,
+    cost_usd: num(m.cost_usd) ?? 0,
+  };
+}
+
+/** An agent stream's message as an event; null for one that is not. */
+function agentEvent({ event, data }: SseMessage): AgentStreamEvent | null {
+  switch (event) {
+    case "thread": {
+      const threadId = str(data.thread_id);
+      return threadId ? { type: "thread", thread_id: threadId } : null;
+    }
+    case "node_start": {
+      const node = str(data.node);
+      return node ? { type: "node_start", node } : null;
+    }
+    case "node_end": {
+      const node = str(data.node);
+      if (!node) return null;
+      const s = isRecord(data.summary) ? data.summary : {};
+      const summary: { action?: string; chunks?: number } = {};
+      const action = str(s.action);
+      const chunks = num(s.chunks);
+      if (action) summary.action = action;
+      if (chunks !== null) summary.chunks = chunks;
+      return { type: "node_end", node, summary };
+    }
+    case "token":
+      return { type: "token", node: str(data.node), delta: str(data.delta) ?? "" };
+    case "final": {
+      const threadId = str(data.thread_id);
+      if (!threadId) return null;
+      return {
+        type: "final",
+        payload: {
+          thread_id: threadId,
+          action: str(data.action),
+          answer: str(data.answer) ?? "",
+          citations: Array.isArray(data.citations)
+            ? (data.citations.filter(isRecord) as AgentCitation[])
+            : [],
+          metadata: turnMetadata(data.metadata),
+          failed: data.failed === true,
+        },
+      };
+    }
+    case "error":
+      return { type: "error", message: str(data.message) ?? "stream error" };
+    default:
+      return null;
+  }
+}
 
 // ============ Endpoints ============
 export const api = {
@@ -269,19 +534,10 @@ export const api = {
     }>("/admin/settings"),
 
   listCollections: () => request<Collection[]>("/collections"),
-  getCollection: (id: number) => request<Collection>(`/collections/${id}`),
   createCollection: (body: { name: string; description?: string }) =>
     request<Collection>("/collections", { method: "POST", body: JSON.stringify(body) }),
-  deleteCollection: (id: number) =>
-    request<void>(`/collections/${id}`, { method: "DELETE" }),
+  deleteCollection: (id: number) => request<void>(`/collections/${id}`, { method: "DELETE" }),
 
-  listDocuments: async (collectionId?: number, limit = 50): Promise<DocumentRead[]> => {
-    const q = new URLSearchParams();
-    if (collectionId !== undefined) q.set("collection_id", String(collectionId));
-    q.set("limit", String(limit));
-    const page = await request<Page<DocumentRead>>(`/documents?${q.toString()}`);
-    return page.items;
-  },
   listDocumentsPage: (params: { collection_id?: number; limit?: number; cursor?: number }) => {
     const q = new URLSearchParams();
     if (params.collection_id !== undefined) q.set("collection_id", String(params.collection_id));
@@ -291,26 +547,14 @@ export const api = {
   },
   getDocument: (id: number) => request<DocumentDetail>(`/documents/${id}`),
   getChunks: (id: number) => request<Chunk[]>(`/documents/${id}/chunks`),
-  deleteDocument: (id: number) =>
-    request<void>(`/documents/${id}`, { method: "DELETE" }),
-  uploadBatch: (collectionId: number, files: File[]) => {
-    const fd = new FormData();
-    fd.append("collection_id", String(collectionId));
-    files.forEach((f) => fd.append("files", f));
-    return request<{
-      total: number;
-      succeeded: number;
-      failed: number;
-      results: { status: string; filename: string; document: DocumentRead | null; error: string | null }[];
-    }>("/documents/upload-batch", { method: "POST", body: fd });
-  },
-
+  deleteDocument: (id: number) => request<void>(`/documents/${id}`, { method: "DELETE" }),
   bulkDeleteDocuments: (documentIds: number[]) =>
     request<BulkOpResult>("/documents/bulk-delete", {
       method: "POST",
       body: JSON.stringify({ document_ids: documentIds }),
     }),
 
+  // No page moves documents yet: U17 (document detail) is the one that will.
   bulkMoveDocuments: (documentIds: number[], targetCollectionId: number) =>
     request<BulkOpResult>("/documents/bulk-move", {
       method: "POST",
@@ -320,14 +564,19 @@ export const api = {
       }),
     }),
 
-  uploadAsync: (collectionId: number, file: File, title?: string) => {
+  uploadAsync: (
+    collectionId: number,
+    file: File,
+    opts: { title?: string; signal?: AbortSignal } = {},
+  ) => {
     const fd = new FormData();
     fd.append("collection_id", String(collectionId));
     fd.append("file", file);
-    if (title) fd.append("title", title);
+    if (opts.title) fd.append("title", opts.title);
     return request<{ job_id: number; status: IngestionStatus }>("/documents/upload-async", {
       method: "POST",
       body: fd,
+      signal: opts.signal,
     });
   },
 
@@ -350,87 +599,53 @@ export const api = {
       headers: { Accept: "text/event-stream" },
       signal,
     });
-    if (!res.ok || !res.body) {
-      throw new ApiError(res.status, null, `Stream failed: HTTP ${res.status}`);
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep = buf.indexOf("\n\n");
-      while (sep !== -1) {
-        const raw = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        sep = buf.indexOf("\n\n");
-        let evtName = "message";
-        let dataLine = "";
-        for (const line of raw.split("\n")) {
-          if (line.startsWith("event:")) evtName = line.slice(6).trim();
-          else if (line.startsWith("data:")) dataLine += line.slice(5).trim();
-        }
-        if (!dataLine) continue;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(dataLine);
-        } catch {
-          continue;
-        }
-        const data = parsed as Record<string, unknown>;
-        if (evtName === "progress") {
-          onEvent({
-            type: "progress",
-            job_id: Number(data.job_id),
-            status: data.status as IngestionStatus,
-            progress: Number(data.progress ?? 0),
-            processed_chunks: Number(data.processed_chunks ?? 0),
-            total_chunks: Number(data.total_chunks ?? 0),
-          });
-        } else if (evtName === "complete") {
-          onEvent({
-            type: "complete",
-            job_id: Number(data.job_id),
-            document_id: (data.document_id as number | null) ?? null,
-          });
-        } else if (evtName === "error") {
-          onEvent({
-            type: "error",
-            job_id: data.job_id as number | undefined,
-            message: String(data.message ?? "ingestion error"),
-          });
-        }
-      }
+    if (!res.ok) throw await toApiError(res);
+    for await (const message of readSse(res)) {
+      const e = ingestionEvent(message);
+      if (e) onEvent(e);
     }
   },
 
-  query: (body: { question: string; collection_id: number | null; top_k: number; session_id?: string }) =>
-    request<QueryResponse>("/query", { method: "POST", body: JSON.stringify(body) }),
-  history: async (limit = 50): Promise<QueryLog[]> => {
-    const page = await request<Page<QueryLog>>(`/query/history?limit=${limit}`);
+  query: (body: {
+    question: string;
+    collection_id: number | null;
+    top_k: number;
+    session_id?: string;
+  }) => request<QueryResponse>("/query", { method: "POST", body: JSON.stringify(body) }),
+  // `source`: the chat's answers or the Query page's; both when left out.
+  history: async (limit = 50, source?: LogSource): Promise<QueryLog[]> => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (source) q.set("source", source);
+    const page = await request<Page<QueryLog>>(`/query/history?${q.toString()}`);
     return page.items;
   },
-  historyPage: (params: { limit?: number; cursor?: number; session_id?: string }) => {
+  historyPage: (params: {
+    limit?: number;
+    cursor?: number;
+    session_id?: string;
+    collection_id?: number;
+    source?: LogSource;
+    // Text the question contains (literal, case-insensitive).
+    q?: string;
+  }) => {
     const q = new URLSearchParams();
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.cursor !== undefined) q.set("cursor", String(params.cursor));
     if (params.session_id) q.set("session_id", params.session_id);
+    if (params.collection_id !== undefined) q.set("collection_id", String(params.collection_id));
+    if (params.source) q.set("source", params.source);
+    if (params.q?.trim()) q.set("q", params.q.trim());
     return request<Page<QueryLog>>(`/query/history?${q.toString()}`);
   },
 
-  agentChat: (body: { message: string; thread_id?: string | null; collection_id?: number | null; top_k?: number }) =>
-    request<AgentChatResponse>("/agent/chat", {
-      method: "POST",
-      body: JSON.stringify({
-        message: body.message,
-        thread_id: body.thread_id ?? null,
-        collection_id: body.collection_id ?? null,
-      }),
-    }),
-
   agentChatStream: async (
-    body: { message: string; thread_id?: string | null; collection_id?: number | null; top_k?: number },
+    body: {
+      message: string;
+      thread_id?: string | null;
+      collection_id?: number | null;
+      document_id?: number | null;
+      top_k?: number;
+    },
     onEvent: (e: AgentStreamEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> => {
@@ -441,93 +656,26 @@ export const api = {
         message: body.message,
         thread_id: body.thread_id ?? null,
         collection_id: body.collection_id ?? null,
+        document_id: body.document_id ?? null,
         top_k: body.top_k ?? 5,
       }),
       signal,
     });
-    if (!res.ok || !res.body) {
-      throw new ApiError(res.status, null, `Stream failed: HTTP ${res.status}`);
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep = buf.indexOf("\n\n");
-      while (sep !== -1) {
-        const raw = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        sep = buf.indexOf("\n\n");
-        let evtName = "message";
-        let dataLine = "";
-        for (const line of raw.split("\n")) {
-          if (line.startsWith("event:")) evtName = line.slice(6).trim();
-          else if (line.startsWith("data:")) dataLine += line.slice(5).trim();
-        }
-        if (!dataLine) continue;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(dataLine);
-        } catch {
-          continue;
-        }
-        const data = parsed as Record<string, unknown>;
-        if (evtName === "thread")
-          onEvent({ type: "thread", thread_id: String(data.thread_id) });
-        else if (evtName === "node_start")
-          onEvent({ type: "node_start", node: String(data.node) });
-        else if (evtName === "node_end")
-          onEvent({
-            type: "node_end",
-            node: String(data.node),
-            summary: (data.summary as { action?: string; chunks?: number }) ?? {},
-          });
-        else if (evtName === "token")
-          onEvent({
-            type: "token",
-            node: (data.node as string | null) ?? null,
-            delta: String(data.delta ?? ""),
-          });
-        else if (evtName === "final")
-          onEvent({
-            type: "final",
-            payload: {
-              thread_id: String(data.thread_id),
-              action: (data.action as string | null) ?? null,
-              answer: String(data.answer ?? ""),
-              citations: (data.citations as AgentCitation[]) ?? [],
-              metadata: data.metadata as AgentTurnMetadata,
-            },
-          });
-        else if (evtName === "error")
-          onEvent({ type: "error", message: String(data.message ?? "stream error") });
-      }
+    if (!res.ok) throw await toApiError(res);
+    for await (const message of readSse(res)) {
+      const e = agentEvent(message);
+      if (e) onEvent(e);
     }
   },
 
-  listConversations: async (params?: {
-    limit?: number;
-    user_number?: string;
-    is_saved?: boolean;
-    channel?: string;
-  }): Promise<Conversation[]> => {
-    const q = new URLSearchParams();
-    if (params?.limit !== undefined) q.set("limit", String(params.limit));
-    if (params?.user_number) q.set("user_number", params.user_number);
-    if (params?.is_saved !== undefined) q.set("is_saved", String(params.is_saved));
-    if (params?.channel) q.set("channel", params.channel);
-    const qs = q.toString();
-    const page = await request<Page<Conversation>>(`/conversations${qs ? `?${qs}` : ""}`);
-    return page.items;
-  },
   listConversationsPage: (params: {
     limit?: number;
     cursor?: number;
     user_number?: string;
     is_saved?: boolean;
     channel?: string;
+    // Text the thread's title contains (literal, case-insensitive).
+    q?: string;
   }) => {
     const q = new URLSearchParams();
     if (params.limit !== undefined) q.set("limit", String(params.limit));
@@ -535,9 +683,11 @@ export const api = {
     if (params.user_number) q.set("user_number", params.user_number);
     if (params.is_saved !== undefined) q.set("is_saved", String(params.is_saved));
     if (params.channel) q.set("channel", params.channel);
+    if (params.q?.trim()) q.set("q", params.q.trim());
     return request<Page<Conversation>>(`/conversations?${q.toString()}`);
   },
 
+  getConversation: (threadId: string) => request<Conversation>(`/conversations/${threadId}`),
   getConversationMessages: (threadId: string) =>
     request<ConversationMessage[]>(`/conversations/${threadId}/messages`),
 
@@ -566,12 +716,12 @@ export const api = {
     return request<SavedNote[]>(`/notes${qs ? `?${qs}` : ""}`);
   },
 
-  deleteNote: (noteId: number) =>
-    request<void>(`/notes/${noteId}`, { method: "DELETE" }),
+  deleteNote: (noteId: number) => request<void>(`/notes/${noteId}`, { method: "DELETE" }),
 
   evalResults: (limit = 20) => request<EvalRunSummary[]>(`/eval/results?limit=${limit}`),
+  getEvalRun: (runId: string) => request<EvalReport>(`/eval/results/${encodeURIComponent(runId)}`),
   runEval: (body: {
-    dataset: unknown[];
+    dataset: EvalItem[];
     collection_id: number;
     top_k: number;
     concurrency: number;
@@ -595,7 +745,15 @@ export function fmtDate(iso: string): string {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${yyyy}-${mo}-${dd} ${hh}:${mm}`;
+  return `${yyyy}-${mo}-${dd} ${hh}:${mm} UTC`;
+}
+
+/** A turn's time: just the time for today's turns, with the date for older ones. */
+export function fmtTurnTime(iso: string): string {
+  const d = new Date(iso);
+  const day = d.toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  return day === today ? fmtTimestamp(d) : `${day} ${fmtTimestamp(d)}`;
 }
 
 export function fmtNumber(n: number | null | undefined): string {
@@ -608,32 +766,25 @@ export function fmtCost(n: number | null | undefined): string {
   return `$${n.toFixed(4)}`;
 }
 
+export const COSINE_HINT =
+  "Cosine similarity between the chunk and the question. — means only full-text search found it.";
+
+export function fmtCosine(cosine: number | null | undefined): string {
+  return cosine === null || cosine === undefined ? "COS —" : `COS ${cosine.toFixed(3)}`;
+}
+
 export function fmtPct(n: number | null | undefined, decimals = 1): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
   return `${(n * 100).toFixed(decimals)}%`;
 }
 
+// "us.anthropic.claude-sonnet-4-5-20250929-v1:0" -> "claude-sonnet-4-5-20250929"
+export function shortModel(model: string | null | undefined): string {
+  if (!model) return "—";
+  return model.replace(/^(us|eu|apac|global)\.anthropic\./, "").replace(/-v\d+:\d+$/, "");
+}
+
 export function truncate(s: string, n = 60): string {
   if (!s) return "";
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
-}
-
-const MODEL_COST_PER_1M: Record<string, { input: number; output: number }> = {
-  "gpt-4o-mini":                                    { input: 0.15,  output: 0.60  },
-  "gpt-4o":                                         { input: 2.50,  output: 10.00 },
-  "gemini-2.5-flash":                               { input: 0.15,  output: 0.60  },
-  "us.anthropic.claude-sonnet-4-20250514-v1:0":     { input: 3.00,  output: 15.00 },
-  "us.anthropic.claude-haiku-4-5-20251001-v1:0":    { input: 0.80,  output: 4.00  },
-};
-
-export function estimateCost(
-  tokensIn: number,
-  tokensOut: number,
-  model: string | null | undefined,
-): string {
-  if (!model) return fmtCost((tokensIn + tokensOut) / 1_000_000 * 0.5);
-  const rates = MODEL_COST_PER_1M[model];
-  if (!rates) return fmtCost((tokensIn + tokensOut) / 1_000_000 * 0.5);
-  const cost = (tokensIn / 1_000_000) * rates.input + (tokensOut / 1_000_000) * rates.output;
-  return fmtCost(cost);
 }

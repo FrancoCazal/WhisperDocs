@@ -20,6 +20,34 @@ from app.services.retrieval_pipeline import retrieve as retrieve_pipeline
 logger = get_logger(__name__)
 
 
+class EvalAbortedError(RuntimeError):
+    """Too many judge calls failed for the report to mean anything.
+
+    A failed judge call scores the item as wrong (and as hallucinated), so a
+    retired or misconfigured judge model would otherwise produce a complete
+    report with ~0% accuracy instead of an error.
+    """
+
+    def __init__(self, judge_errors: int, total: int, max_rate: float, first_error: str):
+        self.judge_errors = judge_errors
+        self.total = total
+        self.max_rate = max_rate
+        self.first_error = first_error
+        super().__init__(
+            f"Eval aborted: {judge_errors}/{total} items had a failed judge call "
+            f"(max allowed rate {max_rate:.0%}). Check AGENT_MODEL_EVAL_JUDGE."
+        )
+
+
+def _raise_if_judge_unreliable(results: list[EvalResult], judge_errors: int) -> None:
+    max_rate = settings.agent.eval_max_judge_error_rate
+    if not results or judge_errors / len(results) <= max_rate:
+        return
+    first = next(r for r in results if r.correctness.error or r.hallucination.error)
+    judged = first.correctness if first.correctness.error else first.hallucination
+    raise EvalAbortedError(judge_errors, len(results), max_rate, judged.reasoning)
+
+
 class RAGEvaluator:
     """Orchestrates evaluation of the RAG pipeline against a test dataset."""
 
@@ -49,6 +77,7 @@ class RAGEvaluator:
         tasks = [self._evaluate_with_semaphore(item) for item in dataset]
         results = await asyncio.gather(*tasks)
         metrics = compute_metrics(results, self.model)
+        _raise_if_judge_unreliable(results, metrics.judge_errors)
         return EvalReport(
             run_id=str(uuid.uuid4()),
             timestamp=datetime.now(timezone.utc),
@@ -81,7 +110,10 @@ class RAGEvaluator:
             tokens_in = 0
             tokens_out = 0
         else:
-            user_prompt = build_user_prompt(item.question, chunks)
+            # Same prompt and budget as the chat. Retrieval metrics below
+            # use every retrieved chunk; citations and the hallucination
+            # judge use the ones the model saw.
+            user_prompt, included = build_user_prompt(item.question, chunks)
             messages = [{"role": "user", "content": user_prompt}]
 
             if settings.agent.rag_structured_output:
@@ -114,17 +146,13 @@ class RAGEvaluator:
                 )
                 answer = llm_response.text
 
-            answer, _used = validate_citations(answer, len(chunks))
+            answer, _used = validate_citations(answer, len(included))
 
-            if (
-                settings.agent.citation_semantic_validation
-                and answer
-                and chunks
-            ):
+            if settings.agent.citation_semantic_validation and answer and included:
                 try:
                     validation = await validate_citations_semantic(
                         answer=answer,
-                        included_chunks=chunks,
+                        included_chunks=included,
                         embedder=self.embedder,
                         min_similarity=settings.agent.citation_semantic_min_similarity,
                     )
@@ -145,7 +173,7 @@ class RAGEvaluator:
 
         correctness, hallucination = await asyncio.gather(
             self.judge.judge_correctness(item, answer),
-            self.judge.judge_hallucination(answer, [c.text for c in chunks]),
+            self.judge.judge_hallucination(answer, [c.text for c in included]),
         )
 
         retrieved_sources = [c.document_title for c in chunks]

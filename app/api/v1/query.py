@@ -1,10 +1,11 @@
 import time
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_db
+from app.db import contains_text, get_db
 from app.models import QueryLog
 from app.schemas.pagination import Page
 from app.schemas.query import (
@@ -75,7 +76,8 @@ async def query(
             ),
         )
 
-    user_prompt = build_user_prompt(payload.question, chunks)
+    # The citations index into the chunks that fit the context budget.
+    user_prompt, included = build_user_prompt(payload.question, chunks)
 
     try:
         llm_response = await provider.generate(
@@ -89,6 +91,9 @@ async def query(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
     latency_ms = int((time.perf_counter() - start) * 1000)
+    cost_usd = estimate_cost_usd(
+        llm_response.model, llm_response.tokens_input, llm_response.tokens_output
+    )
 
     log = QueryLog(
         question=payload.question,
@@ -99,9 +104,7 @@ async def query(
         tokens_input=llm_response.tokens_input,
         tokens_output=llm_response.tokens_output,
         latency_ms=latency_ms,
-        cost_usd=estimate_cost_usd(
-            llm_response.model, llm_response.tokens_input, llm_response.tokens_output
-        ),
+        cost_usd=cost_usd,
         session_id=payload.session_id,
     )
     db.add(log)
@@ -116,8 +119,9 @@ async def query(
                 document_title=c.document_title,
                 chunk_index=c.chunk_index,
                 relevance=c.relevance,
+                cosine=c.cosine,
             )
-            for c in chunks
+            for c in included
         ],
         metadata=QueryMetadata(
             model=llm_response.model,
@@ -125,27 +129,47 @@ async def query(
             tokens_output=llm_response.tokens_output,
             latency_ms=latency_ms,
             chunks_retrieved=len(chunks),
+            cost_usd=cost_usd,
         ),
     )
 
 
 @router.get("/history", response_model=Page[QueryLogRead])
 async def query_history(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = None,
-    session_id: str | None = None,
+    session_id: str | None = Query(default=None, max_length=50),
+    collection_id: int | None = None,
+    source: Literal["chat", "query"] | None = Query(
+        default=None, description="chat: the agent's answers; query: POST /query's"
+    ),
+    q: str | None = Query(default=None, max_length=200, description="Text the question contains"),
     db: AsyncSession = Depends(get_db),
 ) -> Page[QueryLogRead]:
-    q = select(QueryLog).order_by(QueryLog.id.desc()).limit(limit + 1)
+    filters = []
+    # The agent logs its node as agent_action; /query logs none.
+    if source == "chat":
+        filters.append(QueryLog.agent_action.is_not(None))
+    elif source == "query":
+        filters.append(QueryLog.agent_action.is_(None))
+    if q and q.strip():
+        filters.append(contains_text(QueryLog.question, q.strip()))
+    if session_id:
+        filters.append(QueryLog.session_id == session_id)
+    if collection_id is not None:
+        filters.append(QueryLog.collection_id == collection_id)
+    q = select(QueryLog).where(*filters).order_by(QueryLog.id.desc()).limit(limit + 1)
     if cursor is not None:
         q = q.where(QueryLog.id < cursor)
-    if session_id:
-        q = q.where(QueryLog.session_id == session_id)
     rows = list((await db.execute(q)).scalars().all())
     has_more = len(rows) > limit
     items = rows[:limit]
     next_cursor = items[-1].id if has_more and items else None
+    total = None
+    if cursor is None:
+        total = await db.scalar(select(func.count(QueryLog.id)).where(*filters))
     return Page[QueryLogRead](
         items=[QueryLogRead.model_validate(r) for r in items],
         next_cursor=next_cursor,
+        total=total,
     )

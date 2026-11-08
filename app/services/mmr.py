@@ -9,7 +9,12 @@ Score(c) = λ * relevance(c) − (1 − λ) * max_over_selected(I[doc(c) == doc(
 
 - λ = 1.0 → pure relevance (equivalent to no MMR).
 - λ = 0.0 → pure diversity (favor new docs even at relevance cost).
-- λ = 0.5 → balanced default.
+- λ = 0.5 → the default. The penalty (0.5) exceeds any relevance gap on a
+  0-1 scale, so in practice it picks top_k distinct documents. On the golden
+  set that took hybrid precision@5 from 90% to 27% (recall 94% → 100%).
+
+`relevance` is the score the candidates arrive ordered by: the fused RRF
+score, or the cross-encoder score after reranking (see RetrievedChunk).
 """
 
 from __future__ import annotations

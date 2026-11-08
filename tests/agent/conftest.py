@@ -181,7 +181,10 @@ def mock_session_local(monkeypatch):
 def rag_chunk():
     from app.services.retriever import RetrievedChunk
 
-    def _build(idx: int = 0, rel: float = 0.9):
+    _unset = object()
+
+    def _build(idx: int = 0, rel: float = 0.9, cosine=_unset):
+        # Default: a chunk the vector leg found, so its cosine equals `rel`.
         return RetrievedChunk(
             chunk_id=100 + idx,
             document_id=1,
@@ -189,6 +192,7 @@ def rag_chunk():
             chunk_index=idx,
             text=f"chunk text {idx}",
             relevance=rel,
+            cosine=rel if cosine is _unset else cosine,
         )
 
     return _build

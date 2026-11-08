@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agent.nodes.answer_direct import answer_direct_node
 from app.agent.nodes.ask_clarification import ask_clarification_node
 from app.agent.nodes.check_compaction import check_compaction_node
 from app.agent.nodes.decide_action import decide_action_node
+import app.agent.nodes.search_docs as search_docs_module
 from app.agent.nodes.search_docs import search_docs_node
 from app.agent.nodes.summarize import summarize_node
+from app.agent.utils.fixed_replies import fixed_reply
+from app.agent.utils.messages import FAILED_TURN
+
+
+def assert_stamped(message: AIMessage, action: str) -> None:
+    """The answer says which node wrote it and when, so a reopened thread
+    shows both (frontend review P3)."""
+    assert message.additional_kwargs["action"] == action
+    assert datetime.fromisoformat(message.additional_kwargs["timestamp"]).tzinfo is not None
 
 
 # ---------- check_compaction ----------
@@ -75,6 +87,10 @@ async def test_decide_action_classifies_search(
     assert result["pending_action"] == "search_docs"
     assert result["metadata"]["classifier_reason"] == "technical"
     assert result["metadata"]["classifier_confidence"] == "high"
+    # Its usage in its own fields, not in the answer's generation_*.
+    assert result["metadata"]["classifier_model"] == "fake-classifier"
+    assert result["metadata"]["classifier_tokens_input"] == 50
+    assert not any(k.startswith("generation_") for k in result["metadata"])
 
 
 async def test_decide_action_classifies_direct(
@@ -97,9 +113,10 @@ async def test_decide_action_falls_back_on_provider_error(
     mock_llm_service_for("app.agent.nodes.decide_action", fake_provider)
 
     result = await decide_action_node({"messages": [HumanMessage(content="hi")]})
-    # Fallback on classifier error is now `ask_clarification` (more conservative
-    # than the previous `answer_direct`, which could hallucinate).
-    assert result["pending_action"] == "ask_clarification"
+    # search_docs answers only from the documents, on its own model: not
+    # clarification, which calls a model too and hid the outage (BE-9).
+    assert result["pending_action"] == "search_docs"
+    assert result["metadata"]["classifier_reason"] == "classifier_failure_fallback"
     assert result["metadata"]["classifier_confidence"] == "low"
 
 
@@ -133,13 +150,25 @@ async def test_decide_action_classifies_out_of_scope(
 async def test_out_of_scope_node_returns_canned_message():
     from app.agent.nodes.out_of_scope import out_of_scope_node
 
-    result = await out_of_scope_node({"messages": [HumanMessage(content="clima madrid?")]})
+    result = await out_of_scope_node(
+        {"messages": [HumanMessage(content="¿qué clima hace en Madrid?")]}
+    )
     assert len(result["messages"]) == 1
     msg = result["messages"][0]
     assert isinstance(msg, AIMessage)
     assert "fuera del alcance" in msg.content.lower()
     # No LLM call → no model recorded.
     assert result["metadata"]["generation_model"] is None
+    assert_stamped(msg, "out_of_scope")
+
+
+async def test_out_of_scope_node_answers_in_the_language_of_the_question():
+    from app.agent.nodes.out_of_scope import out_of_scope_node
+
+    result = await out_of_scope_node(
+        {"messages": [HumanMessage(content="What is the weather in Madrid?")]}
+    )
+    assert "outside the scope" in result["messages"][0].content
 
 
 # ---------- ask_clarification ----------
@@ -161,6 +190,7 @@ async def test_ask_clarification_returns_ai_message(fake_provider, mock_llm_serv
     assert len(result["messages"]) == 1
     assert isinstance(result["messages"][0], AIMessage)
     assert "querés saber" in result["messages"][0].content
+    assert_stamped(result["messages"][0], "ask_clarification")
 
 
 async def test_ask_clarification_falls_back_on_error(fake_provider, mock_llm_service_for):
@@ -193,6 +223,7 @@ async def test_answer_direct_returns_ai_message(fake_provider, mock_llm_service_
     result = await answer_direct_node({"messages": [HumanMessage(content="hola")]})
     assert isinstance(result["messages"][0], AIMessage)
     assert "Hola" in result["messages"][0].content
+    assert_stamped(result["messages"][0], "answer_direct")
 
 
 # ---------- search_docs ----------
@@ -237,6 +268,71 @@ async def test_search_docs_with_chunks(
     assert result["metadata"]["retrieval_chunks_count"] == 2
     assert result["metadata"]["retrieval_top_relevance"] == 0.9
     assert result["metadata"]["collection_id_active"] == 3
+    assert_stamped(result["messages"][0], "search_docs")
+
+
+async def test_search_docs_top_relevance_is_the_best_cosine(
+    fake_provider,
+    mock_llm_service_for,
+    mock_embedder,
+    mock_retriever,
+    mock_session_local,
+    rag_chunk,
+    monkeypatch,
+):
+    """chunks[0] leads on the fused score but only full-text search found it."""
+    mock_retriever([rag_chunk(0, rel=1.0, cosine=None), rag_chunk(1, rel=0.8, cosine=0.55)])
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    monkeypatch.setattr(
+        "app.agent.utils.query_rewrite.llm_service_for",
+        lambda _n: (fake_provider, "fake", 0.0),
+    )
+
+    result = await search_docs_node(
+        {"messages": [HumanMessage(content="¿quién es tino?")], "collection_id": 3}
+    )
+
+    assert result["metadata"]["retrieval_top_relevance"] == 0.55
+    assert [c["cosine"] for c in result["retrieved_chunks"]] == [None, 0.55]
+
+
+async def test_search_docs_searches_only_the_threads_document(
+    fake_provider,
+    mock_llm_service_for,
+    mock_embedder,
+    mock_session_local,
+    rag_chunk,
+    monkeypatch,
+):
+    calls: list[dict] = []
+
+    async def fake_retrieve(**kwargs):
+        calls.append(kwargs)
+        return [rag_chunk(0)]
+
+    monkeypatch.setattr("app.agent.nodes.search_docs.retrieve_pipeline", fake_retrieve)
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    monkeypatch.setattr(
+        "app.agent.utils.query_rewrite.llm_service_for",
+        lambda _n: (fake_provider, "fake", 0.0),
+    )
+
+    result = await search_docs_node(
+        {
+            "messages": [HumanMessage(content="¿quién es tino?")],
+            "collection_id": 3,
+            "document_id": 12,
+        }
+    )
+
+    assert (calls[0]["collection_id"], calls[0]["document_id"]) == (3, 12)
+    assert result["metadata"]["document_id_active"] == 12
+
+
+def _rag_calls(provider) -> list:
+    """Calls with the RAG system prompt: query rewrite may use the same fake."""
+    prompt = search_docs_module.RAG_SYSTEM_PROMPT_AGENT
+    return [c for c in provider.calls if c["kwargs"].get("system") == prompt]
 
 
 async def test_search_docs_empty_retrieval(
@@ -269,22 +365,94 @@ async def test_search_docs_empty_retrieval(
     }
     result = await search_docs_node(state)
 
+    # Nothing indexed in scope: a fixed answer, and no RAG call (audit A12).
     assert len(result["messages"]) == 1
     assert isinstance(result["messages"][0], AIMessage)
-    assert "No tengo información suficiente" in result["messages"][0].content
+    assert result["messages"][0].content == fixed_reply("no_documents", state["messages"])
+    # An empty collection is an answer, not a failure (audit N4).
+    assert FAILED_TURN not in result["messages"][0].additional_kwargs
+    assert result["metadata"]["turn_failed"] is False
+    assert not _rag_calls(fake_provider)
     assert result["retrieved_chunks"] == []
     assert result["metadata"]["retrieval_chunks_count"] == 0
-    assert result["metadata"]["retrieval_top_relevance"] == 0.0
+    assert result["metadata"]["retrieval_top_relevance"] is None
+    assert result["metadata"]["retrieval_failed"] is False
+    assert result["metadata"]["generation_tokens_input"] == 0
+
+
+async def test_search_docs_retrieval_error_is_not_an_empty_collection(
+    fake_provider,
+    mock_llm_service_for,
+    mock_embedder,
+    mock_session_local,
+    monkeypatch,
+):
+    async def broken_retrieve(**_kwargs):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(search_docs_module, "retrieve_pipeline", broken_retrieve)
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    monkeypatch.setattr(
+        "app.agent.utils.query_rewrite.llm_service_for",
+        lambda _n: (fake_provider, "fake", 0.0),
+    )
+    observed: list[float] = []
+    monkeypatch.setattr(search_docs_module.retrieval_top_relevance, "observe", observed.append)
+
+    messages = [HumanMessage(content="¿algo?")]
+    result = await search_docs_node({"messages": messages, "collection_id": None})
+
+    assert result["messages"][0].content == fixed_reply("retrieval_failed", messages)
+    assert result["messages"][0].additional_kwargs[FAILED_TURN] is True
+    assert result["metadata"]["retrieval_failed"] is True
+    assert result["metadata"]["turn_failed"] is True
+    assert not _rag_calls(fake_provider)
+    assert observed == []  # a failure is not a 0.0 relevance
+
+
+async def test_search_docs_uses_the_top_k_the_client_sent(
+    fake_provider,
+    mock_llm_service_for,
+    mock_embedder,
+    mock_session_local,
+    rag_chunk,
+    monkeypatch,
+):
+    seen: list[int] = []
+
+    async def recording_retrieve(**kwargs):
+        seen.append(kwargs["top_k"])
+        return [rag_chunk(0, 0.8)]
+
+    monkeypatch.setattr(search_docs_module, "retrieve_pipeline", recording_retrieve)
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    monkeypatch.setattr(
+        "app.agent.utils.query_rewrite.llm_service_for",
+        lambda _n: (fake_provider, "fake", 0.0),
+    )
+    state = {"messages": [HumanMessage(content="¿quién es tino?")], "collection_id": None}
+
+    await search_docs_node(state, {"configurable": {"thread_id": "t", "top_k": 12}})
+    await search_docs_node(state)  # WhatsApp and direct calls send none
+
+    assert seen == [12, search_docs_module.settings.agent.retrieval_top_k]
 
 
 # ---------- summarize ----------
 
 
-async def test_summarize_early_return_when_short():
-    # len(messages) <= K (default 8) → no-op
+async def test_summarize_early_return_when_short(fake_provider, mock_llm_service_for, monkeypatch):
+    from app.config import settings
+
+    # len(messages) <= K → no-op. K pinned: a K_RECENT from the environment
+    # (the container's .env sets 2) would make this compact. And a fake
+    # provider, so a broken early return fails here instead of calling a model.
+    monkeypatch.setattr(settings.agent, "k_recent", 8)
+    mock_llm_service_for("app.agent.nodes.summarize", fake_provider)
     state = {"messages": [HumanMessage(content="hi")] * 3}
     result = await summarize_node(state)
     assert result == {"pending_action": None}
+    assert fake_provider.calls == []
 
 
 async def test_summarize_writes_progressive_summary(

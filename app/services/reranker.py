@@ -13,6 +13,7 @@ optional `[rerank]` install extra.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import Protocol
 
 from app.logging_config import get_logger
@@ -96,16 +97,8 @@ class LocalCrossEncoderReranker:
             if normalized < self.score_threshold:
                 dropped += 1
                 continue
-            result.append(
-                RetrievedChunk(
-                    chunk_id=chunk.chunk_id,
-                    document_id=chunk.document_id,
-                    document_title=chunk.document_title,
-                    chunk_index=chunk.chunk_index,
-                    text=chunk.text,
-                    relevance=round(float(normalized), 4),
-                )
-            )
+            # `replace` keeps the chunk's cosine; only the ordering score changes.
+            result.append(replace(chunk, relevance=round(float(normalized), 4)))
         if dropped > 0:
             logger.info(
                 "reranker_threshold_dropped",

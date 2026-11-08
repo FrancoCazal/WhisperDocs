@@ -2,10 +2,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_db
+from app.agent.utils.messages import FAILED_TURN
+from app.db import contains_text, get_db
 from app.models import Conversation, SavedNote
 from app.schemas.conversation import (
     ConversationMessage,
@@ -14,6 +15,7 @@ from app.schemas.conversation import (
 )
 from app.schemas.note import SavedNoteCreate, SavedNoteRead
 from app.schemas.pagination import Page
+from app.services.llm.pricing import estimate_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -27,24 +29,34 @@ async def list_conversations(
     user_number: str | None = None,
     is_saved: bool | None = None,
     channel: str | None = None,
+    q: str | None = Query(
+        default=None, max_length=200, description="Text the thread's title contains"
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> Page[ConversationRead]:
-    stmt = select(Conversation).order_by(Conversation.id.desc()).limit(limit + 1)
+    filters = []
+    if q and q.strip():
+        filters.append(contains_text(Conversation.title, q.strip()))
+    if user_number is not None:
+        filters.append(Conversation.user_number == user_number)
+    if is_saved is not None:
+        filters.append(Conversation.is_saved == is_saved)
+    if channel is not None:
+        filters.append(Conversation.channel == channel)
+    stmt = select(Conversation).where(*filters).order_by(Conversation.id.desc()).limit(limit + 1)
     if cursor is not None:
         stmt = stmt.where(Conversation.id < cursor)
-    if user_number is not None:
-        stmt = stmt.where(Conversation.user_number == user_number)
-    if is_saved is not None:
-        stmt = stmt.where(Conversation.is_saved == is_saved)
-    if channel is not None:
-        stmt = stmt.where(Conversation.channel == channel)
     rows = list((await db.execute(stmt)).scalars().all())
     has_more = len(rows) > limit
     items = rows[:limit]
     next_cursor = items[-1].id if has_more and items else None
+    total = None
+    if cursor is None:
+        total = await db.scalar(select(func.count(Conversation.id)).where(*filters))
     return Page[ConversationRead](
         items=[ConversationRead.model_validate(c) for c in items],
         next_cursor=next_cursor,
+        total=total,
     )
 
 
@@ -53,6 +65,12 @@ async def _get_conversation_or_404(db: AsyncSession, thread_id: str) -> Conversa
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     return conv
+
+
+@router.get("/{thread_id}", response_model=ConversationRead)
+async def get_conversation(thread_id: str, db: AsyncSession = Depends(get_db)) -> Conversation:
+    """One thread, for a client that has its id (a link) but not a list page holding it."""
+    return await _get_conversation_or_404(db, thread_id)
 
 
 @router.get("/{thread_id}/messages", response_model=list[ConversationMessage])
@@ -79,13 +97,26 @@ async def get_conversation_messages(
             continue
         content = m.content if isinstance(m.content, str) else str(m.content)
         kwargs = getattr(m, "additional_kwargs", None) or {}
+        metadata = kwargs.get("metadata")
+        if role == "assistant" and isinstance(metadata, dict):
+            # Priced on read, so threads written before the field have it too.
+            metadata = {
+                **metadata,
+                "cost_usd": estimate_cost_usd(
+                    metadata.get("model"),
+                    metadata.get("tokens_input", 0),
+                    metadata.get("tokens_output", 0),
+                ),
+            }
         out.append(
             ConversationMessage(
                 role=role,
                 content=content,
                 timestamp=kwargs.get("timestamp"),
+                action=kwargs.get("action") if role == "assistant" else None,
                 citations=kwargs.get("citations"),
-                metadata=kwargs.get("metadata"),
+                metadata=metadata,
+                failed=bool(kwargs.get(FAILED_TURN)),
             )
         )
     return out
@@ -132,7 +163,7 @@ async def create_note_in_conversation(
     thread_id: str,
     payload: SavedNoteCreate,
     db: AsyncSession = Depends(get_db),
-) -> SavedNote:
+) -> SavedNoteRead:
     conv = await _get_conversation_or_404(db, thread_id)
     note = SavedNote(
         conversation_id=conv.id,
@@ -143,4 +174,4 @@ async def create_note_in_conversation(
     db.add(note)
     await db.commit()
     await db.refresh(note)
-    return note
+    return SavedNoteRead.model_validate(note).model_copy(update={"thread_id": conv.thread_id})

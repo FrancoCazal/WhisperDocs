@@ -1,27 +1,30 @@
-import { createRouter, useRouter } from "@tanstack/react-router";
+import { createRouter, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { QueryClient } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
+import { Btn, btnCls } from "@/components/ui-kit/Button";
+import { LoadingLine } from "@/components/ui-kit/EmptyState";
 
-function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+// A route can throw anything, not only an Error.
+function DefaultErrorComponent({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
   return (
     <div className="min-h-screen flex items-center justify-center bg-surface px-6">
       <div className="max-w-md w-full border border-error/40 bg-surface-container p-6">
         <div className="label-sm text-error mb-3">SYSTEM_FAULT // UNHANDLED_EXCEPTION</div>
         <pre className="body-sm text-text-primary whitespace-pre-wrap break-words mb-6">
-          {error.message}
+          {error instanceof Error ? error.message : String(error)}
         </pre>
         <div className="flex gap-3">
-          <button
-            onClick={() => { router.invalidate(); reset(); }}
-            className="h-9 px-4 label-sm bg-text-primary text-surface hover:bg-transparent hover:text-text-primary border border-text-primary"
+          <Btn
+            variant="primary"
+            onClick={() => {
+              router.invalidate();
+              reset();
+            }}
           >
             RETRY ↻
-          </button>
-          <a
-            href="/"
-            className="h-9 px-4 label-sm border border-text-primary text-text-primary inline-flex items-center hover:bg-text-primary hover:text-surface"
-          >
+          </Btn>
+          <a href="/" className={btnCls("secondary")}>
             RETURN HOME
           </a>
         </div>
@@ -45,8 +48,14 @@ export const getRouter = () => {
     routeTree,
     context: { queryClient },
     scrollRestoration: true,
+    // A link's page starts loading when the pointer rests on it or it takes
+    // focus. The routes have no loaders: this fetches their code only.
+    defaultPreload: "intent",
     defaultPreloadStaleTime: 0,
     defaultErrorComponent: DefaultErrorComponent,
+    // In place of the page while its code loads, and in the SPA shell, which
+    // is built without a page.
+    defaultPendingComponent: () => <LoadingLine />,
   });
 
   return router;

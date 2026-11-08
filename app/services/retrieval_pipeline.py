@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.services.mmr import mmr_select
 from app.services.reranker import NoopReranker, Reranker, get_reranker
-from app.services.retriever import RetrievedChunk, VectorRetriever
+from app.services.retriever import DEFAULT_CANDIDATE_POOL, RetrievedChunk, VectorRetriever
 
 
 async def retrieve(
@@ -21,12 +21,20 @@ async def retrieve(
     collection_id: int | None,
     top_k: int,
     reranker: Reranker | None = None,
+    document_id: int | None = None,
 ) -> list[RetrievedChunk]:
-    """Hybrid (vector + BM25) retrieval, optionally followed by cross-encoder rerank.
+    """Hybrid (vector + full-text) retrieval, optionally followed by cross-encoder rerank.
+
+    `document_id` searches only that document (see `VectorRetriever.retrieve`).
 
     When reranking is active, fetches `reranker_candidate_pool` chunks (default
     20), then narrows to `top_k` via the reranker. Without reranking, returns
     `top_k` directly from RRF fusion.
+
+    Each leg of the hybrid search returns `fetch_k` rows, and never fewer than
+    DEFAULT_CANDIDATE_POOL, which RRF needs to fuse well. A fixed depth of 20
+    capped the pool: with RERANKER_CANDIDATE_POOL=50 the reranker still got
+    at most 40 chunks, often fewer (audit R15).
     """
     retriever = VectorRetriever(db)
     active_reranker = reranker if reranker is not None else get_reranker()
@@ -42,6 +50,8 @@ async def retrieve(
         query_embedding=query_embedding,
         collection_id=collection_id,
         top_k=fetch_k,
+        candidate_pool=max(fetch_k, DEFAULT_CANDIDATE_POOL),
+        document_id=document_id,
     )
 
     if not candidates:

@@ -1,10 +1,11 @@
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.db import SessionLocal
-from app.eval.evaluator import RAGEvaluator
+from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judges import Judge
 from app.eval.schemas import EvalReport, TestItem
 from app.services.embedder import EmbeddingService, get_embedder
@@ -44,7 +45,11 @@ async def run_evaluation(
         top_k=payload.top_k,
         concurrency=payload.concurrency,
     )
-    report = await evaluator.run(payload.dataset)
+    try:
+        report = await evaluator.run(payload.dataset)
+    except EvalAbortedError as exc:
+        # The message carries counts only; the provider error stays in the logs.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{report.timestamp.strftime('%Y-%m-%dT%H-%M-%S')}_{report.run_id[:8]}.json"
@@ -53,13 +58,18 @@ async def run_evaluation(
     return report
 
 
+# The two readers below are plain `def`: FastAPI runs them in its threadpool,
+# so reading and parsing reports (~100 KB each) never blocks the event loop.
 @router.get("/results")
-async def list_results(limit: int = 20) -> list[dict]:
+def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
     if not RESULTS_DIR.exists():
         return []
-    files = sorted(RESULTS_DIR.glob("*.json"), reverse=True)[:limit]
-    summaries = []
-    for f in files:
+    summaries: list[dict] = []
+    # Newest first. Other JSON files live here too (the badge, agent evals), so
+    # the limit counts reports read, not files.
+    for f in sorted(RESULTS_DIR.glob("*.json"), reverse=True):
+        if len(summaries) == limit:
+            break
         try:
             report = EvalReport.model_validate_json(f.read_text(encoding="utf-8"))
             summaries.append(
@@ -71,10 +81,10 @@ async def list_results(limit: int = 20) -> list[dict]:
                     "accuracy": report.metrics.accuracy,
                     "hallucination_rate": report.metrics.hallucination_rate,
                     "avg_retrieval_precision": report.metrics.avg_retrieval_precision,
-                    "avg_retrieval_recall": report.metrics.avg_retrieval_recall,
+                    "avg_retrieval_recall": report.metrics.measured("avg_retrieval_recall"),
                     "avg_latency_ms": report.metrics.avg_latency_ms,
-                    "latency_p50_ms": report.metrics.latency_p50_ms,
-                    "latency_p95_ms": report.metrics.latency_p95_ms,
+                    "latency_p50_ms": report.metrics.measured("latency_p50_ms"),
+                    "latency_p95_ms": report.metrics.measured("latency_p95_ms"),
                     "estimated_cost_usd": report.metrics.estimated_cost_usd,
                     "file": f.name,
                 }
@@ -82,3 +92,24 @@ async def list_results(limit: int = 20) -> list[dict]:
         except Exception:
             continue
     return summaries
+
+
+# Only what the report saved: an older one has no recall, no latency
+# percentiles and no judge error flag, and their defaults would read as
+# measurements (frontend review FR-19).
+@router.get("/results/{run_id}", response_model=EvalReport, response_model_exclude_unset=True)
+def get_result(run_id: str) -> EvalReport:
+    """One run in full: every item's answers and judge verdicts."""
+    try:
+        canonical = str(uuid.UUID(run_id))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    # Reports are saved as "<timestamp>_<first 8 chars of the run id>.json".
+    for f in sorted(RESULTS_DIR.glob(f"*_{canonical[:8]}.json"), reverse=True):
+        try:
+            report = EvalReport.model_validate_json(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if report.run_id == canonical:
+            return report
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")

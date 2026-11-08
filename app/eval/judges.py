@@ -93,4 +93,5 @@ class Judge:
             return JudgeResult(
                 passed=False,
                 reasoning=f"Judge call failed: {type(exc).__name__}: {exc}"[:300],
+                error=True,
             )

@@ -1,24 +1,70 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Chunk, Document
+from app.services.fulltext import or_tsquery_sql
+
+# Rows each leg of the hybrid search returns before fusion.
+DEFAULT_CANDIDATE_POOL = 20
 
 
 @dataclass(frozen=True)
 class RetrievedChunk:
+    """A chunk returned by retrieval.
+
+    `relevance` is the score the list is ordered by, between 0 and 1:
+      - vector leg (`retrieve`): cosine similarity;
+      - full-text leg (`lexical_retrieve`): rank divided by the best rank;
+      - hybrid (`hybrid_retrieve`): RRF score divided by the best score
+        possible, so 1.0 means first in every leg that returned rows;
+      - after the cross-encoder: its score, min-max normalized.
+    `cosine` is the cosine similarity to the query, or None when only the
+    full-text leg returned the chunk.
+    """
+
     chunk_id: int
     document_id: int
     document_title: str
     chunk_index: int
     text: str
     relevance: float
+    cosine: float | None = None
+
+
+def fuse_rrf(
+    vector: list[RetrievedChunk],
+    lexical: list[RetrievedChunk],
+    top_k: int,
+    k_rrf: int = 60,
+) -> list[RetrievedChunk]:
+    """Reciprocal Rank Fusion of two ranked lists.
+
+    score(c) = sum over legs of 1 / (k_rrf + rank of c in that leg). The result
+    is ordered by that score; `relevance` is the score divided by the best one
+    possible (rank 1 in every leg that returned rows). Chunks keep the cosine
+    they got in the vector leg.
+    """
+    scores: dict[int, float] = {}
+    by_id: dict[int, RetrievedChunk] = {}
+    for leg in (vector, lexical):
+        for rank, chunk in enumerate(leg, start=1):
+            scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + 1.0 / (k_rrf + rank)
+            by_id.setdefault(chunk.chunk_id, chunk)  # vector leg first: keeps cosine
+
+    legs_with_rows = sum(1 for leg in (vector, lexical) if leg)
+    if not legs_with_rows:
+        return []
+    best_possible = legs_with_rows / (k_rrf + 1)
+
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
+    return [replace(by_id[cid], relevance=round(score / best_possible, 4)) for cid, score in ranked]
 
 
 class VectorRetriever:
-    """Cosine similarity + BM25 hybrid retrieval over pgvector + tsvector."""
+    """Hybrid retrieval: pgvector cosine + Postgres full-text, fused with RRF."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -28,34 +74,149 @@ class VectorRetriever:
         query_embedding: list[float],
         collection_id: int | None = None,
         top_k: int = 5,
+        document_id: int | None = None,
     ) -> list[RetrievedChunk]:
-        """Pure vector retrieval. Kept for back-compat / pure-semantic queries."""
-        distance = Chunk.embedding.cosine_distance(query_embedding).label("distance")
+        """Vector leg: nearest chunks by cosine distance.
 
+        `document_id` searches that document only, and then `collection_id`
+        is not applied: the document is the narrower scope, and it stays
+        right if the document moves to another collection.
+
+        On a large table Postgres walks the HNSW index in distance order and
+        applies the collection filter afterwards, over only `hnsw.ef_search`
+        candidates (40). A collection that is a small share of the corpus then
+        comes back short, or empty. Iterative scan (pgvector >= 0.8) keeps
+        walking until LIMIT rows pass the filter. `relaxed_order` may return
+        rows slightly out of order, so they are re-sorted below. SET LOCAL
+        lasts until the session's transaction ends.
+
+        Iterative scan still stops early when it reaches
+        `hnsw.max_scan_tuples` or runs out of graph: HNSW does not guarantee
+        that every element is reachable, and near-duplicate vectors make that
+        worse. So when a filtered search returns fewer than `top_k` rows, it
+        is repeated as an exact scan of the collection's chunks. That costs a
+        distance per chunk of the collection, and it only happens when the
+        collection is small next to the corpus, or has fewer than `top_k`
+        chunks.
+        """
+        await self.db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
+        rows = await self._nearest(
+            query_embedding, collection_id, top_k, exact=False, document_id=document_id
+        )
+        filtered = collection_id is not None or document_id is not None
+        if filtered and len(rows) < top_k:
+            rows = await self._nearest(
+                query_embedding, collection_id, top_k, exact=True, document_id=document_id
+            )
+
+        chunks: list[RetrievedChunk] = []
+        for chunk, document, dist in rows:
+            cosine = round(1.0 - float(dist), 4)
+            chunks.append(
+                RetrievedChunk(
+                    chunk_id=chunk.id,
+                    document_id=document.id,
+                    document_title=document.title,
+                    chunk_index=chunk.chunk_index,
+                    text=chunk.text,
+                    relevance=cosine,
+                    cosine=cosine,
+                )
+            )
+        return chunks
+
+    async def _nearest(
+        self,
+        query_embedding: list[float],
+        collection_id: int | None,
+        top_k: int,
+        *,
+        exact: bool,
+        document_id: int | None = None,
+    ) -> list:
+        """(Chunk, Document, distance) rows, nearest first.
+
+        `exact` orders by `distance + 0`: the planner only uses the HNSW index
+        for an ORDER BY on the bare operator, so this computes the distance of
+        every chunk that passes the filter.
+        """
+        distance = Chunk.embedding.cosine_distance(query_embedding)
         query = (
-            select(Chunk, Document, distance)
+            select(Chunk, Document, distance.label("distance"))
             .join(Document, Chunk.document_id == Document.id)
             .options(selectinload(Chunk.document))
-            .order_by(distance)
+            .order_by(distance + 0 if exact else distance)
             .limit(top_k)
         )
-
-        if collection_id is not None:
+        if document_id is not None:
+            query = query.where(Chunk.document_id == document_id)
+        elif collection_id is not None:
             query = query.where(Document.collection_id == collection_id)
 
         result = await self.db.execute(query)
-        rows = result.all()
+        return sorted(result.all(), key=lambda row: row[2])
 
+    async def lexical_retrieve(
+        self,
+        query_text: str,
+        collection_id: int | None = None,
+        limit: int = 20,
+        document_id: int | None = None,
+    ) -> list[RetrievedChunk]:
+        """Full-text leg: chunks sharing any lexeme with the question, in
+        `document_id` when given (see `retrieve`), else in `collection_id`.
+
+        Ranked by `ts_rank_cd`, Postgres cover-density ranking. It is not
+        BM25: there is no IDF term. No length normalization: on the golden set
+        it gave the best hybrid precision and recall of the variants tried
+        (`scripts/retrieval_bench.py`; see docs/adr/0003).
+        """
+        if not query_text or not query_text.strip():
+            return []
+
+        if document_id is not None:
+            scope_filter, scope_id = "AND c.document_id = :scope_id", document_id
+        elif collection_id is not None:
+            scope_filter, scope_id = "AND d.collection_id = :scope_id", collection_id
+        else:
+            scope_filter, scope_id = "", None
+        sql = f"""
+            SELECT
+                c.id AS chunk_id,
+                d.id AS document_id,
+                d.title AS document_title,
+                c.chunk_index AS chunk_index,
+                c.text AS text,
+                ts_rank_cd(c.tsv, q.tsq) AS rank
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            CROSS JOIN (SELECT {or_tsquery_sql("q")} AS tsq) q
+            WHERE c.tsv @@ q.tsq
+              {scope_filter}
+            ORDER BY rank DESC, c.id
+            LIMIT :limit
+        """
+        stmt = text(sql).bindparams(
+            bindparam("q", value=query_text),
+            bindparam("limit", value=limit),
+        )
+        if scope_id is not None:
+            stmt = stmt.bindparams(bindparam("scope_id", value=scope_id))
+        rows = list((await self.db.execute(stmt)).mappings())
+        if not rows:
+            return []
+
+        best = float(rows[0]["rank"]) or 1.0
         return [
             RetrievedChunk(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_title=document.title,
-                chunk_index=chunk.chunk_index,
-                text=chunk.text,
-                relevance=round(1.0 - float(dist), 4),
+                chunk_id=row["chunk_id"],
+                document_id=row["document_id"],
+                document_title=row["document_title"],
+                chunk_index=row["chunk_index"],
+                text=row["text"],
+                relevance=round(float(row["rank"]) / best, 4),
             )
-            for chunk, document, dist in rows
+            for row in rows
         ]
 
     async def hybrid_retrieve(
@@ -65,105 +226,23 @@ class VectorRetriever:
         collection_id: int | None = None,
         top_k: int = 5,
         k_rrf: int = 60,
-        candidate_pool: int = 20,
+        candidate_pool: int = DEFAULT_CANDIDATE_POOL,
+        document_id: int | None = None,
     ) -> list[RetrievedChunk]:
-        """Reciprocal Rank Fusion of vector cosine + BM25 (ts_rank_cd).
+        """Top `candidate_pool` from each leg, fused with RRF, cut to `top_k`.
 
-        Pulls top `candidate_pool` from each strategy, fuses by RRF score
-        (sum of 1 / (k_rrf + rank)), returns top_k unique chunks.
-
-        BM25 query uses websearch_to_tsquery for natural-language input.
-        Falls back to vector-only if query_text is empty or yields zero
-        BM25 hits.
+        When the full-text leg returns nothing, the result is the vector leg.
         """
-        # Vector candidates
-        vec_result = await self.retrieve(
+        vector = await self.retrieve(
             query_embedding=query_embedding,
             collection_id=collection_id,
             top_k=candidate_pool,
+            document_id=document_id,
         )
-        vec_ranks: dict[int, tuple[RetrievedChunk, int]] = {
-            c.chunk_id: (c, i + 1) for i, c in enumerate(vec_result)
-        }
-
-        # BM25 candidates
-        bm25_rows: list = []
-        if query_text and query_text.strip():
-            bm25_sql = """
-                SELECT
-                    c.id AS chunk_id,
-                    d.id AS document_id,
-                    d.title AS document_title,
-                    c.chunk_index AS chunk_index,
-                    c.text AS text,
-                    ts_rank_cd(c.tsv, websearch_to_tsquery('simple', :q)) AS rank
-                FROM chunks c
-                JOIN documents d ON d.id = c.document_id
-                WHERE c.tsv @@ websearch_to_tsquery('simple', :q)
-                  {col_filter}
-                ORDER BY rank DESC
-                LIMIT :limit
-            """
-            col_filter = "AND d.collection_id = :col_id" if collection_id is not None else ""
-            stmt = text(bm25_sql.format(col_filter=col_filter)).bindparams(
-                bindparam("q", value=query_text),
-                bindparam("limit", value=candidate_pool),
-            )
-            if collection_id is not None:
-                stmt = stmt.bindparams(bindparam("col_id", value=collection_id))
-            res = await self.db.execute(stmt)
-            bm25_rows = list(res.mappings())
-
-        bm25_ranks: dict[int, int] = {
-            row["chunk_id"]: i + 1 for i, row in enumerate(bm25_rows)
-        }
-
-        # RRF fusion
-        scores: dict[int, float] = {}
-        for cid, (_chunk, rank) in vec_ranks.items():
-            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k_rrf + rank)
-        for cid, rank in bm25_ranks.items():
-            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k_rrf + rank)
-
-        if not scores:
-            return []
-
-        # Build chunk index from union of sources
-        chunk_index: dict[int, RetrievedChunk] = {
-            cid: c for cid, (c, _) in vec_ranks.items()
-        }
-        for row in bm25_rows:
-            cid = row["chunk_id"]
-            if cid not in chunk_index:
-                chunk_index[cid] = RetrievedChunk(
-                    chunk_id=cid,
-                    document_id=row["document_id"],
-                    document_title=row["document_title"],
-                    chunk_index=row["chunk_index"],
-                    text=row["text"],
-                    relevance=0.0,  # BM25-only chunks: relevance unknown in vector space
-                )
-
-        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
-
-        # For chunks present in vec, preserve cosine relevance; for BM25-only, use rrf score normalized
-        max_rrf = ranked[0][1] if ranked else 1.0
-        result: list[RetrievedChunk] = []
-        for cid, rrf in ranked:
-            base = chunk_index[cid]
-            if cid in vec_ranks:
-                result.append(base)  # keep cosine-derived relevance
-            else:
-                # Synthesize a relevance proxy from RRF — useful for UI display
-                synthetic = round(rrf / max_rrf, 4) if max_rrf > 0 else 0.0
-                result.append(
-                    RetrievedChunk(
-                        chunk_id=base.chunk_id,
-                        document_id=base.document_id,
-                        document_title=base.document_title,
-                        chunk_index=base.chunk_index,
-                        text=base.text,
-                        relevance=synthetic,
-                    )
-                )
-        return result
+        lexical = await self.lexical_retrieve(
+            query_text,
+            collection_id=collection_id,
+            limit=candidate_pool,
+            document_id=document_id,
+        )
+        return fuse_rrf(vector, lexical, top_k=top_k, k_rrf=k_rrf)

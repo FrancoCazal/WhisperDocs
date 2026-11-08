@@ -4,57 +4,40 @@ Takes conversation history + latest user message and produces a dense query
 optimized for vector retrieval. Resolves elliptical follow-ups.
 """
 
-import re
+from collections.abc import Sequence
 
 from langchain_core.messages import BaseMessage
 
 from app.agent.prompts import QUERY_REWRITE_SYSTEM_PROMPT
-from app.agent.utils.messages import format_messages
+from app.agent.utils.messages import drop_leading_assistant, format_messages
 from app.logging_config import get_logger
 from app.services.llm import llm_service_for
 
 logger = get_logger(__name__)
 
 
-# Pronouns / coreference markers across en/es. If query has any, rewrite is needed.
-_COREF_MARKERS = re.compile(
-    r"\b("
-    r"it|its|this|that|these|those|they|them|their|he|she|him|her|his|hers|"
-    r"eso|esto|esa|ese|esas|esos|aquello|aquella|aquel|"
-    r"él|ella|ellos|ellas|le|les|lo|la|los|las|su|sus|suyo|suya|"
-    r"y|también|además|entonces"
-    r")\b",
-    re.IGNORECASE,
-)
-
-
-def _is_self_contained(query: str) -> bool:
-    """Heuristic: short, no pronouns, no coreference markers → skip rewrite."""
-    word_count = len(query.split())
-    if word_count > 12:
-        return False
-    if _COREF_MARKERS.search(query):
-        return False
-    return True
-
-
 async def rewrite_query_for_retrieval(
-    history: list[BaseMessage],
+    history: Sequence[BaseMessage],
     current: str,
     *,
     summary: str | None = None,
 ) -> str:
     """Return a dense search query. Falls back to `current` on any error.
 
-    Skips the LLM call when the query looks self-contained (short + no
-    coreference). Saves ~300-500ms latency + ~80 tokens per turn.
+    Rewrites only when there is something to resolve against: earlier turns or
+    a summary. A first message goes to retrieval as written, which is also how
+    the eval measures retrieval. Every later message goes to the model: a
+    follow-up can lean on earlier turns without a pronoun that gives it away
+    ("¿se puede usar con Postgres 14?"), so no word list can tell which ones
+    to skip (audit A17, N5).
 
     `history` should already be sliced to the uncompacted tail by the caller —
     the optional `summary` carries everything older as a single system message
     so coreference resolution can still reach pre-compaction topics.
     """
-    if not summary and len(history) <= 1 and _is_self_contained(current):
-        logger.debug("query_rewrite_skipped_self_contained", query_len=len(current))
+    earlier = drop_leading_assistant(format_messages(history[:-1]))
+    if not summary and not earlier:
+        logger.debug("query_rewrite_skipped_first_turn", query_len=len(current))
         return current
 
     try:
@@ -69,7 +52,7 @@ async def rewrite_query_for_retrieval(
                     "content": "Prior conversation summary (background):\n" + summary,
                 }
             )
-        context.extend(format_messages(history[:-1]) if len(history) > 1 else [])
+        context.extend(earlier)
         context.append({"role": "user", "content": current})
         resp = await provider.generate(
             system=QUERY_REWRITE_SYSTEM_PROMPT,
