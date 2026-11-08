@@ -12,6 +12,7 @@ import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.prompt_version import PROMPT_VERSION
 from app.models import QueryLog
 from app.schemas.query import Citation, QueryMetadata, QueryRequest, QueryResponse
 from app.services.embeddings import EmbeddingProvider
@@ -77,6 +78,7 @@ async def _answer(
                 latency_ms=latency_ms,
                 session_id=request.session_id,
                 trace_id=turn.trace_id,
+                prompt_version=PROMPT_VERSION,
             )
         )
         await db.commit()
@@ -126,6 +128,7 @@ async def _answer(
             cost_usd=cost_usd,
             session_id=request.session_id,
             trace_id=turn.trace_id,
+            prompt_version=PROMPT_VERSION,
         )
     )
     await db.commit()

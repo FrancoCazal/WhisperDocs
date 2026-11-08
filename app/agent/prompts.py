@@ -1,4 +1,9 @@
-"""System prompts used by agent nodes."""
+"""The prompts the agent and `/query` send.
+
+Each upper-case text constant here is part of `PROMPT_VERSION`
+(`app/agent/prompt_version.py`), so a prompt added here is versioned with no
+list to update.
+"""
 
 CLASSIFIER_SYSTEM_PROMPT = """Sos un classifier de intención para un asistente que responde preguntas sobre una base de documentación del usuario. El corpus puede contener contenido técnico, personal, biográfico, notas, o cualquier tema — NO asumas que es solo técnico.
 
@@ -91,3 +96,12 @@ Answer rules:
 - Answer in the language of the user's latest message, even when the documents or the conversation summary are in another language.
 - Respect the conversation history for tone and continuity.
 """
+
+
+# The RAG answer's user message. Each retrieved chunk is a numbered item, the
+# items are separated by a rule, and a search that found nothing says so;
+# `app/services/rag.py` puts them together.
+RAG_CONTEXT_ITEM = '[{n}] (from "{title}", chunk {chunk_index})\n{text}'
+RAG_CONTEXT_SEPARATOR = "\n\n---\n\n"
+RAG_NO_CONTEXT = "(no context available)"
+RAG_USER_PROMPT = "Context:\n\n{context}\n\n---\n\nQuestion: {question}\n\nAnswer:"

@@ -81,5 +81,9 @@ class EvalReport(BaseModel):
     timestamp: datetime
     dataset_size: int
     model: str
+    # The prompts the run answered and judged with (app/agent/prompt_version.py,
+    # app/eval/judges.py). Reports from before have neither.
+    prompt_version: str | None = None
+    judge_prompt_version: str | None = None
     metrics: AggregateMetrics
     results: list[EvalResult]

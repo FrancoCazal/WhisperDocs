@@ -54,6 +54,16 @@ class AgentSettings(BaseSettings):
     eval_min_accuracy: float = 0.80
     eval_max_hallucination_rate: float = 0.10
 
+    # `runner diff` exits 3 when the current run's accuracy is more than this
+    # below the previous run's, or its hallucination rate more than this above,
+    # over the same items; the prompt gate workflow fails a pull request on it
+    # (audit M-4). Those five runs, one configuration, spread 8 points in
+    # accuracy and 4 in hallucination: 10 points is past that noise on the 50
+    # items. A slice is noisier, since on 20 items one answer is 5 points. 1
+    # turns either off; the CLI's flags override them.
+    eval_max_accuracy_drop: float = 0.10
+    eval_max_hallucination_rise: float = 0.10
+
     # Max tokens consumed by retrieved-chunk context block in the RAG prompt.
     # Iteratively drops lowest-relevance chunks until under budget. Leaves
     # headroom for system prompt + history + answer in the model context window.

@@ -16,7 +16,13 @@ import re
 
 import tiktoken
 
-from app.agent.prompts import RAG_SYSTEM_PROMPT_AGENT
+from app.agent.prompts import (
+    RAG_CONTEXT_ITEM,
+    RAG_CONTEXT_SEPARATOR,
+    RAG_NO_CONTEXT,
+    RAG_SYSTEM_PROMPT_AGENT,
+    RAG_USER_PROMPT,
+)
 from app.config import settings
 from app.logging_config import get_logger
 from app.services.retriever import RetrievedChunk
@@ -78,7 +84,9 @@ def format_chunk(idx: int, chunk: RetrievedChunk) -> str:
     chunks with literal citation markers, or when running on >50k-token
     multi-turn contexts where Anthropic's XML guidance is more relevant.
     """
-    return f'[{idx}] (from "{chunk.document_title}", chunk {chunk.chunk_index})\n{chunk.text}'
+    return RAG_CONTEXT_ITEM.format(
+        n=idx, title=chunk.document_title, chunk_index=chunk.chunk_index, text=chunk.text
+    )
 
 
 def build_context_block(
@@ -98,7 +106,7 @@ def build_context_block(
 
     used: list[RetrievedChunk] = []
     used_blocks: list[str] = []
-    separator = "\n\n---\n\n"
+    separator = RAG_CONTEXT_SEPARATOR
 
     if token_budget is None:
         for chunk in chunks:
@@ -149,10 +157,10 @@ def build_user_prompt(
     """
     included: list[RetrievedChunk] = []
     if not chunks:
-        context_block = "(no context available)"
+        context_block = RAG_NO_CONTEXT
     else:
         context_block, included = build_context_block(
             chunks, token_budget=settings.agent.rag_context_token_budget
         )
-    prompt = f"Context:\n\n{context_block}\n\n---\n\nQuestion: {question}\n\nAnswer:"
+    prompt = RAG_USER_PROMPT.format(context=context_block, question=question)
     return prompt, included

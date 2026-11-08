@@ -1,0 +1,154 @@
+name: Prompt gate
+
+# A pull request that changes a prompt answers the golden set twice, with its
+# base's code and with its head's, and fails when the head's accuracy drops
+# more than AGENT_EVAL_MAX_ACCURACY_DROP below the base's, or its
+# hallucination rate rises more than AGENT_EVAL_MAX_HALLUCINATION_RISE (audit
+# M-4). Each report carries the version of the prompts it ran with.
+#
+# Both runs use the head's golden set, corpus and libraries, so they differ in
+# their code only. The eval answers single-turn RAG questions: a change to the
+# classifier's, the rewrite's or the summary's prompt runs the gate too, and
+# shows only that the answers did not move.
+#
+# Each run calls paid model APIs, twice, so the gate is off until the
+# repository variable PROMPT_GATE is `on`. It needs the eval's secrets (see
+# eval.yml), so it skips pull requests from forks, which get none.
+# PROMPT_GATE_ITEMS sets how many golden items each side answers: 50 (all) by
+# default. The thresholds were set against the spread of 50-item runs; fewer
+# items cost less and are noisier.
+
+on:
+  pull_request:
+    paths:
+      - app/agent/prompts.py
+      - app/agent/schemas.py
+      - app/services/rag.py
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Branch, tag or commit to compare the current branch against"
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+
+# A new push to the pull request replaces a run that is still paying for the
+# previous one.
+concurrency:
+  group: prompt-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    if: >-
+      vars.PROMPT_GATE == 'on' && (github.event_name == 'workflow_dispatch'
+      || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg16
+        env:
+          POSTGRES_USER: whisperdocs
+          POSTGRES_PASSWORD: whisperdocs
+          POSTGRES_DB: whisperdocs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U whisperdocs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://whisperdocs:whisperdocs@localhost:5432/whisperdocs
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      GCP_LOCATION: ${{ vars.GCP_LOCATION || 'global' }}
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-sa.json
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      LOG_JSON: "1"
+      ITEMS: ${{ vars.PROMPT_GATE_ITEMS || '50' }}
+
+    steps:
+      - name: Check out the head
+        uses: actions/checkout@v4
+
+      - name: Check out the base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || inputs.base }}
+          path: base
+
+      - name: Write GCP service account key
+        env:
+          GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY_JSON }}
+        run: |
+          umask 077
+          printf '%s' "$GCP_SA_KEY_JSON" > "$GOOGLE_APPLICATION_CREDENTIALS"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # The head's lock; the base runs with it too, so the two runs differ in
+      # their code, not in their libraries.
+      - name: Install dependencies
+        env:
+          UV_PYTHON: "3.12"
+        run: |
+          uv sync --frozen --extra dev
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Seed eval corpus
+        run: python -m scripts.seed_eval
+
+      # Absolute thresholds off (0 and 1): this job compares the two runs.
+      - name: Answer with the base's prompts
+        working-directory: base
+        run: >-
+          python -m app.eval.runner run --collection-name "Eval Golden"
+          --dataset "$GITHUB_WORKSPACE/eval/golden/queries.jsonl"
+          --limit "$ITEMS" --min-accuracy 0 --max-hallucination 1
+          --results-dir "$GITHUB_WORKSPACE/gate/base"
+
+      - name: Answer with the head's prompts
+        run: >-
+          python -m app.eval.runner run --collection-name "Eval Golden"
+          --limit "$ITEMS" --min-accuracy 0 --max-hallucination 1
+          --results-dir gate/head
+
+      # Exits 3 past either threshold. They are app/config.py's unless the
+      # variables set them; an unset variable is an empty string.
+      - name: Compare
+        env:
+          MAX_DROP: ${{ vars.AGENT_EVAL_MAX_ACCURACY_DROP }}
+          MAX_RISE: ${{ vars.AGENT_EVAL_MAX_HALLUCINATION_RISE }}
+        run: |
+          args=(gate/base/*.json gate/head/*.json -o gate/diff.md)
+          if [ -n "$MAX_DROP" ]; then args+=(--max-accuracy-drop "$MAX_DROP"); fi
+          if [ -n "$MAX_RISE" ]; then args+=(--max-hallucination-rise "$MAX_RISE"); fi
+          python -m app.eval.runner diff "${args[@]}"
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f gate/diff.md ]; then cat gate/diff.md >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prompt-gate
+          path: gate/
+          if-no-files-found: ignore

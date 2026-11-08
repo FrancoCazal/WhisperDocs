@@ -43,6 +43,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Span, SpanKind, StatusCode
 from opentelemetry.util.re import parse_env_headers
 
+from app.agent.prompt_version import PROMPT_VERSION
 from app.config import settings
 from app.services.llm.model_policy import accepts_custom_sampling, reasoning_level
 from app.services.llm.pricing import estimate_cost_usd
@@ -86,6 +87,8 @@ CHANNEL = "whisperdocs.channel"
 ACTION = "whisperdocs.action"
 DOCUMENT_ID = "whisperdocs.document_id"
 CHUNKS_RETURNED = "whisperdocs.retrieval.chunks"
+# The prompts the turn sent (app/agent/prompt_version.py).
+PROMPTS_VERSION = "whisperdocs.prompt_version"
 
 tracer = trace.get_tracer(SERVICE_NAME)
 
@@ -225,6 +228,7 @@ def workflow(
                     CHANNEL: channel,
                     DATA_SOURCE_ID: str(collection_id) if collection_id is not None else None,
                     DOCUMENT_ID: document_id,
+                    PROMPTS_VERSION: PROMPT_VERSION,
                 },
             ) as span,
             structlog.contextvars.bound_contextvars(**log_context),

@@ -32,6 +32,49 @@ def gate_failures(
     return failures
 
 
+def diff_failures(
+    prev: EvalReport,
+    curr: EvalReport,
+    *,
+    max_accuracy_drop: float,
+    max_hallucination_rise: float,
+) -> list[str]:
+    """How the current run is worse than the previous one past a threshold,
+    one line each; none when it is not. The prompt gate fails a pull request
+    on any (audit M-4). Two runs over different items are not compared: their
+    difference would measure the questions. A threshold of 1 can never be
+    passed."""
+    if _items(prev) != _items(curr):
+        return [
+            f"the runs answered different items ({len(prev.results)} and "
+            f"{len(curr.results)}), so they are not compared"
+        ]
+    failures: list[str] = []
+    # Rounded: 0.8 - 0.7 is a hair over 0.1 in floating point.
+    drop = round(prev.metrics.accuracy - curr.metrics.accuracy, 9)
+    if drop > max_accuracy_drop:
+        failures.append(
+            f"accuracy dropped {drop * 100:.1f} points, from {prev.metrics.accuracy:.1%} to "
+            f"{curr.metrics.accuracy:.1%}, more than {max_accuracy_drop * 100:.1f}"
+        )
+    rise = round(curr.metrics.hallucination_rate - prev.metrics.hallucination_rate, 9)
+    if rise > max_hallucination_rise:
+        failures.append(
+            f"hallucination rate rose {rise * 100:.1f} points, from "
+            f"{prev.metrics.hallucination_rate:.1%} to {curr.metrics.hallucination_rate:.1%}, "
+            f"more than {max_hallucination_rise * 100:.1f}"
+        )
+    return failures
+
+
+def _items(report: EvalReport) -> dict[int, str]:
+    return {r.item_id: r.question for r in report.results}
+
+
+def _version(value: str | None) -> str:
+    return MISSING if value is None else f"`{value}`"
+
+
 def render_badge_json(report: EvalReport) -> str:
     """Shields.io endpoint format. https://shields.io/endpoint"""
     accuracy = report.metrics.accuracy
@@ -58,6 +101,10 @@ def render_markdown(report: EvalReport) -> str:
     lines.append("")
     lines.append(f"- **Timestamp**: {report.timestamp.isoformat()}")
     lines.append(f"- **Model**: `{report.model}`")
+    lines.append(
+        f"- **Prompts**: {_version(report.prompt_version)} "
+        f"(judge {_version(report.judge_prompt_version)})"
+    )
     lines.append(f"- **Dataset size**: {report.dataset_size}")
     lines.append("")
     lines.append("## Aggregate metrics")
@@ -160,13 +207,19 @@ def render_diff_markdown(prev: EvalReport, curr: EvalReport) -> str:
     lines: list[str] = []
     lines.append(f"# Eval Diff — `{prev.run_id[:8]}` → `{curr.run_id[:8]}`")
     lines.append("")
-    lines.append(
-        f"- **Previous**: {prev.timestamp.isoformat()} (model `{prev.model}`, n={prev.dataset_size})"
-    )
-    lines.append(
-        f"- **Current**:  {curr.timestamp.isoformat()} (model `{curr.model}`, n={curr.dataset_size})"
-    )
+    for label, report in (("Previous", prev), ("Current", curr)):
+        lines.append(
+            f"- **{label}**: {report.timestamp.isoformat()} (model `{report.model}`, "
+            f"prompts {_version(report.prompt_version)}, n={report.dataset_size})"
+        )
     lines.append("")
+    judges = (prev.judge_prompt_version, curr.judge_prompt_version)
+    if None not in judges and judges[0] != judges[1]:
+        lines.append(
+            f"> The judge's prompts changed ({_version(judges[0])} → {_version(judges[1])}): "
+            "part of a metric's change can be the judge's."
+        )
+        lines.append("")
     lines.append("## Metric deltas")
     lines.append("")
     lines.append(diff_metrics(prev.metrics, curr.metrics))

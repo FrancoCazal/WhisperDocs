@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.prompt_version import PROMPT_VERSION
 from app.agent.thread_id import thread_title
 from app.agent.utils.messages import asked
 from app.agent.utils.turn_errors import failure_kind
@@ -145,6 +146,7 @@ async def agent_chat(
                 session_id=thread_id,
                 agent_action=action,
                 trace_id=turn.trace_id,
+                prompt_version=PROMPT_VERSION,
             )
         )
 
@@ -380,6 +382,7 @@ async def agent_chat_stream(
                             session_id=thread_id,
                             agent_action=action,
                             trace_id=turn.trace_id,
+                            prompt_version=PROMPT_VERSION,
                         )
                     )
                 await db.commit()

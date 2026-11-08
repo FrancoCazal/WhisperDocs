@@ -5,10 +5,11 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.agent.prompt_version import PROMPT_VERSION
 from app.agent.schemas import RAGAnswer
 from app.agent.utils.citation_validation import validate_citations_semantic
 from app.config import settings
-from app.eval.judges import Judge
+from app.eval.judges import JUDGE_PROMPT_VERSION, Judge
 from app.eval.metrics import compute_metrics
 from app.eval.schemas import EvalReport, EvalResult, TestItem
 from app.logging_config import get_logger
@@ -16,6 +17,7 @@ from app.services.embedder import EmbeddingService
 from app.services.llm.base import LLMProvider
 from app.services.rag import RAG_SYSTEM_PROMPT, build_user_prompt, validate_citations
 from app.services.retrieval_pipeline import retrieve as retrieve_pipeline
+from app.services.retriever import RetrievedChunk
 
 logger = get_logger(__name__)
 
@@ -83,6 +85,8 @@ class RAGEvaluator:
             timestamp=datetime.now(timezone.utc),
             dataset_size=len(dataset),
             model=self.model,
+            prompt_version=PROMPT_VERSION,
+            judge_prompt_version=JUDGE_PROMPT_VERSION,
             metrics=metrics,
             results=results,
         )
@@ -105,6 +109,8 @@ class RAGEvaluator:
                 top_k=self.top_k,
             )
 
+        # The chunks the model saw: none when retrieval found none.
+        included: list[RetrievedChunk] = []
         if not chunks:
             answer = "I don't have any indexed documents to answer this question."
             tokens_in = 0

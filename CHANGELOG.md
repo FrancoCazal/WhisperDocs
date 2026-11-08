@@ -76,6 +76,14 @@ Fixes from the November 2026 audit, and a review of the frontend.
   and status. A Grafana dashboard and Prometheus alert rules in `ops/`
   (the API unreachable, 5xx, a failing model role, slow turns);
   `docker compose --profile metrics` runs both.
+- Prompt versions: a hash of the prompts in `app/agent/prompts.py` and of
+  the structured outputs' schemas goes on each `query_logs` row
+  (`prompt_version`, migration 0017), each turn's trace and each eval
+  report, with the judge's own version. `runner diff` exits 3 when accuracy
+  drops, or the hallucination rate rises, more than 10 points
+  (`AGENT_EVAL_MAX_ACCURACY_DROP`, `AGENT_EVAL_MAX_HALLUCINATION_RISE`). The
+  `Prompt gate` workflow runs it on a pull request that changes a prompt,
+  base against head, once the repository variable `PROMPT_GATE` is `on`.
 
 ### Security
 
@@ -181,6 +189,8 @@ Fixes from the November 2026 audit, and a review of the frontend.
   stored the whole list again: 120 turns kept 70 MB of copies of 0.6 MB of
   messages. A background sweep keeps each thread's latest checkpoint, every
   `AGENT_CHECKPOINT_PRUNE_INTERVAL_S` (600 s).
+- An eval item that retrieved no chunks no longer ends the whole run with
+  `UnboundLocalError`.
 - Compaction never leaves the conversation starting with the assistant,
   which Bedrock rejects. The summarizer no longer returns empty summaries.
 - Filtered vector search no longer comes back empty for small collections.

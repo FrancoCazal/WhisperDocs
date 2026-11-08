@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from opentelemetry.trace import SpanKind, StatusCode
 from pydantic import SecretStr
 
+from app.agent.prompt_version import PROMPT_VERSION
 from app.agent.schemas import AgentAction
 from app.config import settings
 from app.db import get_db
@@ -344,6 +345,7 @@ async def test_the_query_log_row_carries_the_turns_trace_id(spans, db, path):
     root = _turn(spans)
     (log,) = [o for o in db.added if isinstance(o, QueryLog)]
     assert log.trace_id == format(root.context.trace_id, "032x")
+    assert log.prompt_version == root.attributes["whisperdocs.prompt_version"] == PROMPT_VERSION
     assert root.attributes["gen_ai.conversation.id"] == log.session_id
     assert root.attributes["whisperdocs.channel"] == "web"
     # FastAPI's span of the request is the trace's root.
@@ -424,6 +426,34 @@ async def test_a_single_turn_answer_is_a_query_workflow_with_its_trace_id(spans,
     assert chat.parent.span_id == root.context.span_id
     (log,) = db.added
     assert log.trace_id == format(root.context.trace_id, "032x")
+    assert log.prompt_version == root.attributes["whisperdocs.prompt_version"] == PROMPT_VERSION
+
+
+async def test_an_answer_with_no_documents_logs_the_prompt_version_too(spans, monkeypatch):
+    from app.services import answering
+
+    async def nothing_retrieved(**_kwargs):
+        return []
+
+    class _Embedder:
+        async def embed(self, _text):
+            return [0.0] * 4
+
+    provider = TrackedProvider(_Bedrock(_response(SONNET_4_5, 100, 20)), "rag_generation")
+    monkeypatch.setattr(answering, "retrieve_pipeline", nothing_retrieved)
+    monkeypatch.setattr(answering, "llm_service_for", lambda _node: (provider, SONNET_4_5, 0.3))
+    db = _FakeDb()
+
+    response = await answering.answer_question(
+        db,  # type: ignore[arg-type]
+        _Embedder(),  # type: ignore[arg-type]
+        QueryRequest(question="q"),
+    )
+
+    assert response.answer == answering.NO_DOCUMENTS_ANSWER
+    (log,) = db.added
+    assert log.prompt_version == _turn(spans).attributes["whisperdocs.prompt_version"]
+    assert log.prompt_version == PROMPT_VERSION
 
 
 # ---------- the exporter ----------

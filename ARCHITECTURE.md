@@ -301,6 +301,7 @@ erDiagram
     string session_id
     string agent_action
     string trace_id
+    string prompt_version
     timestamp created_at
   }
 
@@ -520,6 +521,17 @@ HTTP 502 from `/eval/run`) when the share of failed judge calls exceeds
 (0.10) makes the CLI exit 3, which fails the manual `Eval suite` workflow;
 the CLI's `--min-accuracy` and `--max-hallucination` override them.
 
+Each report carries `prompt_version`, the version of the prompts it answered
+with (`app/agent/prompt_version.py`: a hash of every constant in
+`app/agent/prompts.py` and the structured outputs' schemas), and
+`judge_prompt_version`, the judge's. `runner diff` compares two reports over
+the same items and exits 3 when accuracy drops more than
+`AGENT_EVAL_MAX_ACCURACY_DROP` or the hallucination rate rises more than
+`AGENT_EVAL_MAX_HALLUCINATION_RISE` (0.10 each). The `Prompt gate` workflow
+runs it on a pull request that changes a prompt, the base's code against the
+head's over the same golden set and corpus; it is off until the repository
+variable `PROMPT_GATE` is `on`, since each run pays for two evals.
+
 Dataset format (`eval/golden/queries.jsonl`):
 
 ```jsonl
@@ -655,6 +667,9 @@ Postgres (the compose database)
     message.
   - `query_logs.trace_id` holds the turn's trace id. `/query` and the MCP
     server's `ask_documents` are `invoke_workflow whisperdocs-query` traces.
+  - The turn's span carries `whisperdocs.prompt_version`, and its
+    `query_logs` row `prompt_version` (migration 0017): the version of the
+    prompts it sent (`app/agent/prompt_version.py`).
   - A TracerProvider is always installed, so the ids exist. Spans leave the
     process only with `OTEL_EXPORTER_OTLP_ENDPOINT` set, over OTLP/HTTP.
     `docker compose --profile tracing` runs Langfuse to read them.

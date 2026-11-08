@@ -11,6 +11,7 @@ from app.db import SessionLocal
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judges import Judge
 from app.eval.report import (
+    diff_failures,
     gate_failures,
     render_badge_json,
     render_diff_markdown,
@@ -26,7 +27,8 @@ DEFAULT_DATASET = Path("eval/golden/queries.jsonl")
 DEFAULT_RESULTS_DIR = Path("eval/results")
 
 # Exit codes: 2 when the judge failed too often to score the run (argparse
-# also exits 2, on a bad flag), 3 when a run missed a threshold.
+# also exits 2, on a bad flag), 3 when a run missed a threshold or a diff
+# found the current run worse than the previous one past a threshold.
 EXIT_ABORTED = 2
 EXIT_BELOW_THRESHOLD = 3
 
@@ -156,7 +158,9 @@ def _load_report(path: Path) -> EvalReport:
     return EvalReport.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def cmd_diff(args: argparse.Namespace) -> None:
+def cmd_diff(args: argparse.Namespace) -> list[str]:
+    """Write the diff, and return how the current run is worse than the
+    previous one past the thresholds."""
     prev = _load_report(args.previous)
     curr = _load_report(args.current)
     md = render_diff_markdown(prev, curr)
@@ -165,6 +169,12 @@ def cmd_diff(args: argparse.Namespace) -> None:
         print(f"Diff written to: {args.output}")
     else:
         print(md)
+    return diff_failures(
+        prev,
+        curr,
+        max_accuracy_drop=args.max_accuracy_drop,
+        max_hallucination_rise=args.max_hallucination_rise,
+    )
 
 
 def main() -> None:
@@ -205,11 +215,27 @@ def main() -> None:
     diff_parser.add_argument("previous", type=Path)
     diff_parser.add_argument("current", type=Path)
     diff_parser.add_argument("-o", "--output", type=Path, default=None)
+    diff_parser.add_argument(
+        "--max-accuracy-drop",
+        type=_fraction,
+        default=settings.agent.eval_max_accuracy_drop,
+        help=f"Exit {EXIT_BELOW_THRESHOLD} when the current run's accuracy is more than this "
+        "below the previous run's; 1 turns it off "
+        "(default: AGENT_EVAL_MAX_ACCURACY_DROP, %(default)s).",
+    )
+    diff_parser.add_argument(
+        "--max-hallucination-rise",
+        type=_fraction,
+        default=settings.agent.eval_max_hallucination_rise,
+        help=f"Exit {EXIT_BELOW_THRESHOLD} when the current run's hallucination rate is more "
+        "than this above the previous run's; 1 turns it off "
+        "(default: AGENT_EVAL_MAX_HALLUCINATION_RISE, %(default)s).",
+    )
 
     args = parser.parse_args()
 
     if args.command == "diff":
-        cmd_diff(args)
+        _exit_on(cmd_diff(args), "Worse than the previous run:")
         return
 
     try:
@@ -234,8 +260,12 @@ def main() -> None:
         min_accuracy=args.min_accuracy,
         max_hallucination=args.max_hallucination,
     )
+    _exit_on(failures, "Below the thresholds:")
+
+
+def _exit_on(failures: list[str], heading: str) -> None:
     if failures:
-        print("\nBelow the thresholds:", file=sys.stderr)
+        print(f"\n{heading}", file=sys.stderr)
         for failure in failures:
             print(f"- {failure}", file=sys.stderr)
         sys.exit(EXIT_BELOW_THRESHOLD)

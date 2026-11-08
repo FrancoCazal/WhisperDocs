@@ -86,6 +86,8 @@ def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
                     "timestamp": report.timestamp.isoformat(),
                     "dataset_size": report.dataset_size,
                     "model": report.model,
+                    "prompt_version": report.prompt_version,
+                    "judge_prompt_version": report.judge_prompt_version,
                     "accuracy": report.metrics.accuracy,
                     "hallucination_rate": report.metrics.hallucination_rate,
                     "avg_retrieval_precision": report.metrics.avg_retrieval_precision,

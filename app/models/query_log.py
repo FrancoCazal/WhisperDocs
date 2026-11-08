@@ -27,6 +27,9 @@ class QueryLog(Base):
     agent_action: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # The OpenTelemetry trace of the turn that wrote the row (app/telemetry.py).
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # The prompts that answered (app/agent/prompt_version.py); none on rows from
+    # before the column.
+    prompt_version: Mapped[str | None] = mapped_column(String(12), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

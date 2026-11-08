@@ -226,3 +226,39 @@ async def test_eval_judges_the_chunks_the_model_saw(fake_provider, monkeypatch):
     assert len(judge.contexts) == len(included) < 20
     # Retrieval metrics still score everything retrieval returned.
     assert len(result.citations) == 20
+
+
+async def test_eval_scores_an_item_that_retrieved_nothing(monkeypatch):
+    """Since the budget, the hallucination judge reads the chunks the model
+    saw; with none retrieved there were none to name, and the item raised
+    UnboundLocalError, which ended the whole run."""
+    from app.eval import evaluator as evaluator_module
+
+    async def nothing_retrieved(**_kwargs):
+        return []
+
+    monkeypatch.setattr(evaluator_module, "retrieve_pipeline", nothing_retrieved)
+    judge = _RecordingJudge()
+    judge.contexts = ["not called"]
+    evaluator = RAGEvaluator(
+        session_maker=_NoSession,
+        embedder=_FakeEmbedder(),
+        provider=None,
+        model="fake-model",
+        temperature=0.0,
+        judge=judge,
+        collection_id=1,
+    )
+    item = eval_schemas.TestItem(
+        id=1,
+        question="q",
+        expected_answer="a",
+        difficulty=Difficulty.EASY,
+        category=Category.OUT_OF_SCOPE,
+    )
+
+    result = await evaluator._evaluate_item(item)
+
+    assert judge.contexts == []
+    assert result.citations == []
+    assert result.tokens_input == result.tokens_output == 0

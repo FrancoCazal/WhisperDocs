@@ -371,6 +371,25 @@ The `Eval suite` workflow runs it from GitHub Actions, by hand only, since it ca
 `GCP_SA_KEY_JSON`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`); the reports go to the run's
 artifacts.
 
+### Prompt versions and the prompt gate
+
+`PROMPT_VERSION` (`app/agent/prompt_version.py`) is 12 hex characters of a hash over every
+constant in `app/agent/prompts.py` and the schemas of the two structured outputs. It changes
+when a prompt does, and only then. Each `query_logs` row (`prompt_version`), each turn's trace
+(`whisperdocs.prompt_version`) and each eval report carry it; a report also carries the judge's
+version, from `app/eval/judges.py`.
+
+`runner diff` compares two reports over the same items and exits 3 when the current one's
+accuracy is more than 10 points below the previous one's, or its hallucination rate more than
+10 points above (`AGENT_EVAL_MAX_ACCURACY_DROP`, `AGENT_EVAL_MAX_HALLUCINATION_RISE`, or
+`--max-accuracy-drop` and `--max-hallucination-rise`). Five 50-item runs of one configuration
+spread 8 and 4 points. The diff names both prompt versions and warns when the judge's changed.
+
+The `Prompt gate` workflow does this on a pull request that changes `prompts.py`, the agent's
+schemas or `app/services/rag.py`: it answers the golden set with the base's code and with the
+head's, then runs the diff. Each run calls the paid APIs twice, so it is off until the
+repository variable `PROMPT_GATE` is `on`; `PROMPT_GATE_ITEMS` answers fewer items for less.
+
 Dataset: JSONL at `eval/golden/queries.jsonl`.
 
 ### Last full run

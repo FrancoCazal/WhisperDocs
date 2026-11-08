@@ -1,3 +1,4 @@
+from app.agent.prompt_version import compute_prompt_version
 from app.eval.schemas import Category, JudgeResult, TestItem
 from app.services.llm.base import LLMProvider
 
@@ -95,3 +96,9 @@ class Judge:
                 reasoning=f"Judge call failed: {type(exc).__name__}: {exc}"[:300],
                 error=True,
             )
+
+
+# The version of the judge's prompts, as PROMPT_VERSION is the agent's: each
+# upper-case constant above and the verdict's schema. A report carries both, so
+# a diff can tell a change in the answers from a change in how they were judged.
+JUDGE_PROMPT_VERSION = compute_prompt_version(globals(), (JudgeResult,))
