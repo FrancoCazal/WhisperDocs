@@ -25,6 +25,12 @@ Fixes from the November 2026 audit, and a review of the frontend.
   document (`conversations.document_id`, migration 0015; `document_id` on
   `/agent/chat`). Uploads are checked before they are
   sent and show their progress.
+- Each answer says which of its calls failed or fell back, and why, for
+  example "classifier · billing or quota · gemini-3.8-flash". This is `errors`
+  (`{step, kind, model}`) on `/agent/chat`, the stream's final event and a
+  thread's messages, and the chat shows it under the answer. When a
+  provider refuses every classifier call, the turn still answers from the
+  documents, so before this list nothing showed the outage.
 - History: filters by origin and by question text
   (`GET /query/history?source=&q=`), and pagination.
 - Frontend tests: vitest for the API client's stream parser, and a
