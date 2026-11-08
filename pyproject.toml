@@ -42,6 +42,7 @@ dependencies = [
     "structlog>=26.1",
     "langdetect>=1.0.9",
     "prometheus-client>=0.26",
+    "mcp>=2.3",
 ]
 
 [project.optional-dependencies]
@@ -62,10 +63,11 @@ line-length = 100
 target-version = "py312"
 
 [tool.mypy]
-# Gradual: the agent and the eval, plus every app module they import, which
-# mypy follows and reports. Default strictness; widen `files` as it stays green.
+# Gradual: the agent, the eval and the MCP server, plus every app module they
+# import, which mypy follows and reports. Default strictness; widen `files` as
+# it stays green.
 python_version = "3.12"
-files = ["app/agent", "app/eval"]
+files = ["app/agent", "app/eval", "app/mcp"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
