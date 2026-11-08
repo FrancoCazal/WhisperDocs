@@ -51,6 +51,9 @@ async def init_checkpointer() -> AsyncPostgresSaver:
             min_size=settings.agent.checkpointer_pool_min_size,
             max_size=settings.agent.checkpointer_pool_max_size,
             kwargs={"autocommit": True},
+            # Checked on checkout: a connection that died with a Postgres
+            # restart is replaced, instead of failing every thread read.
+            check=AsyncConnectionPool.check_connection,
             open=False,
         )
         await _pool.open()
