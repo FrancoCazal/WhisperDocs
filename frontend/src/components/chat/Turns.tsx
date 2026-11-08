@@ -38,7 +38,7 @@ export function UserTurn({ turn }: { turn: UserTurnData }) {
       <div className="label-sm text-text-tertiary mb-2">
         {">"} USER · <span className="text-text-secondary">{turn.ts}</span>
       </div>
-      <div className="body text-text-primary whitespace-pre-wrap">{turn.text}</div>
+      <div className="body-read text-text-primary whitespace-pre-wrap">{turn.text}</div>
       <div className="border-b border-border-subtle mt-4" />
     </div>
   );

@@ -87,7 +87,7 @@ export const Markdown = memo(function Markdown({
   const value = useMemo(() => ({ citations, onCite }), [citations, onCite]);
   return (
     <CitationsContext.Provider value={value}>
-      <div className="body text-text-primary leading-relaxed markdown-body">
+      <div className="body-read text-text-primary markdown-body">
         <ReactMarkdown
           remarkPlugins={REMARK_PLUGINS}
           rehypePlugins={REHYPE_PLUGINS}

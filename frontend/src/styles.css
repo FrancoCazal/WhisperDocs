@@ -124,6 +124,14 @@
   }
 }
 
+/* Text that is read, not scanned: questions and answers. An @utility, unlike
+   the classes below, sorts with Tailwind's own, so a variant such as max-sm:
+   can override it. */
+@utility body-read {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+}
+
 @layer utilities {
   .label-xs {
     font-size: 0.625rem;
