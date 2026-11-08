@@ -317,6 +317,21 @@ erDiagram
 LangGraph checkpointer state lives in dedicated tables managed by
 `langgraph-checkpoint-postgres` (not modeled here).
 
+The saver writes a checkpoint per graph step, about five per turn, and each
+one that changes `messages` stores the whole list again. A thread's rows
+grow with the square of its turns: 120 synthetic turns left 609 checkpoints
+and 70 MB of `messages` copies, for 0.6 MB of messages. Nothing reads a
+thread's history, only its latest state (`aget_state`), so a background sweep
+prunes it:
+
+- Every `AGENT_CHECKPOINT_PRUNE_INTERVAL_S` (600 s; 0 turns it off), each
+  thread with more than one checkpoint keeps its latest, with its pending
+  writes and the blobs it reads (`aprune`, strategy `keep_latest`).
+- Each thread is its own transaction. One that a turn or a delete changes
+  meanwhile rolls back, and waits for the next sweep.
+- Reading a thread's history (time travel, `aget_state_history`) would need
+  pruning turned off.
+
 ---
 
 ## State contract

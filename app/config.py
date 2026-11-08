@@ -87,6 +87,10 @@ class AgentSettings(BaseSettings):
 
     checkpointer_pool_min_size: int = 2
     checkpointer_pool_max_size: int = 10
+    # Seconds between sweeps that keep each thread's latest checkpoint and
+    # delete the older ones (audit N6). Each turn writes about five, and the
+    # ones that change `messages` copy the whole list. 0 turns pruning off.
+    checkpoint_prune_interval_s: float = 600.0
 
 
 class Settings(BaseSettings):

@@ -171,6 +171,11 @@ Fixes from the November 2026 audit, and a review of the frontend.
   `AGENT_COMPACTION_RETRY_MESSAGES` (6) messages first. A summary cut at
   `max_tokens`, or empty, is not kept; before, a cut one replaced the
   previous summary.
+- The checkpoint tables no longer grow with the square of a thread's turns.
+  Each turn saved about five checkpoints, and each change to `messages`
+  stored the whole list again: 120 turns kept 70 MB of copies of 0.6 MB of
+  messages. A background sweep keeps each thread's latest checkpoint, every
+  `AGENT_CHECKPOINT_PRUNE_INTERVAL_S` (600 s).
 - Compaction never leaves the conversation starting with the assistant,
   which Bedrock rejects. The summarizer no longer returns empty summaries.
 - Filtered vector search no longer comes back empty for small collections.

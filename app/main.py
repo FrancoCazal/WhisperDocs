@@ -11,7 +11,12 @@ if sys.platform == "win32":
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agent.checkpointer import close_checkpointer, init_checkpointer
+from app.agent.checkpointer import (
+    close_checkpointer,
+    init_checkpointer,
+    start_pruning,
+    stop_pruning,
+)
 from app.api.auth import configured_key, require_api_key
 from app.api.body_limit import BodySizeLimitMiddleware
 from app.api.errors import RequestContextMiddleware, install_error_handlers
@@ -68,6 +73,7 @@ async def lifespan(app: FastAPI):
     checkpointer = await init_checkpointer()
     app.state.checkpointer = checkpointer
     app.state.agent = build_agent_graph().compile(checkpointer=checkpointer)
+    start_pruning(checkpointer)
     # Keep what startup allocated (modules, the compiled graph, about 300k
     # objects) out of the collector. A full collection holds the GIL, so it
     # pauses the event loop while it scans. A long PDF parse triggers several,
@@ -84,6 +90,7 @@ async def lifespan(app: FastAPI):
             logger.warning("ingestion_jobs_cancelled_on_shutdown", count=cancelled)
         if unanswered:
             logger.warning("whatsapp_replies_cancelled_on_shutdown", count=unanswered)
+        await stop_pruning()
         await close_checkpointer()
 
 
