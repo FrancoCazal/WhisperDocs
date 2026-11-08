@@ -174,9 +174,20 @@ export type EvalMetrics = {
   avg_tokens_output: number;
   total_tokens_input: number;
   total_tokens_output: number;
+  // Generation only: the judge's calls and the embeddings are not counted.
   estimated_cost_usd: number;
-  by_difficulty?: Record<string, { count: number; accuracy: number; hallucination_rate: number }>;
-  by_category?: Record<string, { count: number; accuracy: number; hallucination_rate: number }>;
+  // Items where a judge call failed: their verdicts say nothing.
+  judge_errors?: number;
+  by_difficulty?: Record<string, EvalBucket>;
+  by_category?: Record<string, EvalBucket>;
+};
+
+export type EvalBucket = {
+  total: number;
+  accuracy: number;
+  hallucination_rate: number;
+  avg_retrieval_precision?: number;
+  avg_retrieval_recall?: number;
 };
 
 export type EvalReport = {
@@ -185,7 +196,29 @@ export type EvalReport = {
   dataset_size: number;
   model: string;
   metrics: EvalMetrics;
-  results: unknown[];
+  results: EvalResult[];
+};
+
+// A judge's verdict. For hallucination, `passed` means grounded. `error`: the
+// judge call failed, so `passed` is false by construction.
+export type JudgeVerdict = { passed: boolean; reasoning: string; error?: boolean };
+
+export type EvalResult = {
+  item_id: number;
+  question: string;
+  expected_answer: string;
+  system_answer: string;
+  // Titles of the retrieved documents, in rank order.
+  citations: string[];
+  latency_ms: number;
+  tokens_input: number;
+  tokens_output: number;
+  correctness: JudgeVerdict;
+  hallucination: JudgeVerdict;
+  retrieval_precision: number;
+  retrieval_recall?: number;
+  difficulty: EvalItem["difficulty"];
+  category: EvalItem["category"];
 };
 
 export type EvalRunSummary = {
@@ -196,7 +229,6 @@ export type EvalRunSummary = {
   accuracy: number;
   hallucination_rate: number;
   estimated_cost_usd: number;
-  status?: string;
 };
 
 // ============ Agent / Conversations / Notes ============
@@ -638,6 +670,7 @@ export const api = {
   deleteNote: (noteId: number) => request<void>(`/notes/${noteId}`, { method: "DELETE" }),
 
   evalResults: (limit = 20) => request<EvalRunSummary[]>(`/eval/results?limit=${limit}`),
+  getEvalRun: (runId: string) => request<EvalReport>(`/eval/results/${encodeURIComponent(runId)}`),
   runEval: (body: {
     dataset: EvalItem[];
     collection_id: number;

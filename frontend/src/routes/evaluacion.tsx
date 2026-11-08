@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
-import { api, fmtCost, fmtDate, fmtPct, type EvalReport } from "@/lib/api";
+import { useMemo, useRef, useState } from "react";
+import { api, fmtCost, fmtDate, fmtPct, type EvalRunSummary } from "@/lib/api";
 import { parseEvalDataset, STARTER_DATASET } from "@/lib/evalDataset";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
@@ -12,7 +12,9 @@ import {
   emptyActionCls,
 } from "@/components/ui-kit/EmptyState";
 import { Modal, Field, textareaCls, inputCls } from "@/components/ui-kit/Modal";
-import { StatDot } from "@/components/ui-kit/StatDot";
+import { Elapsed } from "@/components/chat/Trace";
+import { RunReport } from "@/components/eval/RunReport";
+import { accuracyTone, GENERATION_COST_HINT, hallucinationTone } from "@/components/eval/tone";
 
 export const Route = createFileRoute("/evaluacion")({
   head: () => ({
@@ -29,13 +31,34 @@ export const Route = createFileRoute("/evaluacion")({
 
 const STARTER_TEXT = JSON.stringify(STARTER_DATASET, null, 2);
 
+// What generating `items` answers should cost, from the latest run that
+// recorded a cost. The judge and the embeddings are on top and unmeasured.
+function estimateGeneration(runs: EvalRunSummary[] | undefined, items: number) {
+  const last = runs?.find((r) => r.dataset_size > 0 && r.estimated_cost_usd > 0);
+  if (!last) return null;
+  return { usd: (last.estimated_cost_usd / last.dataset_size) * items, from: last };
+}
+
 function EvaluacionPage() {
   const qc = useQueryClient();
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
   const runs = useQuery({ queryKey: ["eval-results", 20], queryFn: () => api.evalResults(20) });
 
-  const [currentRun, setCurrentRun] = useState<EvalReport | null>(null);
+  // The run on screen: the one picked, else the latest.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const shownId = selectedId ?? runs.data?.[0]?.run_id ?? null;
+  const report = useQuery({
+    queryKey: ["eval-run", shownId],
+    queryFn: () => api.getEvalRun(shownId!),
+    enabled: shownId !== null,
+    // A saved report never changes.
+    staleTime: Infinity,
+  });
+  const reportRef = useRef<HTMLDivElement>(null);
+
   const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [running, setRunning] = useState<{ since: number; items: number } | null>(null);
   const [dataset, setDataset] = useState(STARTER_TEXT);
   const [collId, setCollId] = useState<number | null>(null);
   const [topK, setTopK] = useState(5);
@@ -43,6 +66,8 @@ function EvaluacionPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const parsed = useMemo(() => parseEvalDataset(dataset), [dataset]);
+  const items = parsed.items?.length ?? 0;
+  const estimate = estimateGeneration(runs.data, items);
 
   const runEval = useMutation({
     mutationFn: () => {
@@ -55,17 +80,35 @@ function EvaluacionPage() {
         concurrency: conc,
       });
     },
-    onSuccess: (r) => {
-      setCurrentRun(r);
+    onMutate: () => {
+      setRunning({ since: performance.now(), items });
       setOpen(false);
+    },
+    onSuccess: (r) => {
+      qc.setQueryData(["eval-run", r.run_id], r);
+      setSelectedId(r.run_id);
       qc.invalidateQueries({ queryKey: ["eval-results"] });
     },
-    onError: (e) => setFormError(e instanceof Error ? e.message : String(e)),
+    onError: (e) => {
+      // Back to the form, which says why.
+      setFormError(e instanceof Error ? e.message : String(e));
+      setOpen(true);
+    },
+    onSettled: () => {
+      setRunning(null);
+      setConfirming(false);
+    },
   });
 
   function openForm() {
     setFormError(null);
+    setConfirming(false);
     setOpen(true);
+  }
+
+  function show(runId: string) {
+    setSelectedId(runId);
+    reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   return (
@@ -74,7 +117,7 @@ function EvaluacionPage() {
         title="EVALUATION"
         subtitle="BENCHMARK & TELEMETRY"
         actions={
-          <Btn variant="primary" onClick={openForm}>
+          <Btn variant="primary" onClick={openForm} disabled={runEval.isPending}>
             + RUN NEW EVALUATION
           </Btn>
         }
@@ -82,25 +125,29 @@ function EvaluacionPage() {
 
       {runs.error && <ErrorBanner message="failed to load evaluation runs" />}
 
-      {/* TOP: current run display */}
-      {runEval.isPending ? (
-        <div className="border border-border-subtle bg-surface-container p-8 mb-8">
-          <div className="label-sm text-text-secondary blink-cursor">EXECUTING EVALUATION</div>
-          <div className="space-y-1 mt-4 label-sm text-text-tertiary">
-            <div>LOADING DATASET...</div>
-            <div>EMBEDDING QUERIES...</div>
-            <div>SCORING RESPONSES...</div>
+      {/* TOP: the run on screen */}
+      <div ref={reportRef} className="scroll-mt-16">
+        {running ? (
+          <div className="border border-border-subtle bg-surface-container p-6 sm:p-8 mb-8">
+            <div className="label-sm text-text-primary blink-cursor">
+              EVALUATING {running.items} ITEMS · <Elapsed since={running.since} />
+            </div>
+            <div className="label-xs text-text-tertiary mt-3">
+              EACH ITEM IS ANSWERED, THEN JUDGED TWICE. THE REPORT APPEARS WHEN ALL ARE SCORED.
+            </div>
           </div>
-        </div>
-      ) : currentRun ? (
-        <CurrentRun report={currentRun} />
-      ) : (
-        <div className="border border-dashed border-border-subtle py-12 text-center mb-8">
-          <div className="label-sm text-text-tertiary">
-            NO ACTIVE RUN · SELECT A HISTORICAL RUN OR EXECUTE A NEW EVALUATION
+        ) : report.data ? (
+          <RunReport report={report.data} runs={runs.data ?? []} />
+        ) : report.error ? (
+          <div className="mb-8">
+            <ErrorBanner message={`failed to load run: ${report.error.message}`} />
           </div>
-        </div>
-      )}
+        ) : shownId !== null || runs.isLoading ? (
+          <div className="mb-8">
+            <LoadingLine />
+          </div>
+        ) : null}
+      </div>
 
       {/* BOTTOM: historical runs */}
       <h2 className="title-sm text-text-primary mb-3">HISTORICAL RUNS</h2>
@@ -121,72 +168,62 @@ function EvaluacionPage() {
               <tr className="label-sm text-text-secondary border-b border-border-subtle">
                 <th className="text-left pl-6 py-3 font-normal">RUN_ID</th>
                 <th className="text-left py-3 font-normal">DATE</th>
+                <th className="text-right py-3 font-normal">ITEMS</th>
                 <th className="text-right py-3 font-normal">ACCURACY</th>
                 <th className="text-right py-3 font-normal">HALLUCINATION</th>
-                <th className="text-center py-3 font-normal w-20">STATUS</th>
-                <th className="text-right py-3 font-normal">COST</th>
-                <th className="text-right pr-6 py-3 font-normal w-20">ACTIONS</th>
+                <th className="text-right py-3 font-normal" title={GENERATION_COST_HINT}>
+                  GEN. COST
+                </th>
+                <th className="text-right pr-6 py-3 font-normal w-20">
+                  <span className="sr-only">ACTIONS</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {runs.data.map((r) => (
-                <tr
-                  key={r.run_id}
-                  className="body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high"
-                >
-                  <td className="pl-6 text-text-primary">{r.run_id}</td>
-                  <td className="text-text-secondary tabular-nums">{fmtDate(r.timestamp)}</td>
-                  <td
-                    className="text-right tabular-nums"
-                    style={{ color: accuracyColor(r.accuracy) }}
+              {runs.data.map((r) => {
+                const current = r.run_id === shownId;
+                return (
+                  <tr
+                    key={r.run_id}
+                    aria-current={current || undefined}
+                    className={`body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high ${
+                      current ? "bg-surface-high" : ""
+                    }`}
                   >
-                    {fmtPct(r.accuracy)}
-                  </td>
-                  <td
-                    className="text-right tabular-nums"
-                    style={{ color: halColor(r.hallucination_rate) }}
-                  >
-                    {fmtPct(r.hallucination_rate)}
-                  </td>
-                  <td className="text-center">
-                    <StatDot ok={(r.status ?? "complete") === "complete"} />
-                  </td>
-                  <td className="text-right tabular-nums text-text-primary">
-                    {fmtCost(r.estimated_cost_usd)}
-                  </td>
-                  <td className="text-right pr-6">
-                    <button
-                      onClick={() =>
-                        setCurrentRun({
-                          run_id: r.run_id,
-                          timestamp: r.timestamp,
-                          dataset_size: r.dataset_size,
-                          model: r.model,
-                          metrics: {
-                            total: r.dataset_size,
-                            accuracy: r.accuracy,
-                            hallucination_rate: r.hallucination_rate,
-                            avg_retrieval_precision: 0,
-                            avg_retrieval_recall: 0,
-                            avg_latency_ms: 0,
-                            latency_p50_ms: 0,
-                            latency_p95_ms: 0,
-                            avg_tokens_input: 0,
-                            avg_tokens_output: 0,
-                            total_tokens_input: 0,
-                            total_tokens_output: 0,
-                            estimated_cost_usd: r.estimated_cost_usd,
-                          },
-                          results: [],
-                        })
-                      }
-                      className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-6"
+                    <td className="pl-6 text-text-primary" title={r.run_id}>
+                      {r.run_id.slice(0, 8)}
+                    </td>
+                    <td className="text-text-secondary tabular-nums">{fmtDate(r.timestamp)}</td>
+                    <td className="text-right tabular-nums text-text-secondary">
+                      {r.dataset_size}
+                    </td>
+                    <td className={`text-right tabular-nums ${accuracyTone(r.accuracy)}`}>
+                      {fmtPct(r.accuracy)}
+                    </td>
+                    <td
+                      className={`text-right tabular-nums ${hallucinationTone(r.hallucination_rate)}`}
                     >
-                      VIEW
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                      {fmtPct(r.hallucination_rate)}
+                    </td>
+                    <td className="text-right tabular-nums text-text-primary">
+                      {fmtCost(r.estimated_cost_usd)}
+                    </td>
+                    <td className="text-right pr-6">
+                      {current ? (
+                        <span className="label-sm text-text-tertiary px-2">SHOWN</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => show(r.run_id)}
+                          className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-6"
+                        >
+                          VIEW
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -274,140 +311,59 @@ function EvaluacionPage() {
             />
           </Field>
         </div>
-        {formError && <div className="label-sm text-error mb-3">ERROR: {formError}</div>}
-        <div className="flex justify-end gap-2 mt-4">
-          <Btn onClick={() => setOpen(false)}>CANCEL</Btn>
-          <Btn
-            variant="primary"
-            disabled={runEval.isPending || parsed.items === null || collId === null}
-            onClick={() => {
-              setFormError(null);
-              runEval.mutate();
-            }}
-          >
-            {runEval.isPending ? "EXECUTING..." : "EXECUTE"}
-          </Btn>
-        </div>
-      </Modal>
-    </div>
-  );
-}
-
-function accuracyColor(a: number) {
-  if (a >= 0.8) return "var(--success)";
-  if (a < 0.6) return "var(--error)";
-  return "var(--text-primary)";
-}
-function halColor(h: number) {
-  if (h < 0.05) return "var(--success)";
-  if (h > 0.15) return "var(--error)";
-  return "var(--text-primary)";
-}
-function latColor(ms: number) {
-  if (ms < 2000) return "var(--success)";
-  if (ms > 3000) return "var(--error)";
-  return "var(--text-primary)";
-}
-
-function CurrentRun({ report }: { report: EvalReport }) {
-  const m = report.metrics;
-  return (
-    <div className="mb-8">
-      <div className="flex items-baseline justify-between mb-2">
-        <div className="title-lg text-text-primary">{report.run_id}</div>
-        <div className="label-sm text-text-secondary tabular-nums">{fmtDate(report.timestamp)}</div>
-      </div>
-      <div className="label-sm text-text-secondary mb-6">
-        MODEL: <span className="text-text-primary">{report.model}</span>
-        <span className="text-text-tertiary"> · </span>
-        DATASET_SIZE: <span className="text-text-primary tabular-nums">{report.dataset_size}</span>
-        <span className="text-text-tertiary"> · </span>
-        STATUS: <span className="text-success">● COMPLETE</span>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <BigMetric label="ACCURACY" value={fmtPct(m.accuracy)} color={accuracyColor(m.accuracy)} />
-        <BigMetric
-          label="HALLUCINATION RATE"
-          value={fmtPct(m.hallucination_rate)}
-          color={halColor(m.hallucination_rate)}
-        />
-        <BigMetric label="RETRIEVAL PRECISION" value={fmtPct(m.avg_retrieval_precision)} />
-        <BigMetric
-          label="AVG LATENCY"
-          value={`${Math.round(m.avg_latency_ms)}MS`}
-          color={latColor(m.avg_latency_ms)}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <BreakdownTable title="BY DIFFICULTY" data={m.by_difficulty} />
-        <BreakdownTable title="BY CATEGORY" data={m.by_category} />
-      </div>
-    </div>
-  );
-}
-
-function BigMetric({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="border border-border-subtle bg-surface-container p-5">
-      <div className="label-sm text-text-secondary">{label}</div>
-      <div className="display-lg mt-3" style={{ color: color ?? "var(--text-primary)" }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function BreakdownTable({
-  title,
-  data,
-}: {
-  title: string;
-  data?: Record<string, { count: number; accuracy: number; hallucination_rate: number }>;
-}) {
-  return (
-    <div>
-      <div className="title-sm text-text-primary mb-3">{title}</div>
-      <div className="border border-border-subtle bg-surface-container overflow-x-auto">
-        {!data || Object.keys(data).length === 0 ? (
-          <EmptyState label="NO BREAKDOWN" />
+        {formError && <div className="label-sm text-error my-3">ERROR: {formError}</div>}
+        {confirming && parsed.items && collId !== null ? (
+          // A run bills every item, so it starts only from here.
+          <div className="mt-4 border border-warning/40 p-4">
+            <div className="label-sm text-text-primary">
+              THIS RUN BILLS {items} ANSWER {items === 1 ? "CALL" : "CALLS"} AND {items * 2} JUDGE
+              CALLS
+            </div>
+            <div className="body-sm text-text-secondary mt-2">
+              {estimate ? (
+                <>
+                  Generating the answers should cost about{" "}
+                  <span className="text-text-primary">{fmtCost(estimate.usd)}</span>: the last run
+                  cost {fmtCost(estimate.from.estimated_cost_usd)} for {estimate.from.dataset_size}{" "}
+                  items. The judge and the embeddings are billed on top and are not measured.
+                </>
+              ) : (
+                <>
+                  No earlier run to estimate from. The answers, the judge and the embeddings are all
+                  billed.
+                </>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <Btn onClick={() => setConfirming(false)}>BACK</Btn>
+              <Btn
+                variant="primary"
+                disabled={runEval.isPending}
+                onClick={() => {
+                  setFormError(null);
+                  runEval.mutate();
+                }}
+              >
+                {estimate ? `RUN · ~${fmtCost(estimate.usd)} + JUDGE` : "RUN"}
+              </Btn>
+            </div>
+          </div>
         ) : (
-          <table className="w-full min-w-[420px]">
-            <thead>
-              <tr className="label-sm text-text-secondary border-b border-border-subtle">
-                <th className="text-left pl-6 py-2 font-normal">LEVEL</th>
-                <th className="text-right py-2 font-normal">COUNT</th>
-                <th className="text-right py-2 font-normal">ACCURACY</th>
-                <th className="text-right pr-6 py-2 font-normal">HAL</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(data).map(([k, v]) => (
-                <tr
-                  key={k}
-                  className="body-sm h-9 hover:bg-surface-high border-b border-border-subtle/50"
-                >
-                  <td className="pl-6 text-text-primary">{k.toUpperCase()}</td>
-                  <td className="text-right tabular-nums text-text-primary">{v.count}</td>
-                  <td
-                    className="text-right tabular-nums"
-                    style={{ color: accuracyColor(v.accuracy) }}
-                  >
-                    {fmtPct(v.accuracy)}
-                  </td>
-                  <td
-                    className="text-right pr-6 tabular-nums"
-                    style={{ color: halColor(v.hallucination_rate) }}
-                  >
-                    {fmtPct(v.hallucination_rate)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="flex justify-end gap-2 mt-4">
+            <Btn onClick={() => setOpen(false)}>CANCEL</Btn>
+            <Btn
+              variant="primary"
+              disabled={runEval.isPending || parsed.items === null || collId === null}
+              onClick={() => {
+                setFormError(null);
+                setConfirming(true);
+              }}
+            >
+              EXECUTE…
+            </Btn>
+          </div>
         )}
-      </div>
+      </Modal>
     </div>
   );
 }
