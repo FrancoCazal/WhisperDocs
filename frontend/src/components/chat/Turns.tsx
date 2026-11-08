@@ -1,10 +1,6 @@
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github-dark.css";
 import { COSINE_HINT, fmtCosine, fmtCost } from "@/lib/api";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { interleaveCitations } from "./citations";
+import { Markdown } from "./Markdown";
 import type { AssistantTurnData, UserTurnData } from "./types";
 
 const ACTION_CLASS: Record<string, string> = {
@@ -63,18 +59,7 @@ export function AssistantTurn({
           </button>
         )}
       </div>
-      <div className="body text-text-primary leading-relaxed markdown-body">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-          components={{
-            p: ({ children }) => <p>{interleaveCitations(children, turn.citations)}</p>,
-            li: ({ children }) => <li>{interleaveCitations(children, turn.citations)}</li>,
-          }}
-        >
-          {turn.text}
-        </ReactMarkdown>
-      </div>
+      <Markdown text={turn.text} citations={turn.citations} />
 
       {turn.citations.length > 0 && (
         <div className="mt-4">

@@ -1,6 +1,4 @@
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
+import { Markdown } from "./Markdown";
 import { NODE_LABELS, type NodeProgress } from "./types";
 
 export function StreamingTurn({ progress, text }: { progress: NodeProgress[]; text: string }) {
@@ -29,13 +27,8 @@ export function StreamingTurn({ progress, text }: { progress: NodeProgress[]; te
         );
       })}
       {text && (
-        <div className="prose prose-invert max-w-none text-text-primary">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-          >
-            {text}
-          </ReactMarkdown>
+        <div>
+          <Markdown text={text} />
           <span className="inline-block w-2 h-4 bg-text-primary animate-pulse align-middle" />
         </div>
       )}
