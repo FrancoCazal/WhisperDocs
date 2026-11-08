@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { fmtCost, fmtNumber } from "@/lib/api";
+import { citedSources } from "./citations";
 import { Markdown } from "./Markdown";
 import { TurnTrace } from "./Trace";
 import {
@@ -68,6 +69,7 @@ export function AssistantTurn({
   // all-zero metadata: "0MS · 0 IN / 0 OUT · $0.0000" reads as a bug.
   const usage = turn.metadata?.model || turn.metadata?.tokens_input ? turn.metadata : null;
   const onCite = useCallback((n: number) => onOpenSources(turn, n), [onOpenSources, turn]);
+  const cited = citedSources(turn.text, turn.citations.length).size;
   const actionClass = turn.action
     ? (ACTION_CLASS[turn.action] ?? "text-text-tertiary border-text-tertiary")
     : "text-text-tertiary border-text-tertiary";
@@ -117,7 +119,7 @@ export function AssistantTurn({
           onClick={() => onOpenSources(turn, null)}
           className="mt-4 label-sm text-text-secondary hover:text-primary-blue"
         >
-          ☰ SOURCES [{turn.citations.length}]
+          ☰ SOURCES [{turn.citations.length}] · {cited} CITED
         </button>
       )}
 
@@ -134,8 +136,10 @@ export function AssistantTurn({
 
       {answered && usage && (
         <div className="label-xs text-text-tertiary mt-4 tabular-nums">
-          {fmtNumber(usage.latency_ms)}MS · {fmtNumber(usage.tokens_input)} IN /{" "}
-          {fmtNumber(usage.tokens_output)} OUT
+          {/* The turn's own time, from sending to the last token, is in its trace. */}
+          <span title="The answer's model call only">
+            GEN {fmtNumber(usage.latency_ms)} MS
+          </span> · {fmtNumber(usage.tokens_input)} IN / {fmtNumber(usage.tokens_output)} OUT
           {usage.model ? ` · ${usage.model}` : ""} · {fmtCost(usage.cost_usd)}
         </div>
       )}

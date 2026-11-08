@@ -4,6 +4,16 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 
 const CITATION_RE = /\[(\d+)\]/g;
 
+/** The sources an answer cites: each n of an "[n]" in its text that names one. */
+export function citedSources(text: string, count: number): Set<number> {
+  const cited = new Set<number>();
+  for (const m of text.matchAll(CITATION_RE)) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= count) cited.add(n);
+  }
+  return cited;
+}
+
 // Replaces each "[n]" in the rendered text with a button on citation n: a
 // hover shows its preview, a click calls `onCite(n)`.
 export function interleaveCitations(

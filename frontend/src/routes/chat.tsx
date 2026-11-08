@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   api,
+  fmtCost,
+  fmtNumber,
   fmtTimestamp,
   fmtTurnTime,
   LIMITS,
@@ -16,6 +18,7 @@ import { Modal } from "@/components/ui-kit/Modal";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { AssistantTurn, UserTurn } from "@/components/chat/Turns";
 import { SourcesSheet, type SourcesView } from "@/components/chat/SourcesSheet";
+import { citedSources } from "@/components/chat/citations";
 import { StreamingTurn, type LiveTurn } from "@/components/chat/StreamingTurn";
 import { ThreadSidebar } from "@/components/chat/ThreadSidebar";
 import { PAGE_SIZE, usePagedList } from "@/lib/paged";
@@ -130,6 +133,20 @@ function ChatPage() {
     return last?.kind === "assistant" && !last.outcome && last.citations.length > 0 ? last : null;
   }, [turns]);
 
+  // The thread's answers so far, and their model calls' tokens and cost.
+  const threadUsage = useMemo(() => {
+    let answers = 0;
+    let tokens = 0;
+    let cost = 0;
+    for (const t of turns) {
+      if (t.kind !== "assistant" || t.outcome || !t.metadata) continue;
+      answers += 1;
+      tokens += t.metadata.tokens_input + t.metadata.tokens_output;
+      cost += t.metadata.cost_usd;
+    }
+    return answers > 0 ? { answers, tokens, cost } : null;
+  }, [turns]);
+
   // The mobile threads panel: controlled, so picking a thread closes it.
   const [threadsOpen, setThreadsOpen] = useState(false);
 
@@ -137,7 +154,12 @@ function ChatPage() {
   const [sources, setSources] = useState<SourcesView | null>(null);
   const openSources = useCallback(
     (t: AssistantTurnData, focus: number | null) =>
-      setSources({ citations: t.citations, focus, label: `ANSWER ${t.ts}` }),
+      setSources({
+        citations: t.citations,
+        focus,
+        label: `ANSWER ${t.ts}`,
+        cited: citedSources(t.text, t.citations.length),
+      }),
     [],
   );
 
@@ -511,6 +533,15 @@ function ChatPage() {
               <div className="label-sm text-text-secondary">
                 AGENT_THREAD:{" "}
                 <span className="text-text-primary">{threadId ? threadId.slice(0, 8) : "NEW"}</span>
+                {threadUsage && (
+                  <span
+                    className="hidden sm:inline ml-3 label-xs text-text-tertiary tabular-nums"
+                    title="The answers' model calls. The classifier, the query rewrite and the embeddings are not counted."
+                  >
+                    {threadUsage.answers} {threadUsage.answers === 1 ? "ANSWER" : "ANSWERS"} ·{" "}
+                    {fmtNumber(threadUsage.tokens)} TOKENS · {fmtCost(threadUsage.cost)}
+                  </span>
+                )}
                 {readOnly && (
                   <span className="ml-2 label-xs px-2 py-0.5 border border-text-tertiary text-text-secondary">
                     {channel.toUpperCase()} · READ ONLY

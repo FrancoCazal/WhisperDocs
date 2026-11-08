@@ -8,8 +8,14 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-// One answer's sources; `focus` is the source an "[n]" click asked for.
-export type SourcesView = { citations: AgentCitation[]; focus: number | null; label: string };
+// One answer's sources; `focus` is the source an "[n]" click asked for, and
+// `cited` the ones the answer cites.
+export type SourcesView = {
+  citations: AgentCitation[];
+  focus: number | null;
+  label: string;
+  cited: ReadonlySet<number>;
+};
 
 function scrollIntoView(el: HTMLElement | null) {
   el?.scrollIntoView({ block: "center" });
@@ -25,13 +31,15 @@ export function SourcesSheet({ view, onClose }: { view: SourcesView | null; onCl
         <SheetHeader>
           <SheetTitle className="label-sm text-text-primary">SOURCES · {view?.label}</SheetTitle>
           <SheetDescription className="label-xs text-text-tertiary normal-case">
-            Ranked by retrieval: [n] in the answer is source n.
+            Ranked by retrieval: [n] in the answer is source n. The answer cites{" "}
+            {view?.cited.size ?? 0} of the {view?.citations.length ?? 0} retrieved.
           </SheetDescription>
         </SheetHeader>
         <ol className="mt-4 space-y-3">
           {view?.citations.map((c, idx) => {
             const n = idx + 1;
             const focused = n === view.focus;
+            const cited = view.cited.has(n);
             return (
               <li
                 key={`src-${c.chunk_id}-${idx}`}
@@ -51,7 +59,12 @@ export function SourcesSheet({ view, onClose }: { view: SourcesView | null; onCl
                     {fmtCosine(c.cosine)}
                   </span>
                 </div>
-                <div className="label-xs text-text-tertiary mb-2">CHUNK {c.chunk_index}</div>
+                <div className="label-xs text-text-tertiary mb-2">
+                  CHUNK {c.chunk_index} ·{" "}
+                  <span className={cited ? "text-primary-blue" : undefined}>
+                    {cited ? "CITED" : "NOT CITED"}
+                  </span>
+                </div>
                 {c.text_preview && (
                   <div className="body-sm text-text-secondary whitespace-pre-wrap">
                     {c.text_preview}
