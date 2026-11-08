@@ -264,13 +264,7 @@ export type AgentStreamEvent =
   | { type: "error"; message: string };
 
 export type IngestionStatus =
-  | "pending"
-  | "extracting"
-  | "chunking"
-  | "embedding"
-  | "persisting"
-  | "complete"
-  | "failed";
+  "pending" | "extracting" | "chunking" | "embedding" | "persisting" | "complete" | "failed";
 
 export type Page<T> = {
   items: T[];

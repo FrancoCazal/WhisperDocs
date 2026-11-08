@@ -1,15 +1,16 @@
-import { createRouter, useRouter } from "@tanstack/react-router";
+import { createRouter, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { QueryClient } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 
-function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+// A route can throw anything, not only an Error.
+function DefaultErrorComponent({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
   return (
     <div className="min-h-screen flex items-center justify-center bg-surface px-6">
       <div className="max-w-md w-full border border-error/40 bg-surface-container p-6">
         <div className="label-sm text-error mb-3">SYSTEM_FAULT // UNHANDLED_EXCEPTION</div>
         <pre className="body-sm text-text-primary whitespace-pre-wrap break-words mb-6">
-          {error.message}
+          {error instanceof Error ? error.message : String(error)}
         </pre>
         <div className="flex gap-3">
           <button

@@ -35,7 +35,7 @@ function DocumentDetailError({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
   return (
     <div>
-      <ErrorBanner message={error.message} />
+      <ErrorBanner message={error instanceof Error ? error.message : String(error)} />
       <button
         onClick={() => {
           router.invalidate();
