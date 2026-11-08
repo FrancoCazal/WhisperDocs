@@ -1,9 +1,16 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { api, fmtDate, fmtNumber, type IngestionStatus } from "@/lib/api";
+import {
+  api,
+  fmtDate,
+  fmtNumber,
+  type BulkOpResult,
+  type DocumentRead,
+  type IngestionStatus,
+} from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
-import { Btn } from "@/components/ui-kit/Button";
+import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
 
 type SearchParams = { collection_id?: number };
@@ -101,12 +108,35 @@ function DocumentsPage() {
     }
   }
 
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const [toDelete, setToDelete] = useState<DocumentRead | null>(null);
+  const [bulkResult, setBulkResult] = useState<BulkOpResult | null>(null);
+
+  // Only rows on screen can be acted on: a selection made under another filter,
+  // or of rows a refresh removed, is never sent.
+  const visible = documents.data ?? [];
+  const selectedIds = visible.filter((d) => selected.has(d.id)).map((d) => d.id);
+
+  function changeFilter(next: number | null) {
+    setFilter(next);
+    setSelected(new Set());
+  }
+
   const del = useMutation({
     mutationFn: (id: number) => api.deleteDocument(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
   });
 
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const bulkDel = useMutation({
+    mutationFn: (ids: number[]) => api.bulkDeleteDocuments(ids),
+    onMutate: () => setBulkResult(null),
+    onSuccess: (result) => {
+      setBulkResult(result);
+      setSelected(new Set());
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+  });
 
   function toggleSel(id: number) {
     setSelected((prev) => {
@@ -115,15 +145,6 @@ function DocumentsPage() {
       else next.add(id);
       return next;
     });
-  }
-
-  async function bulkDelete() {
-    if (selected.size === 0) return;
-    if (!confirm(`Delete ${selected.size} document(s)? This cannot be undone.`)) return;
-    const ids = Array.from(selected);
-    await api.bulkDeleteDocuments(ids);
-    setSelected(new Set());
-    qc.invalidateQueries({ queryKey: ["documents"] });
   }
 
   function handleFiles(files: File[]) {
@@ -157,7 +178,7 @@ function DocumentsPage() {
             FILTER:
             <select
               value={filter ?? ""}
-              onChange={(e) => setFilter(e.target.value ? Number(e.target.value) : null)}
+              onChange={(e) => changeFilter(e.target.value ? Number(e.target.value) : null)}
               className="bg-surface-lowest border border-border-subtle px-2 h-9 text-text-primary body-sm focus:outline-none focus:border-border-focus"
             >
               <option value="">ALL COLLECTIONS</option>
@@ -260,14 +281,39 @@ function DocumentsPage() {
       </div>
 
       {documents.error && <ErrorBanner message="failed to load documents" />}
+      {del.error && <ErrorBanner message={`delete failed: ${del.error.message}`} />}
+      {bulkDel.error && <ErrorBanner message={`bulk delete failed: ${bulkDel.error.message}`} />}
+      {bulkResult && <BulkResultBanner result={bulkResult} onClose={() => setBulkResult(null)} />}
 
-      {selected.size > 0 && (
+      <ConfirmDialog
+        open={confirmBulk}
+        onOpenChange={setConfirmBulk}
+        title={`DELETE ${selectedIds.length} DOCUMENT(S)?`}
+        confirmLabel="✕ DELETE"
+        destructive
+        onConfirm={() => bulkDel.mutate(selectedIds)}
+      >
+        Their chunks are removed from the index. This cannot be undone.
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => !open && setToDelete(null)}
+        title={`DELETE "${toDelete?.title ?? ""}"?`}
+        confirmLabel="✕ DELETE"
+        destructive
+        onConfirm={() => toDelete && del.mutate(toDelete.id)}
+      >
+        Its {fmtNumber(toDelete?.chunk_count)} chunks are removed from the index. This cannot be
+        undone.
+      </ConfirmDialog>
+
+      {selectedIds.length > 0 && (
         <div
           role="region"
           aria-label="Bulk actions"
           className="mb-3 flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 bg-surface-container-low border border-border-subtle"
         >
-          <span className="label-sm text-text-secondary">{selected.size} SELECTED</span>
+          <span className="label-sm text-text-secondary">{selectedIds.length} SELECTED</span>
           <span className="flex-1 hidden sm:block" />
           <button
             onClick={() => setSelected(new Set())}
@@ -276,10 +322,11 @@ function DocumentsPage() {
             CLEAR
           </button>
           <button
-            onClick={bulkDelete}
+            onClick={() => setConfirmBulk(true)}
+            disabled={bulkDel.isPending}
             className="label-sm text-error hover:bg-error hover:text-surface px-3 h-7 border border-error/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-error"
           >
-            ✕ DELETE SELECTED
+            {bulkDel.isPending ? "DELETING..." : "✕ DELETE SELECTED"}
           </button>
         </div>
       )}
@@ -298,7 +345,7 @@ function DocumentsPage() {
                 <th className="w-10 pl-4 py-3">
                   <input
                     type="checkbox"
-                    checked={selected.size > 0 && selected.size === documents.data.length}
+                    checked={selectedIds.length > 0 && selectedIds.length === visible.length}
                     onChange={(e) =>
                       setSelected(
                         e.target.checked ? new Set(documents.data!.map((d) => d.id)) : new Set(),
@@ -345,7 +392,7 @@ function DocumentsPage() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`Delete "${d.title}"?`)) del.mutate(d.id);
+                        setToDelete(d);
                       }}
                       className="label-sm text-error hover:bg-error hover:text-surface px-2 h-6"
                     >
@@ -358,6 +405,36 @@ function DocumentsPage() {
           </table>
         )}
       </div>
+    </div>
+  );
+}
+
+function BulkResultBanner({ result, onClose }: { result: BulkOpResult; onClose: () => void }) {
+  const clean = result.failed === 0 && result.not_found.length === 0;
+  return (
+    <div
+      role="status"
+      className={`mb-4 border px-4 py-2 label-sm ${
+        clean
+          ? "border-success/40 bg-success/5 text-success"
+          : "border-error/40 bg-error/5 text-error"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span>
+          DELETED {result.succeeded} OF {result.requested}
+          {result.failed > 0 && ` · ${result.failed} FAILED`}
+          {result.not_found.length > 0 && ` · NOT FOUND: ${result.not_found.join(", ")}`}
+        </span>
+        <button onClick={onClose} className="text-text-secondary hover:text-text-primary">
+          ✕
+        </button>
+      </div>
+      {Object.entries(result.errors).map(([id, err]) => (
+        <div key={id} className="body-sm normal-case mt-1">
+          #{id}: {err}
+        </div>
+      ))}
     </div>
   );
 }
