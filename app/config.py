@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -117,10 +118,25 @@ class Settings(BaseSettings):
     default_collection_id: int | None = None
     conversation_grace_period_days: int = 7
 
-    # Browser origins allowed to call the API. The API has no auth, so `*`
-    # would let any open web page read and delete local data.
+    # Browser origins allowed to call the API. Without API_KEY the API has no
+    # auth, so `*` would let any open web page read and delete local data.
     # Env: CORS_ALLOWED_ORIGINS='["http://localhost:8080"]'
     cors_allowed_origins: list[str] = ["http://localhost:8080", "http://localhost:5173"]
+
+    # The key every route needs, sent as `X-API-Key` (audit R6). Unset or
+    # empty, the API is open, as a local demo is: set it before the API can be
+    # reached from anywhere else. /health without `deep` and the WhatsApp
+    # webhook, which checks Twilio's signature, never need it.
+    api_key: SecretStr | None = None
+    # Requests a minute per client (its API key, or its IP without one) on the
+    # routes that spend (audit R9, app/api/rate_limit.py); 0 turns a limit
+    # off. Questions: /query, /agent/chat*, /health?deep=true.
+    rate_limit_per_minute: int = 30
+    # Uploads, one request per file: the frontend sends a folder three at a
+    # time.
+    rate_limit_upload_per_minute: int = 60
+    # /eval/run, which calls a model twice for each item.
+    rate_limit_eval_per_minute: int = 2
 
     # Reranker (post-retrieval refinement). Off by default — requires `[rerank]` extra.
     reranker_enabled: bool = False

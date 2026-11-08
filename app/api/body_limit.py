@@ -13,6 +13,8 @@ from fastapi import HTTPException, status
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.api.errors import error_body
+
 
 def _too_large(limit: int) -> str:
     return f"Request body exceeds the {limit // (1024 * 1024)} MB limit for this endpoint"
@@ -32,7 +34,7 @@ class BodySizeLimitMiddleware:
         declared = dict(scope["headers"]).get(b"content-length")
         if declared is not None and declared.isdigit() and int(declared) > limit:
             response = JSONResponse(
-                {"detail": _too_large(limit)},
+                error_body(scope, 413, "payload_too_large", _too_large(limit)),
                 status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             )
             await response(scope, receive, send)

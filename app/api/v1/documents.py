@@ -18,6 +18,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import upstream_error
+from app.api.rate_limit import uploads_limit
 from app.db import SessionLocal, get_db
 from app.logging_config import get_logger
 from app.models import Chunk, Collection, Document, IngestionJob, IngestionStatus
@@ -92,19 +94,33 @@ async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
     return filename, file_type, file_bytes
 
 
-def _upload_error(exc: Exception) -> HTTPException:
-    """Status code for an upload rejection. The subclasses go before ValueError."""
+def _upload_error(exc: Exception) -> Exception:
+    """Status code for an upload rejection. The subclasses go before ValueError.
+
+    The rejections are this module's and the extractor's own messages, fit for
+    the client. A failed embedding says why without the provider's text."""
+    if isinstance(exc, EmbeddingError):
+        return upstream_error(exc, "Embedding the document")
     if isinstance(exc, FileTooLargeError):
         code = status.HTTP_413_CONTENT_TOO_LARGE
     elif isinstance(exc, (EmptyDocumentError, UnreadableDocumentError)):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
-    elif isinstance(exc, EmbeddingError):
-        code = status.HTTP_502_BAD_GATEWAY
     elif isinstance(exc, ValueError):  # includes UnsupportedFileTypeError
         code = status.HTTP_400_BAD_REQUEST
     else:
         raise exc
     return HTTPException(status_code=code, detail=str(exc))
+
+
+def _batch_item_error(exc: Exception) -> str:
+    """A failed file's message in a batch: the rejection, or for anything else
+    a message without the exception's text, which goes to the log."""
+    try:
+        rejection = _upload_error(exc)
+    except Exception:
+        logger.exception("batch_upload_item_failed")
+        return "The upload failed; the API's logs have the details."
+    return str(getattr(rejection, "detail", rejection))
 
 
 async def _ingest_single(
@@ -179,7 +195,12 @@ async def _ingest_single(
     return document
 
 
-@router.post("/upload", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/upload",
+    response_model=DocumentRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(uploads_limit)],
+)
 async def upload_document(
     collection_id: int = Form(...),
     title: str | None = Form(None, max_length=MAX_NAME_LENGTH),
@@ -200,7 +221,9 @@ async def upload_document(
         raise _upload_error(exc) from exc
 
 
-@router.post("/upload-batch", response_model=BatchUploadResponse)
+@router.post(
+    "/upload-batch", response_model=BatchUploadResponse, dependencies=[Depends(uploads_limit)]
+)
 async def upload_documents_batch(
     response: Response,
     collection_id: int = Form(...),
@@ -239,7 +262,9 @@ async def upload_documents_batch(
             succeeded += 1
         except Exception as exc:
             await db.rollback()
-            results.append(BatchUploadItem(status="error", filename=filename, error=str(exc)))
+            results.append(
+                BatchUploadItem(status="error", filename=filename, error=_batch_item_error(exc))
+            )
             failed += 1
 
     response.status_code = status.HTTP_207_MULTI_STATUS if failed else status.HTTP_201_CREATED
@@ -340,8 +365,9 @@ async def bulk_delete_documents(
         try:
             await db.delete(doc)
             succeeded += 1
-        except Exception as exc:
-            errors[doc.id] = str(exc)
+        except Exception:
+            logger.exception("bulk_delete_item_failed", document_id=doc.id)
+            errors[doc.id] = "The document could not be deleted."
     await db.commit()
 
     return BulkOpResult(
@@ -383,8 +409,9 @@ async def bulk_move_documents(
         try:
             doc.collection_id = payload.target_collection_id
             succeeded += 1
-        except Exception as exc:
-            errors[doc.id] = str(exc)
+        except Exception:
+            logger.exception("bulk_move_item_failed", document_id=doc.id)
+            errors[doc.id] = "The document could not be moved."
     await db.commit()
 
     return BulkOpResult(
@@ -400,7 +427,10 @@ async def bulk_move_documents(
 
 
 @router.post(
-    "/upload-async", response_model=IngestionJobCreate, status_code=status.HTTP_202_ACCEPTED
+    "/upload-async",
+    response_model=IngestionJobCreate,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(uploads_limit)],
 )
 async def upload_document_async(
     collection_id: int = Form(...),

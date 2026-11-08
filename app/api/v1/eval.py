@@ -4,6 +4,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app.api.errors import APIError
+from app.api.rate_limit import eval_limit
 from app.db import SessionLocal
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judges import Judge
@@ -16,14 +18,18 @@ router = APIRouter(prefix="/eval", tags=["eval"])
 RESULTS_DIR = Path("eval/results")
 
 
+# Each item calls the model twice; the golden set has 50 (audit E23).
+MAX_EVAL_ITEMS = 200
+
+
 class EvalRunRequest(BaseModel):
-    dataset: list[TestItem]
+    dataset: list[TestItem] = Field(max_length=MAX_EVAL_ITEMS)
     collection_id: int = 1
     top_k: int = Field(default=5, ge=1, le=20)
     concurrency: int = Field(default=4, ge=1, le=16)
 
 
-@router.post("/run", response_model=EvalReport)
+@router.post("/run", response_model=EvalReport, dependencies=[Depends(eval_limit)])
 async def run_evaluation(
     payload: EvalRunRequest,
     embedder: EmbeddingService = Depends(get_embedder),
@@ -49,7 +55,7 @@ async def run_evaluation(
         report = await evaluator.run(payload.dataset)
     except EvalAbortedError as exc:
         # The message carries counts only; the provider error stays in the logs.
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise APIError(status.HTTP_502_BAD_GATEWAY, "eval_aborted", str(exc)) from exc
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{report.timestamp.strftime('%Y-%m-%dT%H-%M-%S')}_{report.run_id[:8]}.json"

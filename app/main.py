@@ -8,11 +8,13 @@ from contextlib import asynccontextmanager
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent.checkpointer import close_checkpointer, init_checkpointer
+from app.api.auth import configured_key, require_api_key
 from app.api.body_limit import BodySizeLimitMiddleware
+from app.api.errors import RequestContextMiddleware, install_error_handlers
 from app.agent.graph import build_agent_graph
 from app.config import settings
 from app.logging_config import configure_logging, get_logger
@@ -51,6 +53,11 @@ def _check_agent_models() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _check_agent_models()
+    if configured_key() is None:
+        logger.warning(
+            "api_key_not_set",
+            detail="every route is open; set API_KEY before the API is reachable from elsewhere",
+        )
     interrupted = await fail_interrupted_jobs()
     if interrupted:
         logger.warning("ingestion_jobs_interrupted", count=interrupted)
@@ -82,28 +89,41 @@ app = FastAPI(
 
 API_PREFIX = "/api/v1"
 
-# Added before CORS so that CORS wraps it: a 413 sent from here still carries
-# the CORS headers, and the browser shows the 413 instead of a CORS error.
+install_error_handlers(app)
+
+# Each add_middleware wraps the ones before it. CORS goes last, outermost, so
+# that a 413 from the body limit or a 500 from the request context still
+# carries the CORS headers, and the browser shows them instead of a CORS
+# error. The request context wraps the body limit, so its 413 has a request id.
 app.add_middleware(
     BodySizeLimitMiddleware,
     limits={API_PREFIX + path: limit for path, limit in documents.BODY_LIMITS.items()},
 )
+app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Readable by the page: the id an error quotes, and a 429's wait.
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
 
+# Without the key: /health checks it itself, for `deep` only, and the
+# WhatsApp webhook checks Twilio's signature.
 app.include_router(health.router, prefix=API_PREFIX)
-app.include_router(metrics_route.router, prefix=API_PREFIX)
-app.include_router(admin.router, prefix=API_PREFIX)
-app.include_router(collections.router, prefix=API_PREFIX)
-app.include_router(documents.router, prefix=API_PREFIX)
-app.include_router(query.router, prefix=API_PREFIX)
-app.include_router(eval.router, prefix=API_PREFIX)
-app.include_router(agent.router, prefix=API_PREFIX)
-app.include_router(conversations.router, prefix=API_PREFIX)
-app.include_router(notes.router, prefix=API_PREFIX)
 app.include_router(webhook_whatsapp.router, prefix=API_PREFIX)
+
+for router in (
+    metrics_route.router,
+    admin.router,
+    collections.router,
+    documents.router,
+    query.router,
+    eval.router,
+    agent.router,
+    conversations.router,
+    notes.router,
+):
+    app.include_router(router, prefix=API_PREFIX, dependencies=[Depends(require_api_key)])

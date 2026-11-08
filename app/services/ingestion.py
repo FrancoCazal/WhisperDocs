@@ -22,9 +22,16 @@ from app.logging_config import get_logger
 from app.models import Chunk, Document, IngestionJob, IngestionStatus
 from app.services.chunker import Chunk as TextChunk
 from app.services.chunker import TextChunker
-from app.services.embedder import EmbeddingService
+from app.services.embedder import EmbeddingError, EmbeddingService
 from app.services.lang import detect_language
-from app.services.text_extractor import detect_file_type, extract_text
+from app.services.llm.errors import failure_text
+from app.services.text_extractor import (
+    EmptyDocumentError,
+    UnreadableDocumentError,
+    UnsupportedFileTypeError,
+    detect_file_type,
+    extract_text,
+)
 
 logger = get_logger(__name__)
 
@@ -241,9 +248,20 @@ async def run_ingestion(
         await _set_status(
             job_id,
             status=IngestionStatus.FAILED,
-            error_message=str(exc),
+            error_message=job_error_message(exc),
             completed_at=datetime.now(timezone.utc),
         )
+
+
+def job_error_message(exc: BaseException) -> str:
+    """A failed job's `error_message`, which the API and its stream return:
+    the extractor's own rejections as they are, why an embedding failed, and
+    for anything else no exception text, which can carry SQL (audit R9)."""
+    if isinstance(exc, UnsupportedFileTypeError | EmptyDocumentError | UnreadableDocumentError):
+        return str(exc)
+    if isinstance(exc, EmbeddingError):
+        return f"Embedding the document failed: {failure_text(exc)}."
+    return "Ingestion failed; the API's logs have the details."
 
 
 def spawn_ingestion(

@@ -11,10 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.thread_id import thread_title
 from app.agent.utils.messages import stamped
+from app.api.errors import APIError, request_id
+from app.api.rate_limit import questions_limit
 from app.db import SessionLocal, get_db
 from app.logging_config import get_logger
 from app.metrics import agent_turn_duration_seconds
 from app.models import Collection, Conversation, Document, QueryLog
+from app.services.llm.errors import classify_error, failure_text
 from app.services.llm.pricing import estimate_cost_usd
 from app.schemas.agent import (
     AgentChatRequest,
@@ -43,7 +46,13 @@ def _turn_metadata(md: dict, chunks_retrieved: int) -> AgentTurnMetadata:
     )
 
 
-@router.post("/chat", response_model=AgentChatResponse)
+def _agent_failure(exc: BaseException) -> tuple[str, str]:
+    """The message and kind of an agent run that raised. The exception's own
+    text (Bedrock's, the database's) stays in the logs (audit A9)."""
+    return f"The agent failed: {failure_text(exc)}.", classify_error(exc)
+
+
+@router.post("/chat", response_model=AgentChatResponse, dependencies=[Depends(questions_limit)])
 async def agent_chat(
     payload: AgentChatRequest,
     request: Request,
@@ -82,7 +91,8 @@ async def agent_chat(
         )
     except Exception as exc:
         logger.exception("agent_invoke_failed", thread_id=thread_id)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Agent failure: {exc}")
+        message, kind = _agent_failure(exc)
+        raise APIError(status.HTTP_502_BAD_GATEWAY, "agent_failed", message, kind=kind) from exc
 
     final = result["messages"][-1]
     answer = final.content if isinstance(final.content, str) else str(final.content)
@@ -178,7 +188,7 @@ def _sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
 
-@router.post("/chat/stream")
+@router.post("/chat/stream", dependencies=[Depends(questions_limit)])
 async def agent_chat_stream(
     payload: AgentChatRequest,
     request: Request,
@@ -190,8 +200,15 @@ async def agent_chat_stream(
       - node_start: {node}                       (each node entry)
       - node_end: {node, summary?}               (each node exit, with light summary)
       - final: {thread_id, action, answer, citations, metadata, failed, errors}
-      - error: {message}
+      - error: {message, code, request_id, kind?}: the same fields as an
+        error response (app/api/errors.py), without the exception's text.
     """
+    rid = request_id(request.scope)
+
+    def error_event(message: str, code: str, **extra: str) -> bytes:
+        if code == "agent_failed":
+            message = f"{message} Request id {rid}."
+        return _sse("error", {"message": message, "code": code, "request_id": rid, **extra})
 
     async def event_stream() -> AsyncIterator[bytes]:
         thread_id = str(payload.thread_id) if payload.thread_id else str(uuid.uuid4())
@@ -199,7 +216,7 @@ async def agent_chat_stream(
         async with SessionLocal() as db:
             document, error = await check_turn_scope(db, payload)
             if error:
-                yield _sse("error", {"message": error})
+                yield error_event(error, "bad_request")
                 return
 
             conv = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
@@ -277,11 +294,12 @@ async def agent_chat_stream(
                     final_state = event.get("data", {}).get("output") or {}
         except Exception as exc:
             logger.exception("agent_stream_failed", thread_id=thread_id)
-            yield _sse("error", {"message": f"Agent failure: {exc}"})
+            message, kind = _agent_failure(exc)
+            yield error_event(message, "agent_failed", kind=kind)
             return
 
         if not final_state:
-            yield _sse("error", {"message": "Agent returned no final state"})
+            yield error_event("The agent returned no answer.", "agent_failed")
             return
 
         messages = final_state.get("messages") or []

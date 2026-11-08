@@ -1,11 +1,14 @@
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import upstream_error
+from app.api.rate_limit import questions_limit
 from app.db import contains_text, get_db
+from app.logging_config import get_logger
 from app.models import QueryLog
 from app.schemas.pagination import Page
 from app.schemas.query import (
@@ -16,15 +19,17 @@ from app.schemas.query import (
     QueryResponse,
 )
 from app.services.embedder import EmbeddingError, EmbeddingService, get_embedder
-from app.services.llm import LLMError, llm_service_for
+from app.services.llm import llm_service_for
 from app.services.llm.pricing import estimate_cost_usd
 from app.services.rag import RAG_SYSTEM_PROMPT, build_user_prompt
 from app.services.retrieval_pipeline import retrieve as retrieve_pipeline
 
+logger = get_logger(__name__)
+
 router = APIRouter(prefix="/query", tags=["query"])
 
 
-@router.post("", response_model=QueryResponse)
+@router.post("", response_model=QueryResponse, dependencies=[Depends(questions_limit)])
 async def query(
     payload: QueryRequest,
     db: AsyncSession = Depends(get_db),
@@ -36,7 +41,8 @@ async def query(
     try:
         question_embedding = await embedder.embed(payload.question)
     except EmbeddingError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        logger.exception("query_embedding_failed")
+        raise upstream_error(exc, "Embedding the question") from exc
 
     chunks = await retrieve_pipeline(
         db=db,
@@ -87,8 +93,11 @@ async def query(
             temperature=temperature,
             max_tokens=1024,
         )
-    except LLMError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    except Exception as exc:
+        # The providers raise their SDK's exceptions, not LLMError: catching
+        # that alone let every model failure through as a bare 500.
+        logger.exception("query_generation_failed", model=model)
+        raise upstream_error(exc, "Generation") from exc
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     cost_usd = estimate_cost_usd(

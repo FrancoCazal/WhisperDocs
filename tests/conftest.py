@@ -60,3 +60,22 @@ def network_guard(monkeypatch):
             "(FakeProvider and mock_llm_service_for, or mock_embedder)",
             pytrace=False,
         )
+
+
+@pytest.fixture(autouse=True)
+def open_api(monkeypatch):
+    """Every test starts with the API open and nothing counted: the dev .env
+    may set API_KEY or a low RATE_LIMIT_*. A test that needs either sets it."""
+    from app.api.rate_limit import limiter
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "api_key", None)
+    for name in (
+        "rate_limit_per_minute",
+        "rate_limit_upload_per_minute",
+        "rate_limit_eval_per_minute",
+    ):
+        monkeypatch.setattr(settings, name, 0)
+    limiter.reset()
+    yield
+    limiter.reset()

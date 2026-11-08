@@ -178,3 +178,22 @@ def classify_error(exc: BaseException) -> ErrorKind:
         if any(word in text for word in _BILLING_WORDS):
             return "billing"
     return kind or "unknown"
+
+
+# Why a model or embedding call failed, as a client reads it.
+KIND_TEXT: dict[ErrorKind, str] = {
+    "billing": "the provider refused it over billing or quota",
+    "auth": "the provider refused the credentials",
+    "rate_limit": "the provider's rate limit was hit",
+    "timeout": "it timed out",
+    "unavailable": "the provider could not be reached",
+    "invalid_request": "the provider rejected the request",
+    "bad_response": "the model's answer could not be read",
+    "unknown": "the API's logs have the details",
+}
+
+
+def failure_text(exc: BaseException) -> str:
+    """Why a call failed, without the exception's own text, which can carry
+    a provider's or the database's internals (audit R9)."""
+    return KIND_TEXT[classify_error(exc)]
