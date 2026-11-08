@@ -6,6 +6,14 @@ export const API_BASE_URL =
 
 const ROOT = `${API_BASE_URL}/api/v1`;
 
+// Text limits the backend validates (app/schemas): past them it answers 422.
+export const LIMITS = {
+  chatMessage: 5000,
+  queryQuestion: 2000,
+  collectionName: 200,
+  collectionDescription: 2000,
+} as const;
+
 export class ApiError extends Error {
   status: number;
   detail: unknown;
@@ -14,6 +22,40 @@ export class ApiError extends Error {
     this.status = status;
     this.detail = detail;
   }
+}
+
+// FastAPI's `detail`: a string, or for a 422 a list of {loc, msg}.
+function detailMessage(detail: unknown): string | null {
+  if (typeof detail === "string") return detail || null;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((d) => {
+      if (d && typeof d === "object" && "msg" in d) {
+        const { loc, msg } = d as { loc?: unknown; msg: unknown };
+        // ["body", "message"] -> "message"; the "body" prefix says nothing.
+        const where = Array.isArray(loc) ? loc.filter((p) => p !== "body").join(".") : "";
+        return where ? `${where}: ${String(msg)}` : String(msg);
+      }
+      return JSON.stringify(d);
+    });
+    return parts.join("; ") || null;
+  }
+  return detail == null ? null : JSON.stringify(detail);
+}
+
+/** The error for a failed response, with its `detail` readable as the message. */
+async function toApiError(res: Response): Promise<ApiError> {
+  const text = await res.text().catch(() => "");
+  let body: unknown = text || null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    /* not JSON: a proxy's error page, say; keep it as the detail */
+  }
+  const detail =
+    body && typeof body === "object" && "detail" in body
+      ? (body as { detail: unknown }).detail
+      : null;
+  return new ApiError(res.status, body, detailMessage(detail) ?? `HTTP ${res.status}`);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -27,23 +69,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  if (!res.ok) {
-    let detail: unknown = null;
-    try {
-      detail = await res.json();
-    } catch {
-      try {
-        detail = await res.text();
-      } catch {
-        /* ignore */
-      }
-    }
-    const msg =
-      detail && typeof detail === "object" && "detail" in (detail as Record<string, unknown>)
-        ? String((detail as Record<string, unknown>).detail)
-        : `HTTP ${res.status}`;
-    throw new ApiError(res.status, detail, msg);
-  }
+  if (!res.ok) throw await toApiError(res);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
@@ -370,9 +396,8 @@ export const api = {
       headers: { Accept: "text/event-stream" },
       signal,
     });
-    if (!res.ok || !res.body) {
-      throw new ApiError(res.status, null, `Stream failed: HTTP ${res.status}`);
-    }
+    if (!res.ok) throw await toApiError(res);
+    if (!res.body) throw new ApiError(res.status, null, "Stream failed: empty response");
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -479,9 +504,8 @@ export const api = {
       }),
       signal,
     });
-    if (!res.ok || !res.body) {
-      throw new ApiError(res.status, null, `Stream failed: HTTP ${res.status}`);
-    }
+    if (!res.ok) throw await toApiError(res);
+    if (!res.body) throw new ApiError(res.status, null, "Stream failed: empty response");
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";

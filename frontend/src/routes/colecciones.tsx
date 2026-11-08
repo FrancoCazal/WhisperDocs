@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, fmtDate, fmtNumber, type DocumentRead } from "@/lib/api";
+import { api, fmtDate, fmtNumber, LIMITS, type DocumentRead } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
 import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
@@ -143,6 +143,7 @@ function CollectionsPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. backend-docs"
+            maxLength={LIMITS.collectionName}
             className={inputCls}
             autoFocus
           />
@@ -152,6 +153,7 @@ function CollectionsPage() {
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             placeholder="Short description of this namespace…"
+            maxLength={LIMITS.collectionDescription}
             rows={3}
             className={textareaCls}
           />

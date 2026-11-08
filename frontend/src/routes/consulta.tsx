@@ -7,11 +7,13 @@ import {
   fmtCosine,
   fmtCost,
   fmtTimestamp,
+  LIMITS,
   type Citation,
   type QueryLog,
   type QueryMetadata,
 } from "@/lib/api";
 import { ErrorBanner } from "@/components/ui-kit/EmptyState";
+import { LengthHint } from "@/components/ui-kit/LengthHint";
 
 export const Route = createFileRoute("/consulta")({
   head: () => ({
@@ -346,10 +348,12 @@ function ConsultaPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={queryMut.isPending}
+              maxLength={LIMITS.queryQuestion}
               placeholder="ENTER QUERY..."
               aria-label="Query input"
               className="flex-1 min-w-0 bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-sm py-2"
             />
+            <LengthHint length={input.length} max={LIMITS.queryQuestion} />
             <button
               type="submit"
               disabled={queryMut.isPending || !input.trim()}

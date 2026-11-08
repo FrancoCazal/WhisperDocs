@@ -4,11 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   fmtTimestamp,
+  LIMITS,
   type AgentChatResponse,
   type Conversation,
   type ConversationMessage,
 } from "@/lib/api";
 import { LoadingLine } from "@/components/ui-kit/EmptyState";
+import { LengthHint } from "@/components/ui-kit/LengthHint";
 import { Modal } from "@/components/ui-kit/Modal";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { AssistantTurn, UserTurn } from "@/components/chat/Turns";
@@ -562,10 +564,12 @@ function ChatPage() {
                   if (e.key === "Escape" && streaming) stop();
                 }}
                 disabled={loadingThread}
+                maxLength={LIMITS.chatMessage}
                 placeholder="ASK THE AGENT..."
                 aria-label="Message to agent"
                 className="flex-1 min-w-0 bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-sm py-2 focus-visible:ring-0"
               />
+              <LengthHint length={input.length} max={LIMITS.chatMessage} />
               {streaming ? (
                 <button
                   type="button"
