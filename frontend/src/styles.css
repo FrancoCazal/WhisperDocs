@@ -61,6 +61,9 @@
 }
 
 :root {
+  /* Native controls (scrollbars, selects, checkboxes) in their dark form. */
+  color-scheme: dark;
+
   --surface: #0f1115;
   --surface-container-lowest: #08090c;
   --surface-container-low: #14171c;
@@ -69,7 +72,8 @@
 
   --text-primary: #ededed;
   --text-secondary: #9a9a9a;
-  --text-tertiary: #6b6b6b;
+  /* 4.5:1 or more on surface, low and container (was #6b6b6b: 2.7-3.5:1). */
+  --text-tertiary: #868686;
 
   --primary-blue: #89ceff;
   --success: #7cb87c;
@@ -94,6 +98,13 @@
     font-feature-settings: "tnum";
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* One focus mark for the keyboard everywhere. A field that marks its
+     focus with its border opts out with focus:outline-none. */
+  :focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
   }
 
   ::selection {

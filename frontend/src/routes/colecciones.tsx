@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -126,7 +126,17 @@ function CollectionsPage() {
                       navigate({ to: "/documentos", search: { collection_id: c.id } as never })
                     }
                   >
-                    <td className="pl-6 text-text-primary">{c.name}</td>
+                    <td className="pl-6 text-text-primary">
+                      {/* The row opens on a click; the link is the way in by keyboard. */}
+                      <Link
+                        to="/documentos"
+                        search={{ collection_id: c.id }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="hover:text-primary-blue"
+                      >
+                        {c.name}
+                      </Link>
+                    </td>
                     <td className="text-text-secondary">{c.description || "—"}</td>
                     <td className="text-right tabular-nums text-text-primary">
                       {fmtNumber(c.document_count)}

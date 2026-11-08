@@ -116,7 +116,20 @@ function HistorialPage() {
                       <td className="pl-6 text-text-secondary tabular-nums">
                         {fmtDate(q.created_at)}
                       </td>
-                      <td className="text-text-primary">{truncate(q.question, 70)}</td>
+                      <td className="text-text-primary">
+                        {/* The row opens on a click; the button, by keyboard. */}
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpanded(open ? null : q.id);
+                          }}
+                          className="text-left hover:text-primary-blue"
+                        >
+                          {truncate(q.question, 70)}
+                        </button>
+                      </td>
                       <td className="text-text-secondary">{q.model_used}</td>
                       <td className="text-right tabular-nums text-text-primary">
                         {fmtNumber(q.tokens_input)} / {fmtNumber(q.tokens_output)}

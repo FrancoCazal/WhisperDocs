@@ -133,7 +133,7 @@ function SessionList({
             key={s.id}
             onClick={() => onPick(s.id)}
             aria-current={isActive ? "true" : undefined}
-            className={`relative w-full text-left px-4 py-3 border-b border-border-subtle/50 hover:bg-surface-container transition-colors ${
+            className={`relative w-full text-left px-4 py-3 border-b border-border-subtle/50 hover:bg-surface-container transition-colors focus-visible:-outline-offset-2 ${
               isActive ? "bg-surface-container" : ""
             }`}
           >

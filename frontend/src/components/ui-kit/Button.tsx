@@ -14,7 +14,7 @@ export type BtnVariant =
 export type BtnSize = "sm" | "md" | "icon";
 
 const BASE =
-  "inline-flex items-center justify-center gap-1 shrink-0 label-sm border rounded-none shadow-none transition-colors select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue disabled:opacity-40 disabled:cursor-not-allowed";
+  "inline-flex items-center justify-center gap-1 shrink-0 label-sm border rounded-none shadow-none transition-colors select-none disabled:opacity-40 disabled:cursor-not-allowed";
 
 const SIZES: Record<BtnSize, string> = {
   sm: "h-7 px-2",

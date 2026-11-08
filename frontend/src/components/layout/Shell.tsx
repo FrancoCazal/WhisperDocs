@@ -178,7 +178,7 @@ export function Shell() {
                   aria-current={active ? "page" : undefined}
                   className={[
                     "relative flex items-center gap-3 h-10 px-4 label-sm transition-colors",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue focus-visible:ring-inset",
+                    "focus-visible:-outline-offset-2",
                     active
                       ? "text-primary-blue bg-surface-container"
                       : "text-text-secondary hover:text-primary-blue hover:bg-surface-container",

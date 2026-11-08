@@ -563,7 +563,17 @@ function DocumentsPage() {
                       aria-label={`Select ${d.title}`}
                     />
                   </td>
-                  <td className="pl-2 text-text-primary">{d.title}</td>
+                  <td className="pl-2 text-text-primary">
+                    {/* The row opens on a click; the link is the way in by keyboard. */}
+                    <Link
+                      to="/documentos/$id"
+                      params={{ id: String(d.id) }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="hover:text-primary-blue"
+                    >
+                      {d.title}
+                    </Link>
+                  </td>
                   <td className="label-sm text-text-secondary">{d.file_type.toUpperCase()}</td>
                   <td className="text-text-secondary">{collectionName(d.collection_id)}</td>
                   <td className="text-right tabular-nums text-text-primary">

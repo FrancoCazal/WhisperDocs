@@ -32,6 +32,7 @@ import {
   type AssistantTurnData,
   type NodeProgress,
   type Turn,
+  type TurnOutcome,
 } from "@/components/chat/types";
 
 export const Route = createFileRoute("/chat")({
@@ -79,6 +80,14 @@ function savedTurn(m: ConversationMessage): Turn {
 // does not save the same note twice.
 const pinKey = (threadId: string, text: string) => `${threadId}\n${text}`;
 
+// What the status region says when a turn ends without an answer.
+const OUTCOME_STATUS: Record<TurnOutcome, string> = {
+  failed: "The answer failed.",
+  error: "The answer failed.",
+  stopped: "Answer stopped.",
+  timeout: "The answer timed out.",
+};
+
 function ChatPage() {
   const qc = useQueryClient();
   const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
@@ -91,6 +100,9 @@ function ChatPage() {
   const { topK, defaultTopK, setTopK } = useTopK();
   const [input, setInput] = useState("");
   const [live, setLive] = useState<LiveTurn | null>(null);
+  // What a screen reader hears: a turn starting and how it ended, not every
+  // token the stream writes into the log.
+  const [status, setStatus] = useState("");
   const [loadingThread, setLoadingThread] = useState(false);
   // A WhatsApp thread is read-only here: its id is not a UUID4, which the
   // chat endpoint requires, and a web reply would mix into that user's memory.
@@ -249,6 +261,7 @@ function ChatPage() {
       qc.invalidateQueries({ queryKey: ["conversations", "list"] });
     }
     setLive(null);
+    setStatus("");
     setErrorMsg(null);
     setSources(null);
     setLoadingThread(false);
@@ -279,6 +292,7 @@ function ChatPage() {
     setInput("");
     stickRef.current = true;
     show();
+    setStatus("The agent is answering.");
 
     let idle: ReturnType<typeof setTimeout> | undefined;
     const resetIdle = () => {
@@ -372,6 +386,7 @@ function ChatPage() {
       };
     }
     setTurns((prev) => [...prev, turn]);
+    setStatus(turn.outcome ? OUTCOME_STATUS[turn.outcome] : "Answer ready.");
     qc.invalidateQueries({ queryKey: ["conversations", "list"] });
     // The query log: history pages and the layout's last-answer bar.
     if (f && !f.failed) qc.invalidateQueries({ queryKey: ["history"] });
@@ -622,9 +637,10 @@ function ChatPage() {
               stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
             }}
             className="flex-1 overflow-auto px-3 sm:px-6 md:px-8 py-4 sm:py-6"
-            aria-live="polite"
-            aria-atomic="false"
           >
+            <div role="status" className="sr-only">
+              {status}
+            </div>
             {turns.length === 0 && loadingThread ? (
               <div className="max-w-4xl mx-auto">
                 <LoadingLine label="LOADING THREAD" />
