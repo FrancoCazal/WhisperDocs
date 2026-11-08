@@ -25,10 +25,9 @@ _PRICING: dict[str, Pricing] = {
     # Claude on Bedrock, Converse API (us cross-region inference profiles).
     "us.anthropic.claude-sonnet-4-5-20250929-v1:0": Pricing(3.00, 15.00),
     "us.anthropic.claude-haiku-4-5-20251001-v1:0": Pricing(1.00, 5.00),
-    # Claude Sonnet 5.5, Sonnet 4.5's replacement. $2/$10 is Anthropic's list
-    # price and, per third-party aggregators, Bedrock's global rate; geographic
-    # profiles (`us.`) are reported at 10% more. Confirm both on
-    # aws.amazon.com/bedrock/pricing before relying on them.
+    # Claude Sonnet 5.5, Sonnet 4.5's replacement. From the rate card of its
+    # Bedrock Marketplace offer (us-east-1, read on 2026-11-08): global
+    # $2/$10, geographic profiles such as `us.` $2.20/$11.
     "global.anthropic.claude-sonnet-5-5": Pricing(2.00, 10.00),
     "us.anthropic.claude-sonnet-5-5": Pricing(2.20, 11.00),
 }
