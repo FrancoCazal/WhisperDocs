@@ -2,7 +2,8 @@
 
 Single source of truth for both production paths:
   - `app/agent/nodes/search_docs.py` (LangGraph agent — chat).
-  - `app/api/v1/query.py` (legacy POST /query) and `app/eval/evaluator.py`.
+  - `app/services/answering.py` (POST /query and the MCP server's
+    `ask_documents`) and `app/eval/evaluator.py`.
 
 Keeping these aligned matters because the eval suite measures the prompt the
 user actually sees in production. Divergence makes Sprint 3-style metrics

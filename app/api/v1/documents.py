@@ -15,7 +15,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import upstream_error
@@ -35,6 +35,7 @@ from app.schemas.document import (
 )
 from app.schemas.ingestion_job import IngestionJobCreate, IngestionJobRead
 from app.schemas.pagination import Page
+from app.services import catalog
 from app.services.embedder import EmbeddingError, EmbeddingService, get_embedder
 from app.services.ingestion import (
     chunk_text_in_thread,
@@ -288,22 +289,7 @@ async def list_documents(
     cursor: int | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> Page[DocumentRead]:
-    filters = [] if collection_id is None else [Document.collection_id == collection_id]
-    query = select(Document).where(*filters).order_by(Document.id.desc()).limit(limit + 1)
-    if cursor is not None:
-        query = query.where(Document.id < cursor)
-    rows = list((await db.execute(query)).scalars().all())
-    has_more = len(rows) > limit
-    items = rows[:limit]
-    next_cursor = items[-1].id if has_more and items else None
-    total = None
-    if cursor is None:
-        total = await db.scalar(select(func.count(Document.id)).where(*filters))
-    return Page[DocumentRead](
-        items=[DocumentRead.model_validate(d) for d in items],
-        next_cursor=next_cursor,
-        total=total,
-    )
+    return await catalog.list_documents(db, collection_id=collection_id, limit=limit, cursor=cursor)
 
 
 @router.get("/{document_id:int}", operation_id="get_document", response_model=DocumentDetail)

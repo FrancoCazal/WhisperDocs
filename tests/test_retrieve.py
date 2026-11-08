@@ -73,7 +73,7 @@ def backend(monkeypatch):
     async def fake_db():
         yield _Db()
 
-    monkeypatch.setattr("app.api.v1.retrieve.retrieve_pipeline", pipeline)
+    monkeypatch.setattr("app.services.search.retrieve_pipeline", pipeline)
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_embedder] = lambda: _Embedder()
     yield calls

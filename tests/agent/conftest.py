@@ -121,7 +121,7 @@ def mock_embedder(monkeypatch):
 def mock_retriever(monkeypatch):
     """Patch retrieval pipeline + VectorRetriever methods to return a configurable chunk list.
 
-    Both the pipeline (used by search_docs_node, query.py, evaluator) and the raw
+    Both the pipeline (used by search_docs_node, answering, search, evaluator) and the raw
     retriever (legacy callers) are patched so tests can swap chunks regardless of
     which call path the code-under-test uses.
     """
@@ -140,7 +140,8 @@ def mock_retriever(monkeypatch):
     # Re-bind in importer modules (they did `from ... import retrieve as retrieve_pipeline`).
     for module_path in (
         "app.agent.nodes.search_docs",
-        "app.api.v1.query",
+        "app.services.answering",
+        "app.services.search",
         "app.eval.evaluator",
     ):
         try:

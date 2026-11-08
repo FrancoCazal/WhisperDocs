@@ -286,8 +286,10 @@ async def test_a_failed_query_generation_is_a_502_not_a_bare_500(db, monkeypatch
         return [chunk]
 
     app.dependency_overrides[get_embedder] = lambda: _Embedder()
-    monkeypatch.setattr("app.api.v1.query.retrieve_pipeline", retrieve)
-    monkeypatch.setattr("app.api.v1.query.llm_service_for", lambda _n: (_Provider(), "m", 0.0))
+    monkeypatch.setattr("app.services.answering.retrieve_pipeline", retrieve)
+    monkeypatch.setattr(
+        "app.services.answering.llm_service_for", lambda _n: (_Provider(), "m", 0.0)
+    )
     r = await _call("POST", "/query", json={"question": "q"})
 
     assert r.status_code == 502

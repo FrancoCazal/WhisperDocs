@@ -137,7 +137,7 @@ class _FakeEmbedder:
 async def test_query_cites_only_the_chunks_in_the_prompt(
     fake_provider, mock_llm_service_for, monkeypatch
 ):
-    from app.api.v1 import query as query_module
+    from app.services import answering as answering_module
     from app.db import get_db
     from app.main import app
     from app.services.embedder import get_embedder
@@ -150,8 +150,8 @@ async def test_query_cites_only_the_chunks_in_the_prompt(
     async def fake_db():
         yield _FakeDb()
 
-    monkeypatch.setattr(query_module, "retrieve_pipeline", fake_retrieve)
-    mock_llm_service_for("app.api.v1.query", fake_provider)
+    monkeypatch.setattr(answering_module, "retrieve_pipeline", fake_retrieve)
+    mock_llm_service_for("app.services.answering", fake_provider)
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_embedder] = lambda: _FakeEmbedder()
     try:
