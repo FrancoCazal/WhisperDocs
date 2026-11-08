@@ -98,6 +98,13 @@ Fixes from the November 2026 audit, and a review of the frontend.
 - Models: the hot-path nodes and the eval judge run on `gemini-3.8-flash`,
   since `gemini-2.5-flash` was retired on 2026-10-20. Sampling parameters are
   sent per model, and startup fails on a model ID that cannot be routed.
+- Claude 4.7 and later run on Bedrock through Converse, which serves
+  Claude Sonnet 5.5 (`global.anthropic.claude-sonnet-5-5`), the replacement
+  for Sonnet 4.5 (Legacy on Bedrock, end of life on 2027-04-08). They get
+  the effort in `BEDROCK_CLAUDE_EFFORT` (default `low`), room in
+  `max_tokens` for their thinking, and structured output as a JSON schema,
+  since Sonnet 5.5 rejects a forced tool call. The defaults stay on Sonnet
+  4.5 until the eval has run on 5.5.
 - Full-text retrieval ORs the question's terms with per-document language
   and accent-insensitive matching. Before, it matched 5 of 41 golden
   questions; now it matches all 41.

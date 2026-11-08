@@ -1,16 +1,20 @@
 """Per-model request policy.
 
-Providers ask this module two questions before building a request:
+Providers ask this module about a model before building a request:
 
-- Does the model accept custom sampling parameters (`temperature`)?
-  Claude 4.7 and later accept only the defaults and return a 400 for any other
-  value. Gemini 3.6 Flash, Gemini 3.5 Flash-Lite and every later Gemini release
-  use fixed sampling, and Google recommends the default temperature for the
-  whole Gemini 3 line. Older models keep the per-node temperatures from
+- Does it accept custom sampling parameters (`temperature`)? Claude 4.7 and
+  later accept only the defaults and return a 400 for any other value.
+  Gemini 3.6 Flash, Gemini 3.5 Flash-Lite and every later Gemini release use
+  fixed sampling, and Google recommends the default temperature for the whole
+  Gemini 3 line. Older models keep the per-node temperatures from
   `AgentSettings`.
-- Can the Bedrock Converse API serve the model? Claude 4.7 and later run only
-  on the `bedrock-mantle` Messages endpoint, which `BedrockProvider` does not
-  call yet.
+- Is it Claude 4.7 or later? On Bedrock those models take an effort level,
+  think adaptively, and count that thinking toward `max_tokens` even though
+  its text is not returned. Claude Sonnet 5.5 also rejects a forced tool
+  choice, which is how LangChain asks for structured output by default.
+  `BedrockProvider` sends them `BEDROCK_CLAUDE_EFFORT`, adds
+  `THINKING_HEADROOM_TOKENS` to `max_tokens`, and asks for structured output
+  as a JSON schema (Bedrock's native structured output).
 """
 
 from __future__ import annotations
@@ -24,6 +28,11 @@ _CLAUDE_TIERED = re.compile(r"claude-(?:opus|sonnet|haiku)-(\d+)(?:-(\d{1,2})(?!
 # Families that started at version 5.
 _CLAUDE_V5_FAMILIES = re.compile(r"claude-(?:fable|mythos)-")
 _GEMINI_MAJOR = re.compile(r"gemini-(\d+)")
+
+# Added to a Claude 4.7+ call's `max_tokens`. At effort `low` the model skips
+# thinking on most simple requests; when it does think, the answer still gets
+# the tokens the caller asked for. Only the tokens produced are billed.
+THINKING_HEADROOM_TOKENS = 2048
 
 
 def claude_version(model: str) -> tuple[int, int] | None:
@@ -50,15 +59,3 @@ def is_gemini_3_or_later(model: str) -> bool:
 def accepts_custom_sampling(model: str) -> bool:
     """Whether a non-default `temperature` may be sent for this model."""
     return not (is_claude_4_7_or_later(model) or is_gemini_3_or_later(model))
-
-
-def bedrock_converse_unsupported_reason(model: str) -> str | None:
-    """Explain why the Converse API cannot serve this Bedrock model, if it cannot."""
-    if is_claude_4_7_or_later(model):
-        return (
-            f"{model!r} is Claude 4.7 or later. Amazon Bedrock serves those models only "
-            "through the bedrock-mantle Messages endpoint, and BedrockProvider uses the "
-            "Converse API. Use a Claude 4.6-or-earlier model ID here until a "
-            "bedrock-mantle provider exists."
-        )
-    return None

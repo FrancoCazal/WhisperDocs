@@ -17,8 +17,9 @@ from app.config import settings
 from app.logging_config import get_logger
 from app.services.llm.base import LLMResponse, LLMStreamDelta, extract_text
 from app.services.llm.model_policy import (
+    THINKING_HEADROOM_TOKENS,
     accepts_custom_sampling,
-    bedrock_converse_unsupported_reason,
+    is_claude_4_7_or_later,
 )
 
 T = TypeVar("T", bound=BaseModel)
@@ -92,12 +93,16 @@ class BedrockProvider:
         self._client = boto3.client("bedrock-runtime", **kwargs)
 
     def _build_chat(self, model: str, temperature: float, max_tokens: int) -> ChatBedrockConverse:
-        unsupported = bedrock_converse_unsupported_reason(model)
-        if unsupported:
-            raise ValueError(unsupported)
         kwargs: dict = {"client": self._client, "model": model, "max_tokens": max_tokens}
         if accepts_custom_sampling(model):
             kwargs["temperature"] = temperature
+        if is_claude_4_7_or_later(model):
+            # Adaptive thinking counts toward max_tokens (model_policy.py).
+            kwargs["max_tokens"] = max_tokens + THINKING_HEADROOM_TOKENS
+            if settings.bedrock_claude_effort:
+                # langchain-aws sends it as `thinking: adaptive` plus
+                # `output_config.effort` in additionalModelRequestFields.
+                kwargs["reasoning_effort"] = settings.bedrock_claude_effort
         return ChatBedrockConverse(**kwargs)
 
     @_retry
@@ -200,14 +205,31 @@ class BedrockProvider:
         max_tokens: int = 1000,
     ) -> tuple[T, LLMResponse]:
         chat = self._build_chat(model, temperature, max_tokens)
-        structured = chat.with_structured_output(response_model, include_raw=True)
+        if is_claude_4_7_or_later(model):
+            # LangChain's default forces a tool call, and Claude Sonnet 5.5
+            # rejects a forced tool choice: ask for a JSON schema instead.
+            structured = chat.with_structured_output(
+                _output_schema(response_model), method="json_schema", include_raw=True
+            )
+        else:
+            structured = chat.with_structured_output(response_model, include_raw=True)
         lc_messages = _to_lc_messages(system, messages)
         t0 = time.perf_counter()
         result = await self._invoke_structured(structured, lc_messages)
         latency = int((time.perf_counter() - t0) * 1000)
         raw = result["raw"]
-        parsed: T | None = result.get("parsed")
+        parsed: T | None = None
         parsing_error = result.get("parsing_error")
+        candidate = result.get("parsed")
+        if isinstance(candidate, response_model):
+            parsed = candidate
+        elif isinstance(candidate, dict):
+            # The JSON schema path returns a dict; Pydantic checks the bounds
+            # the schema could not carry.
+            try:
+                parsed = response_model.model_validate(candidate)
+            except ValidationError as exc:
+                parsing_error = exc
         if parsed is None:
             raw_text = _extract_text(getattr(raw, "content", ""))
             parsed = _salvage_structured(raw_text, response_model)
@@ -224,6 +246,56 @@ class BedrockProvider:
             model=model,
             latency_ms=latency,
         )
+
+
+# Claude's structured output does not support numeric and length constraints.
+# As the anthropic SDK does, each one moves into the description, and
+# Pydantic checks it on the parsed answer.
+_UNSUPPORTED_CONSTRAINTS = (
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "maxItems",
+)
+# Keys whose values are data, not schemas.
+_DATA_KEYS = frozenset({"default", "const", "enum", "examples"})
+# Keys whose values map names to schemas.
+_NAMED_SCHEMAS = frozenset({"properties", "$defs", "definitions"})
+
+
+def _strip_constraints(node: object) -> None:
+    if isinstance(node, list):
+        for item in node:
+            _strip_constraints(item)
+        return
+    if not isinstance(node, dict):
+        return
+    notes = [f"{key}: {node.pop(key)}" for key in _UNSUPPORTED_CONSTRAINTS if key in node]
+    if isinstance(node.get("minItems"), int) and node["minItems"] > 1:
+        notes.append(f"minItems: {node.pop('minItems')}")
+    if notes:
+        description = node.get("description", "")
+        node["description"] = f"{description}\n\n{{{', '.join(notes)}}}".strip()
+    for key, value in node.items():
+        if key in _DATA_KEYS:
+            continue
+        if key in _NAMED_SCHEMAS and isinstance(value, dict):
+            for schema in value.values():
+                _strip_constraints(schema)
+        else:
+            _strip_constraints(value)
+
+
+def _output_schema(response_model: type[BaseModel]) -> dict:
+    """`response_model`'s JSON schema, in the subset Claude's structured
+    output accepts."""
+    schema = response_model.model_json_schema()
+    _strip_constraints(schema)
+    return schema
 
 
 _FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(.*?)\s*```", re.DOTALL)

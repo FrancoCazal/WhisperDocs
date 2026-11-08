@@ -2,7 +2,6 @@ from app.config import settings
 from app.services.llm.base import LLMError, LLMProvider, LLMResponse
 from app.services.llm.bedrock_provider import BedrockProvider
 from app.services.llm.gemini_provider import GeminiProvider
-from app.services.llm.model_policy import bedrock_converse_unsupported_reason
 from app.services.llm.pricing import has_pricing
 from app.services.llm.tracked import TrackedProvider
 from app.services.model_status import Role
@@ -28,7 +27,8 @@ def provider_name_for_model(model: str) -> str:
     """Return "gemini" or "bedrock" for a model ID. Raises ValueError otherwise."""
     if model.startswith("gemini-") or model.startswith("models/gemini-"):
         return "gemini"
-    # Bedrock Claude: on-demand `anthropic.claude-...` or inference-profile `us.`/`eu.`/`apac.`
+    # Bedrock Claude: `anthropic.claude-...`, or an inference profile such as
+    # `global.anthropic.claude-...` or `us.anthropic.claude-...`.
     if "anthropic" in model or model.startswith(("us.", "eu.", "apac.", "us-gov.")):
         return "bedrock"
     raise ValueError(
@@ -86,10 +86,9 @@ def llm_service_for(node_name: str) -> tuple[LLMProvider, str, float]:
 def validate_agent_models() -> tuple[list[str], list[str]]:
     """Check every configured node model. Returns (errors, warnings).
 
-    Errors are configurations that fail on every call: an unroutable model ID,
-    or a Claude 4.7+ ID sent to the Converse-based BedrockProvider. Warnings
-    are models without a row in `pricing.py`, whose cost falls back to a
-    generic estimate.
+    Errors are model IDs no provider routes, which fail on every call.
+    Warnings are models without a row in `pricing.py`, whose cost falls back
+    to a generic estimate.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -97,14 +96,10 @@ def validate_agent_models() -> tuple[list[str], list[str]]:
         model: str = getattr(settings.agent, f"model_{suffix}")
         field = f"AGENT_MODEL_{suffix.upper()}"
         try:
-            provider = provider_name_for_model(model)
+            provider_name_for_model(model)
         except ValueError as exc:
             errors.append(f"{field}: {exc}")
             continue
-        if provider == "bedrock":
-            reason = bedrock_converse_unsupported_reason(model)
-            if reason:
-                errors.append(f"{field}: {reason}")
         if not has_pricing(model):
             warnings.append(f"{field}: no pricing row for {model!r} in pricing.py")
     return errors, warnings

@@ -444,12 +444,17 @@ Override per node via `AGENT_MODEL_<ALIAS>` env vars. Model rules live in
 - **Gemini 3.** `GEMINI_THINKING_LEVEL` (default `low`) sets `thinking_level`.
   `gemini-3.8-flash` is served from the `global`, `us` and `eu` locations
   only, so `GCP_LOCATION` defaults to `global`.
-- **Claude 4.7+.** Served on Bedrock only by the Messages endpoint
-  (`bedrock-mantle`), not by Converse, which `BedrockProvider` uses. Those IDs
-  are rejected.
+- **Claude 4.7+ on Bedrock.** Converse serves Claude Sonnet 5.5
+  (`global.anthropic.claude-sonnet-5-5`), Sonnet 4.5's replacement. These
+  models get no `temperature`, the effort in `BEDROCK_CLAUDE_EFFORT` (default
+  `low`), and 2048 more `max_tokens`, since their adaptive thinking counts
+  toward it. Structured output is a JSON schema (Bedrock's native structured
+  output), not the forced tool call LangChain uses by default, which Sonnet
+  5.5 rejects; Pydantic checks the bounds the schema cannot carry, such as
+  `ge`/`le`.
 - **Startup check.** `app/main.py` refuses to start when a configured model
-  can't be routed or is rejected, and logs a warning for a model with no row
-  in `pricing.py` (its cost falls back to a generic rate).
+  can't be routed, and logs a warning for a model with no row in
+  `pricing.py` (its cost falls back to a generic rate).
 
 Retries:
 - **Bedrock.** botocore is set to a single attempt, and `BedrockProvider`

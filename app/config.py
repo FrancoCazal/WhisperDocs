@@ -9,9 +9,10 @@ class AgentSettings(BaseSettings):
 
     # Models checked against the provider lifecycle pages on 2026-11-06:
     # gemini-2.5-flash retired on Vertex AI on 2026-10-20 (replacement:
-    # gemini-3.8-flash). Claude 4.7+ on Bedrock is served only by the
-    # bedrock-mantle endpoint, which BedrockProvider does not call, so the
-    # Claude defaults stay on Converse-served models (see model_policy.py).
+    # gemini-3.8-flash). Claude Sonnet 4.5 is Legacy on Bedrock, with its end
+    # of life on 2027-04-08; its replacement, Claude Sonnet 5.5
+    # (`global.anthropic.claude-sonnet-5-5`), also runs on Converse. The
+    # default moves once the eval has run on it.
     model_classifier: str = "gemini-3.8-flash"
     model_query_rewrite: str = "gemini-3.8-flash"
     model_rag_generation: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -107,6 +108,11 @@ class Settings(BaseSettings):
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     bedrock_timeout_seconds: int = 60
+    # Effort for Claude 4.7+ on Bedrock: low | medium | high | xhigh | max.
+    # Anthropic suggests `low` for chat, extraction and search, and the Bedrock
+    # nodes are the answer and the summary. Claude Sonnet 5.5 defaults to
+    # `high`, which thinks before almost every reply. Empty = model default.
+    bedrock_claude_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = "low"
 
     # Twilio / WhatsApp
     twilio_account_sid: str = ""

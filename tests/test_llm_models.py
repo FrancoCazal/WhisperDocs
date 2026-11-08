@@ -10,8 +10,8 @@ from app.services.llm import bedrock_provider as bedrock_mod
 from app.services.llm import gemini_provider as gemini_mod
 from app.services.llm.base import extract_text
 from app.services.llm.model_policy import (
+    THINKING_HEADROOM_TOKENS,
     accepts_custom_sampling,
-    bedrock_converse_unsupported_reason,
     claude_version,
 )
 from app.services.llm.pricing import estimate_cost_usd
@@ -50,14 +50,6 @@ def test_accepts_custom_sampling(model, accepts):
     assert accepts_custom_sampling(model) is accepts
 
 
-def test_bedrock_converse_rejects_claude_4_7_and_later():
-    assert (
-        bedrock_converse_unsupported_reason("us.anthropic.claude-sonnet-4-5-20250929-v1:0") is None
-    )
-    reason = bedrock_converse_unsupported_reason("anthropic.claude-sonnet-5-5")
-    assert reason is not None and "bedrock-mantle" in reason
-
-
 def test_default_models_are_valid_and_priced(monkeypatch):
     """Every default model routes to a provider that can serve it and has a
     pricing row. Fails when a default changes without updating pricing.py."""
@@ -68,14 +60,18 @@ def test_default_models_are_valid_and_priced(monkeypatch):
     assert warnings == []
 
 
-def test_validation_flags_unservable_models(monkeypatch):
-    monkeypatch.setattr(settings.agent, "model_rag_generation", "anthropic.claude-sonnet-5-5")
+def test_validation_flags_unroutable_models(monkeypatch):
+    monkeypatch.setattr(settings, "agent", AgentSettings(_env_file=None))
+    # Claude Sonnet 5.5 runs on Converse (audit N7): no longer an error.
+    monkeypatch.setattr(
+        settings.agent, "model_rag_generation", "global.anthropic.claude-sonnet-5-5"
+    )
     monkeypatch.setattr(settings.agent, "model_classifier", "gpt-5")
 
-    errors, _warnings = validate_agent_models()
+    errors, warnings = validate_agent_models()
 
-    assert any("AGENT_MODEL_RAG_GENERATION" in e and "bedrock-mantle" in e for e in errors)
-    assert any("AGENT_MODEL_CLASSIFIER" in e for e in errors)
+    assert len(errors) == 1 and errors[0].startswith("AGENT_MODEL_CLASSIFIER")
+    assert warnings == []  # Sonnet 5.5 has a pricing row
 
 
 class _CaptureKwargs:
@@ -85,13 +81,18 @@ class _CaptureKwargs:
 
 def test_bedrock_sends_temperature_only_when_accepted(monkeypatch):
     monkeypatch.setattr(bedrock_mod, "ChatBedrockConverse", _CaptureKwargs)
+    monkeypatch.setattr(settings, "bedrock_claude_effort", "low")
     provider = bedrock_mod.BedrockProvider()
 
-    chat = provider._build_chat("us.anthropic.claude-sonnet-4-5-20250929-v1:0", 0.3, 100)
-    assert chat.kwargs["temperature"] == 0.3
+    old = provider._build_chat("us.anthropic.claude-sonnet-4-5-20250929-v1:0", 0.3, 100)
+    assert old.kwargs["temperature"] == 0.3
+    assert old.kwargs["max_tokens"] == 100
+    assert "reasoning_effort" not in old.kwargs
 
-    with pytest.raises(ValueError, match="bedrock-mantle"):
-        provider._build_chat("anthropic.claude-sonnet-5-5", 0.3, 100)
+    new = provider._build_chat("global.anthropic.claude-sonnet-5-5", 0.3, 100).kwargs
+    assert "temperature" not in new
+    assert new["max_tokens"] == 100 + THINKING_HEADROOM_TOKENS
+    assert new["reasoning_effort"] == "low"
 
 
 def test_gemini_3_omits_temperature_and_lowers_thinking(monkeypatch):
