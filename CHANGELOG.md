@@ -63,6 +63,8 @@ Fixes from the November 2026 audit, and a review of the frontend.
   `/evaluation`); the old Spanish paths redirect.
 - The frontend ships its own font, and loads the code highlighter with the
   first code block. Answers are at reading size.
+- The compose database's port on the host is `DB_PORT`, 5435 by default:
+  another Postgres on 5435 kept it from starting.
 - The README and the architecture document describe the agent as
   intent-routed and single pass: one path per turn, one retrieval, no loop.
 - Answers written without the model (no documents, a failure, out of scope)
@@ -102,6 +104,9 @@ Fixes from the November 2026 audit, and a review of the frontend.
 - The eval CLI's reports showed metrics an old run did not save as 0.
 - On a phone, iOS zoomed into a search box, a select or TOP_K when it took
   focus: every field is 16px there now.
+- When the classifier's model failed, every question got "Can you give me
+  more details?": the clarification it fell back to calls a model too, and
+  failed the same way. A classifier failure now searches the documents.
 
 ### CI
 
