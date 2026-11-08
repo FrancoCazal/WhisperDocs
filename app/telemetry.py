@@ -75,8 +75,12 @@ SESSION_ID = "session.id"
 # pricing the model from its own table. Only model and embedding calls carry
 # it, since Langfuse adds up a trace's costs itself.
 CALL_COST = "gen_ai.usage.cost"
-# This app's.
+# This app's. The turn's totals take names of their own: Langfuse adds up
+# `gen_ai.usage.*` over every span of a trace, so a turn carrying the sum of
+# its calls under those names would count each token twice.
 ROLE = "whisperdocs.role"
+TURN_INPUT_TOKENS = "whisperdocs.input_tokens"
+TURN_OUTPUT_TOKENS = "whisperdocs.output_tokens"
 TURN_COST_USD = "whisperdocs.cost_usd"
 CHANNEL = "whisperdocs.channel"
 ACTION = "whisperdocs.action"
@@ -235,8 +239,8 @@ def workflow(
             finally:
                 span.set_attributes(
                     {
-                        INPUT_TOKENS: totals.input_tokens,
-                        OUTPUT_TOKENS: totals.output_tokens,
+                        TURN_INPUT_TOKENS: totals.input_tokens,
+                        TURN_OUTPUT_TOKENS: totals.output_tokens,
                         TURN_COST_USD: round(totals.cost_usd, 6),
                     }
                 )

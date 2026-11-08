@@ -44,8 +44,12 @@ TracerProvider is installed.
 - **The cost is ours.** Each call's cost comes from `pricing.py`, the table
   the API and the eval use. The turn's span adds up the tokens and cost of
   every call made inside it (a context variable the graph's tasks share), so
-  the classifier and the summary count. `query_logs.cost_usd` stays the
-  answer's cost, the same number the chat shows.
+  the classifier and the summary count. Those totals are named
+  `whisperdocs.input_tokens`, `whisperdocs.output_tokens` and
+  `whisperdocs.cost_usd`, outside the conventions: Langfuse adds up
+  `gen_ai.usage.*` over every span of a trace, and with the turn carrying
+  them it showed twice the tokens. `query_logs.cost_usd` stays the answer's
+  cost, the same number the chat shows.
 - **Trace ids always, export on request.** A TracerProvider is always
   installed, so each turn has a trace id for the logs (`trace_id`,
   `span_id`) and for `query_logs.trace_id`. Spans leave the process only when

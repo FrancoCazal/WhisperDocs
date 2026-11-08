@@ -90,7 +90,7 @@ async def test_a_turn_is_one_trace_of_its_nodes_and_calls(
     assert generation.attributes["gen_ai.usage.input_tokens"] == 900
 
     calls = [s for s in finished if s.name.startswith("chat ")]
-    assert root.attributes["gen_ai.usage.input_tokens"] == sum(
+    assert root.attributes["whisperdocs.input_tokens"] == sum(
         c.attributes["gen_ai.usage.input_tokens"] for c in calls
     )
     assert root.attributes["whisperdocs.cost_usd"] == round(

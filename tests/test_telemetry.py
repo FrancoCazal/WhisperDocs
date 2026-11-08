@@ -234,8 +234,11 @@ async def test_a_turn_sums_its_calls_and_puts_its_ids_in_the_logs(spans):
     assert root.attributes["gen_ai.data_source.id"] == "4"
     assert root.attributes["whisperdocs.action"] == "search_docs"
     # The classifier's tokens and cost count too (audit A5).
-    assert root.attributes["gen_ai.usage.input_tokens"] == 3746
-    assert root.attributes["gen_ai.usage.output_tokens"] == 426
+    assert root.attributes["whisperdocs.input_tokens"] == 3746
+    assert root.attributes["whisperdocs.output_tokens"] == 426
+    # Not under the calls' names: a backend summing the trace would count
+    # every token twice.
+    assert not [key for key in root.attributes if key.startswith("gen_ai.usage.")]
     assert root.attributes["whisperdocs.cost_usd"] == round(
         estimate_cost_usd(GEMINI, 300, 20) + estimate_cost_usd(SONNET_4_5, 3446, 406), 6
     )

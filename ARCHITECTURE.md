@@ -602,8 +602,10 @@ Postgres (the compose database)
     when they are sent, token counts, cost from `pricing.py`, and on failure
     the `classify_error` kind as `error.type`.
   - The turn adds up the tokens and cost of every call in it, the
-    classifier's and the summary's included. `query_logs.cost_usd` stays the
-    answer's cost.
+    classifier's and the summary's included. It records them as
+    `whisperdocs.*`, not `gen_ai.usage.*`, because a backend that sums a
+    trace's usage, as Langfuse does, would count them twice.
+    `query_logs.cost_usd` stays the answer's cost.
   - No span holds prompt, answer or document text, nor an exception's
     message.
   - `query_logs.trace_id` holds the turn's trace id. `/query` and the MCP
