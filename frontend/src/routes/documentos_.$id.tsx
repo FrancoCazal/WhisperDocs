@@ -13,6 +13,11 @@ export const Route = createFileRoute("/documentos_/$id")({
       { name: "description", content: "Inspect document metadata and chunks." },
     ],
   }),
+  // ?chunk=N: the chunk a citation points at, shown expanded and in view.
+  validateSearch: (search: Record<string, unknown>): { chunk?: number } => {
+    const n = Number(search.chunk);
+    return search.chunk !== undefined && Number.isInteger(n) && n >= 0 ? { chunk: n } : {};
+  },
   component: DocumentDetailPage,
   errorComponent: DocumentDetailError,
   notFoundComponent: () => (
@@ -46,6 +51,7 @@ function DocumentDetailError({ error, reset }: ErrorComponentProps) {
 
 function DocumentDetailPage() {
   const { id } = Route.useParams();
+  const { chunk: cited } = Route.useSearch();
   const docId = Number(id);
   const validId = Number.isInteger(docId) && docId > 0;
   const doc = useQuery({
@@ -114,7 +120,13 @@ function DocumentDetailPage() {
           ) : chunks.data && chunks.data.length > 0 ? (
             <div className="space-y-3">
               {chunks.data.map((c) => (
-                <ChunkBlock key={c.id} index={c.chunk_index} tokens={c.token_count} text={c.text} />
+                <ChunkBlock
+                  key={c.id}
+                  index={c.chunk_index}
+                  tokens={c.token_count}
+                  text={c.text}
+                  cited={c.chunk_index === cited}
+                />
               ))}
             </div>
           ) : (
@@ -135,16 +147,36 @@ function Meta({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ChunkBlock({ index, tokens, text }: { index: number; tokens: number; text: string }) {
-  const [expanded, setExpanded] = useState(false);
+// Its top, below the fixed header (scroll-mt): a long chunk centered hides its heading.
+function scrollIntoView(el: HTMLElement | null) {
+  el?.scrollIntoView({ block: "start" });
+}
+
+function ChunkBlock({
+  index,
+  tokens,
+  text,
+  cited,
+}: {
+  index: number;
+  tokens: number;
+  text: string;
+  cited: boolean;
+}) {
+  const [expanded, setExpanded] = useState(cited);
   const lines = text.split("\n");
   const isLong = lines.length > 4 || text.length > 400;
   const display = expanded || !isLong ? text : lines.slice(0, 4).join("\n");
 
   return (
-    <div className="border-b border-border-subtle py-3">
+    <div
+      ref={cited ? scrollIntoView : undefined}
+      aria-current={cited || undefined}
+      className={`border-b border-border-subtle py-3 ${cited ? "border-l-2 border-l-primary-blue pl-3 scroll-mt-16" : ""}`}
+    >
       <div className="label-sm text-text-secondary mb-2 flex items-center gap-3">
         <span>[CHUNK_INDEX: {index}]</span>
+        {cited && <span className="label-xs text-primary-blue">CITED</span>}
         <span className="text-text-tertiary">·</span>
         <span>TOKENS: {tokens}</span>
       </div>

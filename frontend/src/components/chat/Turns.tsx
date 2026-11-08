@@ -1,5 +1,5 @@
-import { COSINE_HINT, fmtCosine, fmtCost } from "@/lib/api";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { useCallback } from "react";
+import { fmtCost } from "@/lib/api";
 import { Markdown } from "./Markdown";
 import { TurnTrace } from "./Trace";
 import {
@@ -46,14 +46,15 @@ export function AssistantTurn({
   turn,
   canPin,
   pinning,
-  onToggle,
+  onOpenSources,
   onPin,
   onRetry,
 }: {
   turn: AssistantTurnData;
   canPin: boolean;
   pinning: boolean;
-  onToggle: () => void;
+  // Stable across renders: the answer's markdown is memoized on it.
+  onOpenSources: (turn: AssistantTurnData, focus: number | null) => void;
   onPin: () => void;
   // Only the thread's last turn can be retried.
   onRetry?: () => void;
@@ -63,6 +64,7 @@ export function AssistantTurn({
   // Answers made without a model call (out of scope, clarification) have
   // all-zero metadata: "0MS · 0 IN / 0 OUT · $0.0000" reads as a bug.
   const usage = turn.metadata?.model || turn.metadata?.tokens_input ? turn.metadata : null;
+  const onCite = useCallback((n: number) => onOpenSources(turn, n), [onOpenSources, turn]);
   const actionClass = turn.action
     ? (ACTION_CLASS[turn.action] ?? "text-text-tertiary border-text-tertiary")
     : "text-text-tertiary border-text-tertiary";
@@ -100,62 +102,18 @@ export function AssistantTurn({
           {turn.text}
         </div>
       ) : turn.text ? (
-        <Markdown text={turn.text} citations={turn.citations} />
+        <Markdown text={turn.text} citations={turn.citations} onCite={onCite} />
       ) : (
         <div className="body-sm text-text-tertiary">Stopped before the answer started.</div>
       )}
 
       {answered && turn.citations.length > 0 && (
-        <div className="mt-4">
-          <button
-            onClick={onToggle}
-            className="label-sm text-text-secondary hover:text-primary-blue"
-          >
-            {turn.expanded ? "▾" : "▸"} CITATIONS [{turn.citations.length}]
-          </button>
-          {turn.expanded && (
-            <div className="mt-3 space-y-2">
-              {turn.citations.map((c, idx) => {
-                const num = String(idx + 1).padStart(2, "0");
-                return (
-                  <HoverCard key={`${c.chunk_id}-${idx}`} openDelay={150}>
-                    <HoverCardTrigger asChild>
-                      <div
-                        id={`cite-${turn.ts}-${idx + 1}`}
-                        className="border border-border-subtle bg-surface-container-low p-3 cursor-help"
-                      >
-                        <div className="label-sm flex items-center gap-3">
-                          <span className="text-text-primary">[{num}]</span>
-                          <span className="text-text-secondary">{c.document_title}</span>
-                          <span className="text-text-tertiary">·</span>
-                          <span className="text-text-secondary">CHUNK {c.chunk_index}</span>
-                          <span className="text-text-tertiary">·</span>
-                          <span className="tabular-nums text-text-secondary" title={COSINE_HINT}>
-                            {fmtCosine(c.cosine)}
-                          </span>
-                        </div>
-                      </div>
-                    </HoverCardTrigger>
-                    {c.text_preview && (
-                      <HoverCardContent
-                        side="top"
-                        align="start"
-                        className="w-[480px] max-h-[320px] overflow-auto bg-surface-container border border-border-subtle"
-                      >
-                        <div className="label-xs text-text-tertiary mb-2">
-                          {c.document_title} · CHUNK {c.chunk_index}
-                        </div>
-                        <div className="body-sm text-text-secondary whitespace-pre-wrap">
-                          {c.text_preview}
-                        </div>
-                      </HoverCardContent>
-                    )}
-                  </HoverCard>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <button
+          onClick={() => onOpenSources(turn, null)}
+          className="mt-4 label-sm text-text-secondary hover:text-primary-blue"
+        >
+          ☰ SOURCES [{turn.citations.length}]
+        </button>
       )}
 
       {turn.trace && <TurnTrace steps={turn.trace} elapsedMs={turn.elapsedMs} />}

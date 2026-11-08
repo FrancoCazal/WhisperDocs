@@ -1,34 +1,51 @@
+import { Link } from "@tanstack/react-router";
 import { COSINE_HINT, fmtCosine, type AgentCitation } from "@/lib/api";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
-export function SourcesSheet({ citations }: { citations: AgentCitation[] }) {
+// One answer's sources; `focus` is the source an "[n]" click asked for.
+export type SourcesView = { citations: AgentCitation[]; focus: number | null; label: string };
+
+function scrollIntoView(el: HTMLElement | null) {
+  el?.scrollIntoView({ block: "center" });
+}
+
+export function SourcesSheet({ view, onClose }: { view: SourcesView | null; onClose: () => void }) {
   return (
-    <Sheet>
-      <SheetTrigger asChild>
-        <button className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-7 border border-border-subtle">
-          ☰ SOURCES [{citations.length}]
-        </button>
-      </SheetTrigger>
+    <Sheet open={view !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         side="right"
         className="w-full sm:w-[480px] sm:max-w-[480px] bg-surface-low border-l border-border-subtle overflow-auto"
       >
         <SheetHeader>
-          <SheetTitle className="label-sm text-text-primary">
-            RETRIEVED CHUNKS · LAST TURN
-          </SheetTitle>
+          <SheetTitle className="label-sm text-text-primary">SOURCES · {view?.label}</SheetTitle>
+          <SheetDescription className="label-xs text-text-tertiary normal-case">
+            Ranked by retrieval: [n] in the answer is source n.
+          </SheetDescription>
         </SheetHeader>
-        <div className="mt-4 space-y-3">
-          {/* In citation order, so [n] in the answer is the n-th source. */}
-          {citations.map((c, idx) => {
+        <ol className="mt-4 space-y-3">
+          {view?.citations.map((c, idx) => {
+            const n = idx + 1;
+            const focused = n === view.focus;
             return (
-              <div
+              <li
                 key={`src-${c.chunk_id}-${idx}`}
-                className="border border-border-subtle bg-surface-container-low p-3"
+                ref={focused ? scrollIntoView : undefined}
+                aria-current={focused || undefined}
+                className={`border p-3 ${
+                  focused
+                    ? "border-primary-blue bg-surface-container"
+                    : "border-border-subtle bg-surface-container-low"
+                }`}
               >
                 <div className="label-sm flex items-center justify-between gap-3 mb-2">
                   <span className="text-text-secondary truncate">
-                    <span className="text-text-primary">[{idx + 1}]</span> {c.document_title}
+                    <span className="text-text-primary">[{n}]</span> {c.document_title}
                   </span>
                   <span className="tabular-nums shrink-0 text-text-secondary" title={COSINE_HINT}>
                     {fmtCosine(c.cosine)}
@@ -40,10 +57,20 @@ export function SourcesSheet({ citations }: { citations: AgentCitation[] }) {
                     {c.text_preview}
                   </div>
                 )}
-              </div>
+                {/* A new tab, so the conversation stays as it is. */}
+                <Link
+                  to="/documentos/$id"
+                  params={{ id: String(c.document_id) }}
+                  search={{ chunk: c.chunk_index }}
+                  target="_blank"
+                  className="mt-3 inline-block label-xs text-text-secondary hover:text-primary-blue"
+                >
+                  OPEN IN DOCUMENT ↗
+                </Link>
+              </li>
             );
           })}
-        </div>
+        </ol>
       </SheetContent>
     </Sheet>
   );

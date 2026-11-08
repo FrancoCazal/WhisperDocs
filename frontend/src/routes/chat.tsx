@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   fmtTimestamp,
@@ -14,7 +14,7 @@ import { LengthHint } from "@/components/ui-kit/LengthHint";
 import { Modal } from "@/components/ui-kit/Modal";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { AssistantTurn, UserTurn } from "@/components/chat/Turns";
-import { SourcesSheet } from "@/components/chat/SourcesSheet";
+import { SourcesSheet, type SourcesView } from "@/components/chat/SourcesSheet";
 import { StreamingTurn, type LiveTurn } from "@/components/chat/StreamingTurn";
 import { ThreadSidebar } from "@/components/chat/ThreadSidebar";
 import {
@@ -99,12 +99,18 @@ function ChatPage() {
 
   // The header's sources are the latest answer's: an older turn's chunks
   // shown as the last turn's would be wrong.
-  const latestSources = useMemo(() => {
+  const latestAnswer = useMemo(() => {
     const last = turns[turns.length - 1];
-    return last?.kind === "assistant" && !last.outcome && last.citations.length > 0
-      ? last.citations
-      : null;
+    return last?.kind === "assistant" && !last.outcome && last.citations.length > 0 ? last : null;
   }, [turns]);
+
+  // One sheet for every answer's sources, opened by a turn or an "[n]".
+  const [sources, setSources] = useState<SourcesView | null>(null);
+  const openSources = useCallback(
+    (t: AssistantTurnData, focus: number | null) =>
+      setSources({ citations: t.citations, focus, label: `ANSWER ${t.ts}` }),
+    [],
+  );
 
   const patchSaveMut = useMutation({
     mutationFn: ({ tid, saved }: { tid: string; saved: boolean }) =>
@@ -148,6 +154,7 @@ function ChatPage() {
     }
     setLive(null);
     setErrorMsg(null);
+    setSources(null);
     setLoadingThread(false);
   }
 
@@ -373,6 +380,7 @@ function ChatPage() {
           </button>
         </div>
       </Modal>
+      <SourcesSheet view={sources} onClose={() => setSources(null)} />
       <div className="-m-3 sm:-m-6 md:-m-8 flex h-[calc(100vh-48px)] md:h-[calc(100vh-48px-28px)]">
         {/* Sidebar — desktop only (mobile uses Sheet trigger in header) */}
         <aside
@@ -452,7 +460,14 @@ function ChatPage() {
                   className="bg-surface-lowest border border-border-subtle px-2 h-7 w-14 text-text-primary body-sm tabular-nums focus:outline-none focus:border-border-focus"
                 />
               </label>
-              {latestSources && <SourcesSheet citations={latestSources} />}
+              {latestAnswer && (
+                <button
+                  onClick={() => openSources(latestAnswer, null)}
+                  className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-7 border border-border-subtle"
+                >
+                  ☰ SOURCES [{latestAnswer.citations.length}]
+                </button>
+              )}
               {threadId && (
                 <>
                   <button
@@ -519,15 +534,7 @@ function ChatPage() {
                       key={i}
                       turn={t}
                       canPin={!!threadId}
-                      onToggle={() =>
-                        setTurns((prev) =>
-                          prev.map((tt, j) =>
-                            j === i && tt.kind === "assistant"
-                              ? { ...tt, expanded: !tt.expanded }
-                              : tt,
-                          ),
-                        )
-                      }
+                      onOpenSources={openSources}
                       onPin={() => pinTurn(t)}
                       pinning={pinNoteMut.isPending && pinNoteMut.variables?.content === t.text}
                       onRetry={

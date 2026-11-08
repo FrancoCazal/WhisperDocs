@@ -4,8 +4,13 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 
 const CITATION_RE = /\[(\d+)\]/g;
 
-// Replaces each "[n]" in the rendered text with a hover card on citation n.
-export function interleaveCitations(children: ReactNode, citations: AgentCitation[]): ReactNode {
+// Replaces each "[n]" in the rendered text with a button on citation n: a
+// hover shows its preview, a click calls `onCite(n)`.
+export function interleaveCitations(
+  children: ReactNode,
+  citations: AgentCitation[],
+  onCite?: (n: number) => void,
+): ReactNode {
   const out: ReactNode[] = [];
 
   function processNode(node: ReactNode, keyPrefix: string) {
@@ -23,7 +28,16 @@ export function interleaveCitations(children: ReactNode, citations: AgentCitatio
         out.push(
           <HoverCard key={`${keyPrefix}-cite-${n}-${out.length}`} openDelay={120}>
             <HoverCardTrigger asChild>
-              <sup className="text-primary-blue cursor-help font-medium px-0.5">[{n}]</sup>
+              <sup className="px-0.5">
+                <button
+                  type="button"
+                  onClick={() => onCite?.(n)}
+                  aria-label={`Source ${n}: ${c.document_title}`}
+                  className="text-primary-blue font-medium hover:underline focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary-blue"
+                >
+                  [{n}]
+                </button>
+              </sup>
             </HoverCardTrigger>
             <HoverCardContent
               side="top"
@@ -36,6 +50,9 @@ export function interleaveCitations(children: ReactNode, citations: AgentCitatio
               <div className="body-sm text-text-secondary whitespace-pre-wrap">
                 {c.text_preview ?? "(no preview)"}
               </div>
+              {onCite && (
+                <div className="label-xs text-text-tertiary mt-2">CLICK FOR ALL SOURCES</div>
+              )}
             </HoverCardContent>
           </HoverCard>,
         );

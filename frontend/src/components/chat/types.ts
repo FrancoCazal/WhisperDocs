@@ -24,7 +24,6 @@ export type AssistantTurnData = {
   // Measured in this tab, so only turns streamed here have them.
   trace?: NodeProgress[];
   elapsedMs?: number;
-  expanded?: boolean;
 };
 
 export type Turn = UserTurnData | AssistantTurnData;

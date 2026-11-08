@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, type ReactNode } from "react";
+import { createContext, memo, useContext, useMemo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -46,16 +46,17 @@ function BlockedImage({ src, alt }: { src?: string; alt?: string }) {
   );
 }
 
-const CitationsContext = createContext<AgentCitation[]>([]);
+type CitationsValue = { citations: AgentCitation[]; onCite?: (n: number) => void };
+const CitationsContext = createContext<CitationsValue>({ citations: [] });
 
 function CitedParagraph({ children }: { children?: ReactNode }) {
-  return <p>{interleaveCitations(children, useContext(CitationsContext))}</p>;
+  const { citations, onCite } = useContext(CitationsContext);
+  return <p>{interleaveCitations(children, citations, onCite)}</p>;
 }
 
 function CitedListItem({ children, className }: { children?: ReactNode; className?: string }) {
-  return (
-    <li className={className}>{interleaveCitations(children, useContext(CitationsContext))}</li>
-  );
+  const { citations, onCite } = useContext(CitationsContext);
+  return <li className={className}>{interleaveCitations(children, citations, onCite)}</li>;
 }
 
 // Module constants: a new `components` object on every render made React
@@ -72,17 +73,20 @@ const REHYPE_PLUGINS: Parameters<typeof ReactMarkdown>[0]["rehypePlugins"] = [
 ];
 const NO_CITATIONS: AgentCitation[] = [];
 
-// Memoized on (text, citations): a finished answer does not re-render while
-// another one streams.
+// Memoized on (text, citations, onCite): a finished answer does not
+// re-render while another one streams, so `onCite` must be stable.
 export const Markdown = memo(function Markdown({
   text,
   citations = NO_CITATIONS,
+  onCite,
 }: {
   text: string;
   citations?: AgentCitation[];
+  onCite?: (n: number) => void;
 }) {
+  const value = useMemo(() => ({ citations, onCite }), [citations, onCite]);
   return (
-    <CitationsContext.Provider value={citations}>
+    <CitationsContext.Provider value={value}>
       <div className="body text-text-primary leading-relaxed markdown-body">
         <ReactMarkdown
           remarkPlugins={REMARK_PLUGINS}
