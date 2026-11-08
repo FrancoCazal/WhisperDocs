@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.agent import TurnErrorRead
+
 
 class ConversationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -35,3 +37,5 @@ class ConversationMessage(BaseModel):
     metadata: dict | None = None
     # An assistant message that reports a failure (see AgentChatResponse).
     failed: bool = False
+    # The turn's failed calls (see AgentChatResponse); none before the field.
+    errors: list[TurnErrorRead] = []

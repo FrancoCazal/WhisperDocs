@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage
 from app.agent.state import AgentState
 from app.agent.utils.fixed_replies import fixed_reply
 from app.agent.utils.messages import stamped
+from app.agent.utils.turn_errors import errors_so_far
 
 
 async def out_of_scope_node(state: AgentState) -> dict:
@@ -24,11 +25,15 @@ async def out_of_scope_node(state: AgentState) -> dict:
         "chunks_retrieved": 0,
     }
     prev = state.get("metadata") or {}
+    # No call of its own, but a failed compaction before it still shows.
+    errors = errors_so_far(state)
     return {
         "messages": [
             AIMessage(
                 content=fixed_reply("out_of_scope", state["messages"]),
-                additional_kwargs=stamped(metadata=msg_metadata, action="out_of_scope"),
+                additional_kwargs=stamped(
+                    metadata=msg_metadata, action="out_of_scope", errors=errors
+                ),
             )
         ],
         "metadata": {**prev, "generation_model": None},

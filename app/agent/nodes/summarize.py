@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage
 from app.agent.prompts import SUMMARIZE_SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.agent.utils.messages import format_messages
+from app.agent.utils.turn_errors import errors_so_far, turn_error
 from app.config import settings
 from app.services.llm import llm_service_for
 
@@ -43,8 +44,9 @@ async def summarize_node(state: AgentState) -> dict:
     with the assistant's; replayed as turns, Claude reads that last message as
     a prefill to continue and returns nothing.
 
-    On LLM failure: log and return without compacting. The user's turn still
-    proceeds; the next turn will retry compaction.
+    On LLM failure: log, record it in `turn_errors`, and return without
+    compacting. The user's turn still proceeds; the next turn will retry
+    compaction.
     """
     messages = state["messages"]
     k = settings.agent.k_recent
@@ -94,9 +96,16 @@ async def summarize_node(state: AgentState) -> dict:
             temperature=temperature,
             max_tokens=400,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("summarize_failed, leaving history intact")
-        return {"pending_action": None}
+        prev = state.get("metadata") or {}
+        return {
+            "pending_action": None,
+            "metadata": {
+                **prev,
+                "turn_errors": [*errors_so_far(state), turn_error("summarize", exc, model)],
+            },
+        }
 
     new_summary = (resp.text or "").strip()
     if not new_summary:

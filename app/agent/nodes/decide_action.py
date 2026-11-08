@@ -2,6 +2,7 @@ from app.agent.prompts import CLASSIFIER_SYSTEM_PROMPT
 from app.agent.schemas import AgentAction
 from app.agent.state import AgentState
 from app.agent.utils.messages import build_prompt_messages
+from app.agent.utils.turn_errors import errors_so_far, turn_error
 from app.config import settings
 from app.logging_config import get_logger
 from app.metrics import errors_total
@@ -23,9 +24,12 @@ async def decide_action_node(state: AgentState) -> dict:
     turns, but it calls a model too: with Vertex refusing every call (a GCP
     project without billing), it failed the same way and replied a fixed "can
     you give me more details", so every question read as vague and the outage
-    did not show.
+    did not show. The failure goes into `turn_errors`, so the answer says
+    which call failed and why.
     """
     provider, model, temperature = llm_service_for("classifier")
+    # What summarize recorded this turn (a failed compaction), kept.
+    prev = state.get("metadata") or {}
 
     try:
         parsed, resp = await provider.generate_structured(
@@ -36,15 +40,20 @@ async def decide_action_node(state: AgentState) -> dict:
             temperature=temperature,
             max_tokens=200,
         )
-    except Exception:
+    except Exception as exc:
+        error = turn_error("classifier", exc, model)
         errors_total.labels(type="classifier").inc()
-        logger.exception("classifier_failed", model=model, fallback="search_docs")
+        logger.exception(
+            "classifier_failed", model=model, kind=error["kind"], fallback="search_docs"
+        )
         return {
             "pending_action": "search_docs",
             "metadata": {
+                **prev,
                 "classifier_reason": "classifier_failure_fallback",
                 "classifier_confidence": "low",
                 "classifier_model": model,
+                "turn_errors": [*errors_so_far(state), error],
             },
         }
 
@@ -72,6 +81,7 @@ async def decide_action_node(state: AgentState) -> dict:
     return {
         "pending_action": effective_action,
         "metadata": {
+            **prev,
             "classifier_reason": parsed.reason,
             "classifier_confidence": parsed.confidence,
             # Its own fields: in `generation_*`, a turn whose answer took no

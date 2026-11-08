@@ -85,6 +85,9 @@ async def test_a_generation_failure_is_marked_and_left_out_of_the_next_prompt(
     assert answer.additional_kwargs["citations"] == []
     assert result["retrieved_chunks"] == []
     assert result["metadata"]["retrieval_chunks_count"] == 1
+    error = {"step": "generation", "kind": "unknown", "model": "fake-model"}
+    assert answer.additional_kwargs["errors"] == [error]
+    assert result["metadata"]["turn_errors"] == [error]
 
     next_turn = {"messages": [question, answer, HumanMessage(content="Try again?")]}
     assert build_prompt_messages(next_turn) == [{"role": "user", "content": "Try again?"}]
@@ -109,6 +112,36 @@ async def test_an_answer_is_not_marked(
 
     assert FAILED_TURN not in result["messages"][0].additional_kwargs
     assert result["metadata"]["turn_failed"] is False
+    assert result["messages"][0].additional_kwargs["errors"] == []
+
+
+async def test_an_embedding_failure_fails_the_turn_and_says_why(
+    fake_provider, mock_llm_service_for, mock_embedder, mock_session_local, monkeypatch
+):
+    from app.services import embedder as embedder_mod
+
+    async def refuse(self, text):  # noqa: ARG001
+        raise TimeoutError("embeddings timed out")
+
+    monkeypatch.setattr(embedder_mod.EmbeddingService, "embed", refuse)
+    monkeypatch.setattr(search_docs_module.settings, "embedding_model", "embedder")
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    earlier = {"step": "classifier", "kind": "billing", "model": "gemini"}
+
+    result = await search_docs_node(
+        {
+            "messages": [HumanMessage(content="How is the chunker configured?")],
+            "collection_id": None,
+            "metadata": {"turn_errors": [earlier]},
+        }
+    )
+
+    answer = result["messages"][0]
+    assert answer.additional_kwargs[FAILED_TURN] is True
+    assert answer.additional_kwargs["errors"] == [
+        earlier,
+        {"step": "embedding", "kind": "timeout", "model": "embedder"},
+    ]
 
 
 async def test_a_direct_answer_failure_is_marked(fake_provider, mock_llm_service_for):
@@ -119,6 +152,9 @@ async def test_a_direct_answer_failure_is_marked(fake_provider, mock_llm_service
 
     assert result["messages"][0].additional_kwargs[FAILED_TURN] is True
     assert result["metadata"]["turn_failed"] is True
+    assert result["metadata"]["turn_errors"] == [
+        {"step": "generation", "kind": "unknown", "model": "fake-model"}
+    ]
 
 
 async def test_a_clarification_failure_still_asks_and_is_not_marked(
@@ -132,3 +168,7 @@ async def test_a_clarification_failure_still_asks_and_is_not_marked(
     message = result["messages"][0]
     assert message.content == "Can you give me more details about what you need?"
     assert FAILED_TURN not in message.additional_kwargs
+    # Not a failed turn, but the clarification's model call did fail.
+    assert message.additional_kwargs["errors"] == [
+        {"step": "clarification", "kind": "unknown", "model": "fake-model"}
+    ]

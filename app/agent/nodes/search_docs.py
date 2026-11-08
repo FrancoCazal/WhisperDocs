@@ -9,6 +9,7 @@ from app.agent.utils.fixed_replies import FixedReply, fixed_reply
 from app.agent.utils.messages import build_prompt_messages, failed_answer, stamped
 from app.agent.utils.query_rewrite import rewrite_query_for_retrieval
 from app.agent.utils.streaming import stream_generate
+from app.agent.utils.turn_errors import TurnError, errors_so_far, turn_error
 from app.config import settings
 from app.db import SessionLocal
 from app.logging_config import get_logger
@@ -69,12 +70,18 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
     state_summary = state.get("summary")
     top_k = _requested_top_k(config)
 
+    # What earlier nodes recorded this turn (summarize, the classifier).
+    errors = errors_so_far(state)
+
     # 1. Query rewrite
-    retrieval_query = await rewrite_query_for_retrieval(
+    rewrite = await rewrite_query_for_retrieval(
         history=uncovered,
         current=last_user_msg,
         summary=state_summary,
     )
+    retrieval_query = rewrite.query
+    if rewrite.error is not None:
+        errors.append(rewrite.error)
 
     # 2. Embedding + retrieval
     embedder = EmbeddingService()
@@ -82,9 +89,11 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
     retrieval_failed = False
     try:
         query_embedding = await embedder.embed(retrieval_query)
-    except Exception:
+    except Exception as exc:
+        error = turn_error("embedding", exc, settings.embedding_model)
+        errors.append(error)
         errors_total.labels(type="embedding").inc()
-        logger.exception("embedding_failed", node="search_docs")
+        logger.exception("embedding_failed", node="search_docs", kind=error["kind"])
         retrieval_failed = True
 
     if not retrieval_failed:
@@ -98,11 +107,14 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
                     top_k=top_k,
                     document_id=document_id,
                 )
-            except Exception:
+            except Exception as exc:
+                error = turn_error("retrieval", exc, None)
+                errors.append(error)
                 errors_total.labels(type="retrieval").inc()
                 logger.exception(
                     "retrieval_failed",
                     node="search_docs",
+                    kind=error["kind"],
                     collection_id=collection_id,
                     document_id=document_id,
                     top_k=top_k,
@@ -141,6 +153,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
             extra_md={"retrieval_failed": retrieval_failed},
             collection_id=collection_id,
             top_rel=top_rel,
+            errors=errors,
             failed=retrieval_failed,
         )
 
@@ -201,9 +214,13 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
             "generation_tokens_output": resp.tokens_output,
             "generation_latency_ms": resp.latency_ms,
         }
-    except Exception:
+    except Exception as exc:
+        error = turn_error("generation", exc, model)
+        errors.append(error)
         errors_total.labels(type="rag_generation").inc()
-        logger.exception("rag_generation_failed", model=model, chunks=len(chunks))
+        logger.exception(
+            "rag_generation_failed", model=model, kind=error["kind"], chunks=len(chunks)
+        )
         answer = fixed_reply("generation_failed", messages)
         gen_md = {"generation_model": model}
         generation_failed = True
@@ -227,7 +244,8 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
                 structured_md["citation_min_similarity"] = (
                     settings.agent.citation_semantic_min_similarity
                 )
-        except Exception:
+        except Exception as exc:
+            errors.append(turn_error("citation_check", exc, settings.embedding_model))
             logger.exception("citation_semantic_validation_failed")
 
     return _turn_result(
@@ -239,6 +257,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
         extra_md=structured_md,
         collection_id=collection_id,
         top_rel=top_rel,
+        errors=errors,
         failed=generation_failed,
     )
 
@@ -253,11 +272,12 @@ def _turn_result(
     extra_md: dict,
     collection_id: int | None,
     top_rel: float | None,
+    errors: list[TurnError],
     failed: bool = False,
 ) -> dict:
     """State update for the turn. A `failed` answer reports a failure: it
     cites nothing, the next prompts leave it out, and `/agent/chat` logs no
-    query for it."""
+    query for it. `errors` are the turn's failed calls, kept on the message."""
     # The chunks were retrieved (`chunks_retrieved` still counts them), but
     # sources listed under "I had a problem…" would read as its sources.
     cited = [] if failed else included_chunks
@@ -281,7 +301,9 @@ def _turn_result(
         "chunks_retrieved": len(chunks),
     }
     prev = state.get("metadata") or {}
-    kwargs = stamped(metadata=msg_metadata, citations=citations, action="search_docs")
+    kwargs = stamped(
+        metadata=msg_metadata, citations=citations, action="search_docs", errors=errors
+    )
     message = (
         failed_answer(answer, **kwargs)
         if failed
@@ -299,5 +321,6 @@ def _turn_result(
             "retrieval_chunks_count": len(chunks),
             "retrieval_top_relevance": top_rel,
             "turn_failed": failed,
+            "turn_errors": errors,
         },
     }

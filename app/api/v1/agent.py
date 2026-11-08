@@ -124,6 +124,7 @@ async def agent_chat(
         citations=[AgentCitation(**c) for c in retrieved],
         metadata=turn,
         failed=bool(md.get("turn_failed")),
+        errors=md.get("turn_errors") or [],
     )
 
 
@@ -188,7 +189,7 @@ async def agent_chat_stream(
       - thread: {thread_id}                      (once, at start)
       - node_start: {node}                       (each node entry)
       - node_end: {node, summary?}               (each node exit, with light summary)
-      - final: {thread_id, action, answer, citations, metadata, failed}
+      - final: {thread_id, action, answer, citations, metadata, failed, errors}
       - error: {message}
     """
 
@@ -333,6 +334,7 @@ async def agent_chat_stream(
                 "citations": list(retrieved),
                 "metadata": turn.model_dump(),
                 "failed": bool(md.get("turn_failed")),
+                "errors": list(md.get("turn_errors") or []),
             },
         )
 

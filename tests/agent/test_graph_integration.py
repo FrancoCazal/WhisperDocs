@@ -206,7 +206,11 @@ async def test_a_classifier_outage_still_answers_from_the_documents(
 ):
     """The classifier's model refusing every call (Vertex's 403 for a GCP
     project without billing) sent each question to clarification, which
-    failed the same way and asked for more details (BE-9)."""
+    failed the same way and asked for more details (BE-9). The answer now
+    says the classifier failed, and why (BE-11)."""
+    from google.genai.errors import ClientError
+    from langchain_google_genai.chat_models import GooglePermissionDeniedError
+
     from app.config import settings
 
     monkeypatch.setattr(settings.agent, "rag_structured_output", False)
@@ -220,7 +224,18 @@ async def test_a_classifier_outage_still_answers_from_the_documents(
     )
 
     async def refused(**_):
-        raise RuntimeError("403 Forbidden: billing is not enabled")
+        # As langchain-google-genai raises it: its own type, from the SDK's.
+        cause = ClientError(
+            403,
+            {
+                "error": {
+                    "code": 403,
+                    "message": "This API method requires billing to be enabled.",
+                    "status": "PERMISSION_DENIED",
+                }
+            },
+        )
+        raise GooglePermissionDeniedError("Error calling model (Forbidden)") from cause
 
     fake_provider.generate_structured = refused  # type: ignore[assignment]
 
@@ -236,6 +251,9 @@ async def test_a_classifier_outage_still_answers_from_the_documents(
     assert result["messages"][-1].content == "Respuesta grounded [1]."
     assert result["metadata"]["turn_failed"] is False
     assert len(result["retrieved_chunks"]) == 1
+    errors = result["messages"][-1].additional_kwargs["errors"]
+    assert [(e["step"], e["kind"]) for e in errors] == [("classifier", "billing")]
+    assert result["metadata"]["turn_errors"] == errors
 
 
 async def test_a_turn_without_generation_reports_no_generation_tokens(

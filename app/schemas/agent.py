@@ -34,6 +34,19 @@ class AgentTurnMetadata(BaseModel):
     cost_usd: float = 0.0
 
 
+class TurnErrorRead(BaseModel):
+    """A call the turn made that failed or fell back (see
+    app/agent/utils/turn_errors.py for the steps)."""
+
+    # summarize, classifier, query_rewrite, embedding, retrieval, generation,
+    # clarification, citation_check
+    step: str
+    # billing, auth, rate_limit, timeout, unavailable, invalid_request,
+    # bad_response, unknown (app/services/llm/errors.py)
+    kind: str
+    model: str | None = None
+
+
 class AgentChatResponse(BaseModel):
     thread_id: str
     action: str | None
@@ -43,3 +56,6 @@ class AgentChatResponse(BaseModel):
     # The answer reports a failure ("I had a problem…"): it cites nothing and
     # later prompts leave it out (audit N4).
     failed: bool = False
+    # The turn's failed calls. A turn can answer with some: when the
+    # classifier fails it searches the documents instead.
+    errors: list[TurnErrorRead] = []

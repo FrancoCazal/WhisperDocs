@@ -7,6 +7,7 @@ from app.agent.state import AgentState
 from app.agent.utils.fixed_replies import fixed_reply
 from app.agent.utils.messages import build_prompt_messages, failed_answer, stamped
 from app.agent.utils.streaming import stream_generate
+from app.agent.utils.turn_errors import errors_so_far, turn_error
 from app.services.llm import llm_service_for
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 async def answer_direct_node(state: AgentState) -> dict:
     provider, model, temperature = llm_service_for("answer_direct")
+    errors = errors_so_far(state)
 
     try:
         resp = await stream_generate(
@@ -33,8 +35,9 @@ async def answer_direct_node(state: AgentState) -> dict:
             "generation_tokens_output": resp.tokens_output,
             "generation_latency_ms": resp.latency_ms,
         }
-    except Exception:
+    except Exception as exc:
         logger.exception("answer_direct_failed")
+        errors.append(turn_error("generation", exc, model))
         text = fixed_reply("generation_failed", state["messages"])
         failed = True
         md = {"generation_model": model}
@@ -47,10 +50,13 @@ async def answer_direct_node(state: AgentState) -> dict:
         "chunks_retrieved": 0,
     }
     prev = state.get("metadata") or {}
-    kwargs = stamped(metadata=msg_metadata, action="answer_direct")
+    kwargs = stamped(metadata=msg_metadata, action="answer_direct", errors=errors)
     message = (
         failed_answer(text, **kwargs)
         if failed
         else AIMessage(content=text, additional_kwargs=kwargs)
     )
-    return {"messages": [message], "metadata": {**prev, **md, "turn_failed": failed}}
+    return {
+        "messages": [message],
+        "metadata": {**prev, **md, "turn_failed": failed, "turn_errors": errors},
+    }

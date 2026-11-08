@@ -343,6 +343,21 @@ that exchange out of every prompt, summary and query rewrite, and
 documents, a failure, out of scope) take the language of the user's message
 (`app/agent/utils/fixed_replies.py`).
 
+Every call a turn makes that fails or falls back adds `{step, kind, model}` to
+`metadata.turn_errors`. Steps are `summarize`, `classifier`, `query_rewrite`,
+`embedding`, `retrieval`, `generation`, `clarification` and `citation_check`.
+Kinds are `billing`, `auth`, `rate_limit`, `timeout`, `unavailable`,
+`invalid_request`, `bad_response` and `unknown`; `classify_error` in
+`app/services/llm/errors.py` reads the kind from the exception chain.
+
+The answering node copies the list onto its message as
+`additional_kwargs["errors"]`. `/agent/chat`, the stream's `final` event and a
+thread's messages return it as `errors`, and the chat shows it under the
+answer. A turn can answer with errors, which is why the list exists apart from
+`turn_failed`: when the classifier fails, the turn searches the documents
+instead, so without the list a provider refusing every classifier call does
+not show.
+
 Each node is a pure async function `(AgentState) -> dict` returning only the
 fields it modifies; a node that needs the run config also takes
 `config: RunnableConfig`. The graph wires nodes in `app/agent/graph.py`; nodes

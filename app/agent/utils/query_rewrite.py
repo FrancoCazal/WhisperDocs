@@ -5,15 +5,23 @@ optimized for vector retrieval. Resolves elliptical follow-ups.
 """
 
 from collections.abc import Sequence
+from typing import NamedTuple
 
 from langchain_core.messages import BaseMessage
 
 from app.agent.prompts import QUERY_REWRITE_SYSTEM_PROMPT
 from app.agent.utils.messages import drop_leading_assistant, format_messages
+from app.agent.utils.turn_errors import TurnError, turn_error
 from app.logging_config import get_logger
 from app.services.llm import llm_service_for
 
 logger = get_logger(__name__)
+
+
+class RewrittenQuery(NamedTuple):
+    query: str
+    # Set when the model call failed and `query` is the message as written.
+    error: TurnError | None = None
 
 
 async def rewrite_query_for_retrieval(
@@ -21,8 +29,9 @@ async def rewrite_query_for_retrieval(
     current: str,
     *,
     summary: str | None = None,
-) -> str:
-    """Return a dense search query. Falls back to `current` on any error.
+) -> RewrittenQuery:
+    """Return a dense search query. Falls back to `current` on any error,
+    which it returns as `error` for the turn's `turn_errors`.
 
     Rewrites only when there is something to resolve against: earlier turns or
     a summary. A first message goes to retrieval as written, which is also how
@@ -38,8 +47,9 @@ async def rewrite_query_for_retrieval(
     earlier = drop_leading_assistant(format_messages(history[:-1]))
     if not summary and not earlier:
         logger.debug("query_rewrite_skipped_first_turn", query_len=len(current))
-        return current
+        return RewrittenQuery(current)
 
+    model: str | None = None
     try:
         provider, model, temperature = llm_service_for("query_rewrite")
         # Prior turns as context for coreference resolution; current appended
@@ -61,10 +71,9 @@ async def rewrite_query_for_retrieval(
             temperature=temperature,
             max_tokens=80,
         )
-        rewritten = (resp.text or "").strip().strip('"').strip("'")
-        if not rewritten:
-            return current
-        return rewritten
-    except Exception:
-        logger.exception("query_rewrite_failed", fallback="raw_user_message")
-        return current
+    except Exception as exc:
+        error = turn_error("query_rewrite", exc, model)
+        logger.exception("query_rewrite_failed", kind=error["kind"], fallback="raw_user_message")
+        return RewrittenQuery(current, error)
+    rewritten = (resp.text or "").strip().strip('"').strip("'")
+    return RewrittenQuery(rewritten or current)

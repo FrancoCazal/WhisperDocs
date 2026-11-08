@@ -7,6 +7,8 @@ compiled graph replaced.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -146,3 +148,66 @@ async def test_a_thread_flags_its_failed_answers(db):
         del app.state.agent
 
     assert [m["failed"] for m in r.json()] == [False, True, False, False]
+
+
+CLASSIFIER_BILLING = {"step": "classifier", "kind": "billing", "model": "gemini-3.8-flash"}
+
+
+async def test_an_answer_says_which_calls_failed(db):
+    """With Vertex refusing every call, the classifier falls back and the
+    turn still answers: `errors` is what shows the outage (BE-11)."""
+    app.state.agent = _FakeAgent({"turn_failed": False, "turn_errors": [CLASSIFIER_BILLING]})
+    try:
+        r = await _call("POST", "/agent/chat", json={"message": "q"})
+    finally:
+        del app.state.agent
+
+    assert r.json()["failed"] is False
+    assert r.json()["errors"] == [CLASSIFIER_BILLING]
+
+
+class _StreamingAgent(_FakeAgent):
+    async def astream_events(self, _input, config, version):
+        state = await self.ainvoke(_input, config)
+        yield {"event": "on_chain_end", "name": "LangGraph", "data": {"output": state}}
+
+
+async def test_the_streams_final_event_says_which_calls_failed(db, monkeypatch):
+    class _Session:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *_):
+            return False
+
+    monkeypatch.setattr("app.api.v1.agent.SessionLocal", _Session)
+    app.state.agent = _StreamingAgent({"turn_errors": [CLASSIFIER_BILLING]})
+    try:
+        r = await _call("POST", "/agent/chat/stream", json={"message": "q"})
+    finally:
+        del app.state.agent
+
+    events = [block.split("\n", 1) for block in r.text.strip().split("\n\n")]
+    (final,) = [data for name, data in events if name == "event: final"]
+    payload = json.loads(final.removeprefix("data: "))
+    assert payload["answer"] == "a"
+    assert payload["errors"] == [CLASSIFIER_BILLING]
+
+
+async def test_a_thread_says_which_calls_each_answer_had_fail(db):
+    app.state.agent = _FakeAgent(
+        {},
+        messages=[
+            HumanMessage(content="q"),
+            AIMessage(content="a", additional_kwargs={"errors": [CLASSIFIER_BILLING]}),
+            HumanMessage(content="q2"),
+            # Written before the field.
+            AIMessage(content="a2"),
+        ],
+    )
+    try:
+        r = await _call("GET", "/conversations/t/messages")
+    finally:
+        del app.state.agent
+
+    assert [m["errors"] for m in r.json()] == [[], [CLASSIFIER_BILLING], [], []]

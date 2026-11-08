@@ -20,7 +20,10 @@ async def test_a_first_message_goes_as_written(fake_provider, mock_llm_service_f
     # Pronouns and Spanish articles used to send turn 1 to the model.
     current = "¿cómo la configuro y qué parámetros tiene esa función en los workers de ingesta?"
 
-    assert await rewrite_query_for_retrieval([HumanMessage(content=current)], current) == current
+    rewrite = await rewrite_query_for_retrieval([HumanMessage(content=current)], current)
+
+    assert rewrite.query == current
+    assert rewrite.error is None
     assert fake_provider.calls == []
 
 
@@ -33,9 +36,10 @@ async def test_a_follow_up_goes_to_the_model(fake_provider, mock_llm_service_for
         HumanMessage(content="¿se puede usar con Postgres 14?"),
     ]
 
-    query = await rewrite_query_for_retrieval(history, history[-1].text)
+    rewrite = await rewrite_query_for_retrieval(history, history[-1].text)
 
-    assert query == "pgvector Postgres 14 compatibility"
+    assert rewrite.query == "pgvector Postgres 14 compatibility"
+    assert rewrite.error is None
     sent = fake_provider.calls[0]["kwargs"]["messages"]
     assert [m["role"] for m in sent] == ["user", "assistant", "user"]
 
@@ -58,5 +62,25 @@ async def test_failed_turns_are_not_context(fake_provider, mock_llm_service_for)
         HumanMessage(content=current),
     ]
 
-    assert await rewrite_query_for_retrieval(history, current) == current
+    assert (await rewrite_query_for_retrieval(history, current)).query == current
     assert fake_provider.calls == []
+
+
+async def test_a_failed_rewrite_searches_as_written_and_says_why(
+    fake_provider, mock_llm_service_for
+):
+    async def refuse(**_):
+        raise TimeoutError("read timed out")
+
+    fake_provider.generate = refuse  # type: ignore[assignment]
+    mock_llm_service_for("app.agent.utils.query_rewrite", fake_provider, model="rewriter")
+    history = [
+        HumanMessage(content="¿qué es pgvector?"),
+        AIMessage(content="Una extensión de Postgres [1]."),
+        HumanMessage(content="¿y sus límites?"),
+    ]
+
+    rewrite = await rewrite_query_for_retrieval(history, history[-1].text)
+
+    assert rewrite.query == "¿y sus límites?"
+    assert rewrite.error == {"step": "query_rewrite", "kind": "timeout", "model": "rewriter"}

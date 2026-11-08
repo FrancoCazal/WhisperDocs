@@ -118,6 +118,23 @@ async def test_decide_action_falls_back_on_provider_error(
     assert result["pending_action"] == "search_docs"
     assert result["metadata"]["classifier_reason"] == "classifier_failure_fallback"
     assert result["metadata"]["classifier_confidence"] == "low"
+    assert result["metadata"]["turn_errors"] == [
+        {"step": "classifier", "kind": "unknown", "model": "fake-model"}
+    ]
+
+
+async def test_decide_action_keeps_a_failed_compactions_error(
+    fake_provider, mock_llm_service_for, classifier_response
+):
+    fake_provider.structured_response = classifier_response("search_docs")
+    mock_llm_service_for("app.agent.nodes.decide_action", fake_provider)
+    compaction = {"step": "summarize", "kind": "timeout", "model": "haiku"}
+
+    result = await decide_action_node(
+        {"messages": [HumanMessage(content="hi")], "metadata": {"turn_errors": [compaction]}}
+    )
+
+    assert result["metadata"]["turn_errors"] == [compaction]
 
 
 async def test_decide_action_low_confidence_downgrades_to_clarification(
@@ -532,9 +549,14 @@ async def test_summarize_graceful_on_llm_error(fake_provider, mock_llm_service_f
         m.id = f"msg-{i}"
         messages.append(m)
 
-    # Must NOT raise — failure returns empty patch, history intact.
+    # Must NOT raise: the history stays intact, and the turn records why.
     result = await summarize_node({"messages": messages, "summary": None})
-    assert result == {"pending_action": None}
+    assert result == {
+        "pending_action": None,
+        "metadata": {
+            "turn_errors": [{"step": "summarize", "kind": "unknown", "model": "fake-model"}]
+        },
+    }
 
 
 async def test_ask_clarification_preserves_prior_metadata(fake_provider, mock_llm_service_for):

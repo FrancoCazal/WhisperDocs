@@ -117,6 +117,7 @@ async def get_conversation_messages(
                 citations=kwargs.get("citations"),
                 metadata=metadata,
                 failed=bool(kwargs.get(FAILED_TURN)),
+                errors=kwargs.get("errors") or [],
             )
         )
     return out

@@ -7,6 +7,7 @@ from app.agent.state import AgentState
 from app.agent.utils.fixed_replies import fixed_reply
 from app.agent.utils.messages import build_prompt_messages, stamped
 from app.agent.utils.streaming import stream_generate
+from app.agent.utils.turn_errors import errors_so_far, turn_error
 from app.services.llm import llm_service_for
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 async def ask_clarification_node(state: AgentState) -> dict:
     provider, model, temperature = llm_service_for("clarification")
+    errors = errors_so_far(state)
 
     try:
         resp = await stream_generate(
@@ -32,8 +34,9 @@ async def ask_clarification_node(state: AgentState) -> dict:
             "generation_tokens_output": resp.tokens_output,
             "generation_latency_ms": resp.latency_ms,
         }
-    except Exception:
+    except Exception as exc:
         logger.exception("ask_clarification_failed")
+        errors.append(turn_error("clarification", exc, model))
         # Still a fair reply to a vague message, so not a failed turn.
         text = fixed_reply("clarify", state["messages"])
         md = {"generation_model": model}
@@ -50,8 +53,10 @@ async def ask_clarification_node(state: AgentState) -> dict:
         "messages": [
             AIMessage(
                 content=text,
-                additional_kwargs=stamped(metadata=msg_metadata, action="ask_clarification"),
+                additional_kwargs=stamped(
+                    metadata=msg_metadata, action="ask_clarification", errors=errors
+                ),
             )
         ],
-        "metadata": {**prev, **md},
+        "metadata": {**prev, **md, "turn_errors": errors},
     }

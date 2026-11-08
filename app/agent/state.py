@@ -2,6 +2,8 @@ from typing import Literal, TypedDict
 
 from langgraph.graph import MessagesState
 
+from app.agent.utils.turn_errors import TurnError
+
 
 class TurnMetadata(TypedDict, total=False):
     """Per-turn structured observability. Populated progressively by nodes."""
@@ -23,6 +25,10 @@ class TurnMetadata(TypedDict, total=False):
     # of answering. Later prompts leave that exchange out, and no query log is
     # written for it (audit N4).
     turn_failed: bool
+    # Every call this turn that failed or fell back, in order: {step, kind,
+    # model} (see app/agent/utils/turn_errors.py). The answering node copies
+    # it onto its message as `errors`; reset with the rest each turn.
+    turn_errors: list[TurnError]
     generation_model: str | None
     generation_tokens_input: int
     generation_tokens_output: int
