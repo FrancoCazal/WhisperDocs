@@ -1,6 +1,7 @@
 import { createRouter, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { QueryClient } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
+import { Btn, btnCls } from "@/components/ui-kit/Button";
 
 // A route can throw anything, not only an Error.
 function DefaultErrorComponent({ error, reset }: ErrorComponentProps) {
@@ -13,19 +14,16 @@ function DefaultErrorComponent({ error, reset }: ErrorComponentProps) {
           {error instanceof Error ? error.message : String(error)}
         </pre>
         <div className="flex gap-3">
-          <button
+          <Btn
+            variant="primary"
             onClick={() => {
               router.invalidate();
               reset();
             }}
-            className="h-9 px-4 label-sm bg-text-primary text-surface hover:bg-transparent hover:text-text-primary border border-text-primary"
           >
             RETRY ↻
-          </button>
-          <a
-            href="/"
-            className="h-9 px-4 label-sm border border-text-primary text-text-primary inline-flex items-center hover:bg-text-primary hover:text-surface"
-          >
+          </Btn>
+          <a href="/" className={btnCls("secondary")}>
             RETURN HOME
           </a>
         </div>

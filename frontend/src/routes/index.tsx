@@ -12,6 +12,7 @@ import {
   emptyActionCls,
 } from "@/components/ui-kit/EmptyState";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
+import { LATENCY_WARN_MS, metricTone, toneText } from "@/lib/metricTone";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -26,44 +27,41 @@ export const Route = createFileRoute("/")({
   component: Dashboard,
 });
 
-function latencyClass(ms: number) {
-  if (ms < 2000) return "text-success";
-  if (ms < 5000) return "text-warning";
-  return "text-error";
-}
-
-function accuracyClass(acc: number) {
-  if (acc >= 0.8) return "text-success";
-  if (acc >= 0.6) return "text-warning";
-  return "text-error";
-}
-
 function TokenBar({
   label,
   value,
   max,
-  colorClass,
+  accent,
 }: {
   label: string;
   value: number;
   max: number;
-  colorClass: string;
+  // Blue, for the bar that matters most; otherwise grey.
+  accent: boolean;
 }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
   return (
     <div>
       <div className="flex justify-between items-end mb-1">
         <span className="label-xs text-text-secondary">{label}</span>
-        <span className={`label-xs ${colorClass}`}>
+        <span className={`label-xs ${accent ? "text-primary-blue" : "text-text-secondary"}`}>
           {value >= 1000 ? `${(value / 1000).toFixed(1)}K` : value}
         </span>
       </div>
-      <div className="w-full bg-surface-high h-[2px]">
-        <div
-          className={`h-full ${colorClass.replace("text-", "bg-")}`}
-          style={{ width: `${pct}%` }}
+      {/* The bar's length is an SVG attribute: no inline style. */}
+      <svg
+        viewBox="0 0 100 2"
+        preserveAspectRatio="none"
+        className="block w-full h-[2px]"
+        aria-hidden="true"
+      >
+        <rect width="100" height="2" className="fill-surface-high" />
+        <rect
+          width={pct}
+          height="2"
+          className={accent ? "fill-primary-blue" : "fill-text-secondary"}
         />
-      </div>
+      </svg>
     </div>
   );
 }
@@ -207,7 +205,7 @@ function Dashboard() {
                         </td>
                         <td className="py-3 text-text-primary pr-4">{truncate(q.question, 55)}</td>
                         <td
-                          className={`py-3 text-right tabular-nums ${latencyClass(q.latency_ms)}`}
+                          className={`py-3 text-right tabular-nums ${toneText("latency", q.latency_ms)}`}
                         >
                           {fmtNumber(q.latency_ms)}MS
                         </td>
@@ -215,10 +213,11 @@ function Dashboard() {
                           {fmtNumber(q.tokens_input + q.tokens_output)}
                         </td>
                         <td className="py-3 text-center pr-5">
-                          <StatDot
-                            tone={q.latency_ms < 5000 ? "success" : "error"}
-                            label={q.latency_ms < 5000 ? "OK" : "SLOW"}
-                          />
+                          {metricTone("latency", q.latency_ms) === "poor" ? (
+                            <StatDot tone="error" label="SLOW" />
+                          ) : (
+                            <StatDot tone="success" label="OK" />
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -234,7 +233,7 @@ function Dashboard() {
           {/* COST CARD */}
           <div className="border border-border-subtle bg-surface-container p-5">
             <div className="label-xs text-text-tertiary mb-1">QUERY COST (LAST 10)</div>
-            <div className="display-md text-error mb-4">
+            <div className="display-md text-text-primary mb-4">
               {history.isLoading ? "—" : fmtCost(queryCost)}
             </div>
             <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border-subtle">
@@ -246,9 +245,7 @@ function Dashboard() {
               </div>
               <div>
                 <div className="label-xs text-text-tertiary mb-1">LAST EVAL ACC.</div>
-                <div
-                  className={`title-sm ${lastAccuracy !== null ? accuracyClass(lastAccuracy) : "text-text-primary"}`}
-                >
+                <div className={`title-sm ${toneText("accuracy", lastAccuracy)}`}>
                   {evals.isLoading ? "—" : lastAccuracy !== null ? fmtPct(lastAccuracy) : "—"}
                 </div>
               </div>
@@ -270,17 +267,12 @@ function Dashboard() {
                   <div className="label-xs text-text-tertiary">NO DATA</div>
                 ) : (
                   <div className="space-y-3">
-                    <TokenBar
-                      label="INPUT"
-                      value={totalInputTokens}
-                      max={maxTokens}
-                      colorClass="text-primary-blue"
-                    />
+                    <TokenBar label="INPUT" value={totalInputTokens} max={maxTokens} accent />
                     <TokenBar
                       label="OUTPUT"
                       value={totalOutputTokens}
                       max={maxTokens}
-                      colorClass="text-text-secondary"
+                      accent={false}
                     />
                   </div>
                 )}
@@ -294,13 +286,13 @@ function Dashboard() {
                 ) : p95Latency !== null ? (
                   <>
                     <div className="flex items-baseline gap-2">
-                      <span className={`display-md ${latencyClass(p95Latency)}`}>
+                      <span className={`display-md ${toneText("latency", p95Latency)}`}>
                         {fmtNumber(p95Latency)}
                       </span>
                       <span className="label-xs text-text-tertiary">MS</span>
                     </div>
                     <div className="label-xs text-text-tertiary mt-1">
-                      WARN THRESHOLD: &gt;5000MS
+                      WARN THRESHOLD: &gt;{LATENCY_WARN_MS}MS
                     </div>
                   </>
                 ) : (
@@ -368,10 +360,12 @@ function Dashboard() {
                       <td className="py-3 text-text-secondary tabular-nums">
                         {fmtDate(r.timestamp)}
                       </td>
-                      <td className={`py-3 text-right tabular-nums ${accuracyClass(r.accuracy)}`}>
+                      <td
+                        className={`py-3 text-right tabular-nums ${toneText("accuracy", r.accuracy)}`}
+                      >
                         {fmtPct(r.accuracy)}
                       </td>
-                      <td className="py-3 text-right pr-5 tabular-nums text-error">
+                      <td className="py-3 text-right pr-5 tabular-nums text-text-primary">
                         {fmtCost(r.estimated_cost_usd)}
                       </td>
                     </tr>

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Btn } from "@/components/ui-kit/Button";
 
 /** An empty list; `children` is what to do about it (a link or a button). */
 export function EmptyState({
@@ -37,14 +38,9 @@ export function ErrorBanner({
     >
       <span className="flex-1 min-w-0 break-words">ERROR: {message}</span>
       {onRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={retrying}
-          className="label-sm text-text-primary hover:text-primary-blue disabled:text-text-tertiary"
-        >
+        <Btn size="sm" variant="quiet" onClick={onRetry} disabled={retrying}>
           {retrying ? "RETRYING..." : "↻ RETRY"}
-        </button>
+        </Btn>
       )}
     </div>
   );

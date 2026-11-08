@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { api, fmtDate, fmtNumber, LIMITS, type Collection } from "@/lib/api";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
-import { Btn } from "@/components/ui-kit/Button";
+import { Btn, btnCls } from "@/components/ui-kit/Button";
 import {
   EmptyState,
   ErrorBanner,
@@ -147,7 +147,7 @@ function CollectionsPage() {
                           setToDelete(c);
                         }}
                         disabled={del.isPending && del.variables?.id === c.id}
-                        className="label-sm text-error hover:bg-error hover:text-surface px-2 h-6"
+                        className={btnCls("destructive-ghost", "sm")}
                       >
                         DELETE
                       </button>

@@ -3,6 +3,7 @@ import { fmtCost, fmtNumber } from "@/lib/api";
 import { citedSources } from "./citations";
 import { Markdown } from "./Markdown";
 import { TurnTrace } from "./Trace";
+import { Btn } from "@/components/ui-kit/Button";
 import {
   IDLE_TIMEOUT_MS,
   type AssistantTurnData,
@@ -126,12 +127,9 @@ export function AssistantTurn({
       {turn.trace && <TurnTrace steps={turn.trace} elapsedMs={turn.elapsedMs} />}
 
       {onRetry && (
-        <button
-          onClick={onRetry}
-          className="mt-3 label-sm text-text-primary hover:bg-text-primary hover:text-surface px-3 h-7 border border-border-subtle"
-        >
+        <Btn size="sm" variant="quiet" onClick={onRetry} className="mt-3">
           ↻ RETRY
-        </button>
+        </Btn>
       )}
 
       {answered && usage && (

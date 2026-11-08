@@ -5,7 +5,7 @@ import { api, fmtCost, fmtDate, fmtPct, type EvalRunSummary } from "@/lib/api";
 import { parseEvalDataset, STARTER_DATASET } from "@/lib/evalDataset";
 import { TOP_K_MAX, TOP_K_MIN, useTopK } from "@/lib/topK";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
-import { Btn } from "@/components/ui-kit/Button";
+import { Btn, btnCls } from "@/components/ui-kit/Button";
 import {
   EmptyState,
   ErrorBanner,
@@ -15,7 +15,8 @@ import {
 import { Modal, Field, textareaCls, inputCls } from "@/components/ui-kit/Modal";
 import { Elapsed } from "@/components/chat/Trace";
 import { RunReport } from "@/components/eval/RunReport";
-import { accuracyTone, GENERATION_COST_HINT, hallucinationTone } from "@/components/eval/tone";
+import { GENERATION_COST_HINT } from "@/components/eval/costHint";
+import { toneText } from "@/lib/metricTone";
 
 export const Route = createFileRoute("/evaluacion")({
   head: () => ({
@@ -208,11 +209,11 @@ function EvaluacionPage() {
                     <td className="text-right tabular-nums text-text-secondary">
                       {r.dataset_size}
                     </td>
-                    <td className={`text-right tabular-nums ${accuracyTone(r.accuracy)}`}>
+                    <td className={`text-right tabular-nums ${toneText("accuracy", r.accuracy)}`}>
                       {fmtPct(r.accuracy)}
                     </td>
                     <td
-                      className={`text-right tabular-nums ${hallucinationTone(r.hallucination_rate)}`}
+                      className={`text-right tabular-nums ${toneText("hallucination", r.hallucination_rate)}`}
                     >
                       {fmtPct(r.hallucination_rate)}
                     </td>
@@ -226,7 +227,7 @@ function EvaluacionPage() {
                         <button
                           type="button"
                           onClick={() => show(r.run_id)}
-                          className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-6"
+                          className={btnCls("ghost", "sm")}
                         >
                           VIEW
                         </button>

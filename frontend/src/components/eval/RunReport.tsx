@@ -10,7 +10,8 @@ import {
 import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { ItemResults } from "./ItemResults";
 import { RunCompare } from "./RunCompare";
-import { accuracyTone, GENERATION_COST_HINT, hallucinationTone, latencyTone } from "./tone";
+import { GENERATION_COST_HINT } from "./costHint";
+import { toneText } from "@/lib/metricTone";
 
 export function RunReport({ report, runs }: { report: EvalReport; runs: EvalRunSummary[] }) {
   const m = report.metrics;
@@ -39,11 +40,15 @@ export function RunReport({ report, runs }: { report: EvalReport; runs: EvalRunS
       )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8">
-        <BigMetric label="ACCURACY" value={fmtPct(m.accuracy)} tone={accuracyTone(m.accuracy)} />
+        <BigMetric
+          label="ACCURACY"
+          value={fmtPct(m.accuracy)}
+          tone={toneText("accuracy", m.accuracy)}
+        />
         <BigMetric
           label="HALLUCINATION RATE"
           value={fmtPct(m.hallucination_rate)}
-          tone={hallucinationTone(m.hallucination_rate)}
+          tone={toneText("hallucination", m.hallucination_rate)}
         />
         <BigMetric
           label="PRECISION@K · RECALL@K"
@@ -56,7 +61,7 @@ export function RunReport({ report, runs }: { report: EvalReport; runs: EvalRunS
               ? `${fmtNumber(Math.round(m.avg_latency_ms))}MS · —`
               : `${fmtNumber(Math.round(m.avg_latency_ms))} · ${fmtNumber(Math.round(m.latency_p95_ms))}MS`
           }
-          tone={latencyTone(m.avg_latency_ms)}
+          tone={toneText("latency", m.avg_latency_ms)}
         />
       </div>
 
@@ -108,11 +113,11 @@ function BreakdownTable({ title, data }: { title: string; data?: Record<string, 
                 >
                   <td className="pl-6 text-text-primary">{k.replace("_", " ").toUpperCase()}</td>
                   <td className="text-right tabular-nums text-text-primary">{v.total}</td>
-                  <td className={`text-right tabular-nums ${accuracyTone(v.accuracy)}`}>
+                  <td className={`text-right tabular-nums ${toneText("accuracy", v.accuracy)}`}>
                     {fmtPct(v.accuracy)}
                   </td>
                   <td
-                    className={`text-right pr-6 tabular-nums ${hallucinationTone(v.hallucination_rate)}`}
+                    className={`text-right pr-6 tabular-nums ${toneText("hallucination", v.hallucination_rate)}`}
                   >
                     {fmtPct(v.hallucination_rate)}
                   </td>

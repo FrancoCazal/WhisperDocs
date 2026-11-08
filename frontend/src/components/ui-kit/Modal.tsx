@@ -1,5 +1,10 @@
-import { useEffect, type ReactNode } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import type { ReactNode } from "react";
+import { useReturnFocus } from "@/components/ui-kit/returnFocus";
 
+/** A dialog with a form or a task: Radix's, so it is a labelled role="dialog"
+ *  that traps the focus and gives it back on close. Escape, a click outside
+ *  and ✕ CLOSE close it. */
 export function Modal({
   open,
   onClose,
@@ -13,36 +18,30 @@ export function Modal({
   children: ReactNode;
   width?: string;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
+  const returnFocus = useReturnFocus(open);
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4"
-      onClick={onClose}
-    >
-      <div
-        className={`${width} w-full bg-surface-high border border-border-subtle`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 h-12 border-b border-border-subtle">
-          <span className="label-sm text-text-primary">{title}</span>
-          <button
-            onClick={onClose}
-            className="label-sm text-text-secondary hover:text-text-primary"
-          >
+    <DialogPrimitive.Root open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60" />
+        {/* No description: the title and the form say what it is for. */}
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          onCloseAutoFocus={returnFocus}
+          className={`fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[calc(100%-2rem)] ${width} max-h-[calc(100dvh-2rem)] flex flex-col bg-surface-high border border-border-subtle focus:outline-none`}
+        >
+          <div className="flex items-center px-5 h-12 border-b border-border-subtle shrink-0 pr-28">
+            <DialogPrimitive.Title className="label-sm text-text-primary truncate">
+              {title}
+            </DialogPrimitive.Title>
+          </div>
+          <div className="p-5 overflow-auto">{children}</div>
+          {/* After the body, so the focus starts on the form, not on CLOSE. */}
+          <DialogPrimitive.Close className="absolute top-0 right-5 h-12 label-sm text-text-secondary hover:text-text-primary">
             ✕ CLOSE
-          </button>
-        </div>
-        <div className="p-5">{children}</div>
-      </div>
-    </div>
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

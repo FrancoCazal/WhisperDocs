@@ -26,6 +26,7 @@ import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import { useDebounced } from "@/lib/useDebounced";
 import { useTopK } from "@/lib/topK";
 import { ScopeControls } from "@/components/ui-kit/ScopeControls";
+import { Btn, btnCls } from "@/components/ui-kit/Button";
 import {
   IDLE_TIMEOUT_MS,
   type AssistantTurnData,
@@ -522,7 +523,7 @@ function ChatPage() {
                   <button
                     type="button"
                     aria-label="Open threads panel"
-                    className="md:hidden inline-flex items-center justify-center w-8 h-8 border border-border-subtle text-text-primary hover:bg-surface-container focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue"
+                    className={btnCls("quiet", "icon", "md:hidden")}
                   >
                     <span aria-hidden="true">☰</span>
                   </button>
@@ -585,29 +586,29 @@ function ChatPage() {
                 disabled={readOnly}
               />
               {latestAnswer && (
-                <button
-                  onClick={() => openSources(latestAnswer, null)}
-                  className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-7 border border-border-subtle"
-                >
+                <Btn size="sm" variant="quiet" onClick={() => openSources(latestAnswer, null)}>
                   ☰ SOURCES [{latestAnswer.citations.length}]
-                </button>
+                </Btn>
               )}
               {threadId && (
                 <>
-                  <button
+                  <Btn
+                    size="sm"
+                    variant="quiet"
                     onClick={toggleSaved}
                     disabled={patchSaveMut.isPending}
-                    className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-7 border border-border-subtle"
+                    aria-pressed={activeConv?.is_saved ?? false}
                   >
                     {activeConv?.is_saved ? "★ SAVED" : "☆ SAVE"}
-                  </button>
-                  <button
+                  </Btn>
+                  <Btn
+                    size="sm"
+                    variant="destructive"
                     onClick={() => setConfirmDelete(true)}
                     disabled={deleteConvMut.isPending || streaming}
-                    className="label-sm text-error hover:bg-error hover:text-surface px-2 h-7 border border-error/40 disabled:opacity-50"
                   >
                     ✕ DELETE
-                  </button>
+                  </Btn>
                 </>
               )}
             </div>
@@ -734,22 +735,18 @@ function ChatPage() {
                 hint="ENTER SENDS · SHIFT+ENTER ADDS A LINE · ESC STOPS AN ANSWER"
               >
                 {streaming ? (
-                  <button
-                    type="button"
-                    onClick={stop}
-                    title="Stop the answer (Esc)"
-                    className="label-sm text-error hover:bg-error hover:text-surface px-2 h-7 border border-error/40"
-                  >
+                  <Btn size="sm" variant="destructive" onClick={stop} title="Stop the answer (Esc)">
                     ■ STOP
-                  </button>
+                  </Btn>
                 ) : (
-                  <button
+                  <Btn
                     type="submit"
+                    size="sm"
+                    variant="ghost"
                     disabled={loadingThread || !input.trim()}
-                    className="label-sm text-text-primary disabled:text-text-tertiary hover:bg-text-primary hover:text-surface px-2 h-7 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
                   >
                     ↵ SEND
-                  </button>
+                  </Btn>
                 )}
               </Composer>
             )}

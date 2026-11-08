@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api, fmtDate, type Collection, type Conversation } from "@/lib/api";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LoadingLine } from "@/components/ui-kit/EmptyState";
 import { LoadMore } from "@/components/ui-kit/LoadMore";
 
 /** A row's last activity, short: the time (UTC) for today, else the day. */
@@ -153,10 +153,8 @@ export function ThreadSidebar({
         {tab === "threads" && (
           <>
             {loading && (
-              <div className="px-4 py-3 space-y-2">
-                {[0, 1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-12 w-full bg-surface-container" />
-                ))}
+              <div className="px-4 py-3">
+                <LoadingLine label="LOADING THREADS" />
               </div>
             )}
             {!loading && (conversations?.length ?? 0) === 0 && (
@@ -219,7 +217,9 @@ export function ThreadSidebar({
         {tab === "notes" && (
           <>
             {notes.isLoading && (
-              <div className="px-4 py-3 label-sm text-text-tertiary">LOADING...</div>
+              <div className="px-4 py-3">
+                <LoadingLine label="LOADING NOTES" />
+              </div>
             )}
             {!notes.isLoading && (notes.data?.length ?? 0) === 0 && (
               <div className="px-4 py-3 label-sm text-text-tertiary">

@@ -1,4 +1,5 @@
 import { fmtNumber } from "@/lib/api";
+import { Btn } from "@/components/ui-kit/Button";
 
 /** A paged list's foot: how much of the total is on screen, and the next page. */
 export function LoadMore({
@@ -25,14 +26,9 @@ export function LoadMore({
         SHOWING {fmtNumber(shown)}
         {total !== null && ` OF ${fmtNumber(total)}`}
       </span>
-      <button
-        type="button"
-        onClick={onLoad}
-        disabled={loading}
-        className="label-sm text-text-primary px-2 h-7 border border-border-subtle hover:bg-text-primary hover:text-surface disabled:text-text-tertiary disabled:hover:bg-transparent"
-      >
+      <Btn size="sm" variant="quiet" onClick={onLoad} disabled={loading}>
         {loading ? "LOADING..." : "LOAD MORE"}
-      </button>
+      </Btn>
     </div>
   );
 }

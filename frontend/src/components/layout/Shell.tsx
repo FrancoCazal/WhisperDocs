@@ -2,6 +2,7 @@ import { Link, useRouterState, Outlet } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { API_BASE_URL, api, fmtCost, fmtNumber, shortModel } from "@/lib/api";
+import { btnCls } from "@/components/ui-kit/Button";
 
 const NAV_ITEMS = [
   { to: "/", label: "OVERVIEW", glyph: "▦" },
@@ -132,7 +133,7 @@ export function Shell() {
             aria-label={navOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={navOpen}
             aria-controls="primary-nav"
-            className="md:hidden inline-flex items-center justify-center w-8 h-8 border border-border-subtle text-text-primary hover:bg-surface-container focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue"
+            className={btnCls("quiet", "icon", "md:hidden")}
           >
             <span aria-hidden="true">{navOpen ? "✕" : "☰"}</span>
           </button>

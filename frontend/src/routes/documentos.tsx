@@ -16,6 +16,7 @@ import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import { RecentJobs } from "@/components/documents/RecentJobs";
 import { ACCEPT_ATTR, rejectReason, stageText } from "@/components/documents/stages";
+import { Btn, btnCls } from "@/components/ui-kit/Button";
 import {
   EmptyState,
   ErrorBanner,
@@ -490,19 +491,17 @@ function DocumentsPage() {
         >
           <span className="label-sm text-text-secondary">{selectedIds.length} SELECTED</span>
           <span className="flex-1 hidden sm:block" />
-          <button
-            onClick={() => setSelected(new Set())}
-            className="label-sm text-text-secondary hover:text-text-primary px-2 h-7 border border-border-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-blue"
-          >
+          <Btn size="sm" variant="quiet" onClick={() => setSelected(new Set())}>
             CLEAR
-          </button>
-          <button
+          </Btn>
+          <Btn
+            size="sm"
+            variant="destructive"
             onClick={() => setConfirmBulk(true)}
             disabled={bulkDel.isPending}
-            className="label-sm text-error hover:bg-error hover:text-surface px-3 h-7 border border-error/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-error"
           >
             {bulkDel.isPending ? "DELETING..." : "✕ DELETE SELECTED"}
-          </button>
+          </Btn>
         </div>
       )}
 
@@ -580,7 +579,7 @@ function DocumentsPage() {
                         e.stopPropagation();
                         setToDelete(d);
                       }}
-                      className="label-sm text-error hover:bg-error hover:text-surface px-2 h-6"
+                      className={btnCls("destructive-ghost", "sm")}
                     >
                       DELETE
                     </button>

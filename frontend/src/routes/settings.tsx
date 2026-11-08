@@ -66,7 +66,7 @@ function SettingsPage() {
       </Section>
 
       <Section title="AGENT MODELS">
-        {adminSettings.isLoading && <Row label="LOADING" value="…" />}
+        {adminSettings.isLoading && <LoadingLine />}
         {adminSettings.error && <Row label="ERROR" value="failed to fetch /admin/settings" />}
         {adminSettings.data &&
           Object.entries(adminSettings.data.models).map(([node, cfg]) => (

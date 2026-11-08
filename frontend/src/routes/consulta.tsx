@@ -15,10 +15,11 @@ import {
   type QueryLog,
   type QueryMetadata,
 } from "@/lib/api";
-import { ErrorBanner } from "@/components/ui-kit/EmptyState";
+import { ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
 import { Composer } from "@/components/ui-kit/Composer";
 import { ScopeControls } from "@/components/ui-kit/ScopeControls";
 import { useTopK } from "@/lib/topK";
+import { Btn, btnCls } from "@/components/ui-kit/Button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export const Route = createFileRoute("/consulta")({
@@ -120,8 +121,8 @@ function SessionList({
   return (
     <div className="flex-1 overflow-auto">
       {loading && (
-        <div className="px-4 py-2 label-xs text-text-tertiary border-b border-border-subtle/50">
-          LOADING HISTORY...
+        <div className="px-4 py-3 border-b border-border-subtle/50">
+          <LoadingLine label="LOADING HISTORY" />
         </div>
       )}
       {sessions.map((s) => {
@@ -251,13 +252,9 @@ function ConsultaPage() {
       >
         <div className="px-4 h-12 flex items-center justify-between border-b border-border-subtle">
           <span className="label-sm text-text-secondary">SESSIONS</span>
-          <button
-            onClick={startNew}
-            className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-6"
-            aria-label="New session"
-          >
+          <Btn size="sm" variant="ghost" onClick={startNew} aria-label="New session">
             + NEW
-          </button>
+          </Btn>
         </div>
         <SessionList
           sessions={sessions}
@@ -278,7 +275,7 @@ function ConsultaPage() {
                 <button
                   type="button"
                   aria-label="Open sessions panel"
-                  className="md:hidden h-8 w-8 grid place-items-center border border-border-subtle text-text-primary hover:bg-surface-container"
+                  className={btnCls("quiet", "icon", "md:hidden")}
                 >
                   ☰
                 </button>
@@ -289,15 +286,16 @@ function ConsultaPage() {
               >
                 <SheetHeader className="px-4 py-3 border-b border-border-subtle flex-row items-center justify-between space-y-0 pr-12">
                   <SheetTitle className="label-sm text-text-primary">SESSIONS</SheetTitle>
-                  <button
+                  <Btn
+                    size="sm"
+                    variant="ghost"
                     onClick={() => {
                       setSessionsOpen(false);
                       startNew();
                     }}
-                    className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-6"
                   >
                     + NEW
-                  </button>
+                  </Btn>
                 </SheetHeader>
                 <SessionList
                   sessions={sessions}
@@ -408,13 +406,14 @@ function ConsultaPage() {
             placeholder="ENTER QUERY..."
             label="Query input"
           >
-            <button
+            <Btn
               type="submit"
+              size="sm"
+              variant="ghost"
               disabled={queryMut.isPending || !input.trim()}
-              className="label-sm text-text-primary disabled:text-text-tertiary hover:bg-text-primary hover:text-surface px-2 h-7 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
             >
               ↵ SEND
-            </button>
+            </Btn>
           </Composer>
         </div>
       </section>

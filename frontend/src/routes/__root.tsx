@@ -2,6 +2,7 @@ import { Link, createRootRouteWithContext, HeadContent, Scripts } from "@tanstac
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/Shell";
 import { Toaster } from "@/components/ui/sonner";
+import { btnCls } from "@/components/ui-kit/Button";
 
 import appCss from "../styles.css?url";
 
@@ -15,10 +16,7 @@ function NotFoundComponent() {
           The requested route is not registered in the protocol map.
         </p>
         <div className="mt-6">
-          <Link
-            to="/"
-            className="inline-flex items-center justify-center h-9 px-4 label-sm border border-text-primary text-text-primary hover:bg-text-primary hover:text-surface"
-          >
+          <Link to="/" className={btnCls("secondary")}>
             RETURN HOME
           </Link>
         </div>
