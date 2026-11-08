@@ -41,6 +41,14 @@ Fixes from the November 2026 audit, and a review of the frontend.
   While a role fails, every page shows a notice naming the roles, the
   reason and what the app does meanwhile. SETTINGS shows each role's
   status.
+- `POST /retrieve`: the chunks for a query, without an answer. Each
+  chunk comes with its text, its document, its relevance and its cosine,
+  scoped to a collection or a single document. This is what another agent
+  needs from a knowledge base, and the base of the MCP server. It runs the
+  search the chat uses, and counts against the questions rate limit.
+- Every operation has a fixed `operationId` (`retrieve_chunks`,
+  `answer_question`, ...), where FastAPI generated
+  `query_api_v1_query_post`. A test lists them all.
 - History: filters by origin and by question text
   (`GET /query/history?source=&q=`), and pagination.
 - Frontend tests: vitest for the API client's stream parser, and a

@@ -145,6 +145,7 @@ See `.env.example` for every knob.
 | `POST` | `/api/v1/documents/bulk-delete` | Delete many documents |
 | `POST` | `/api/v1/documents/bulk-move` | Move documents between collections |
 | `POST` | `/api/v1/query` | Single-turn RAG query |
+| `POST` | `/api/v1/retrieve` | The chunks for a query, without an answer (for other agents) |
 | `GET` | `/api/v1/query/history` | Paginated query log |
 | `POST` | `/api/v1/agent/chat` | Multi-turn agent chat |
 | `POST` | `/api/v1/agent/chat/stream` | SSE: node + token events |
@@ -170,7 +171,10 @@ before it is parsed. A `.pdf` must carry the PDF header, a `.md` or `.txt`
 must not contain binary data, and file names and titles are capped at 300
 characters. List endpoints take `limit` between 1 and 200.
 
-Full reference at `/docs` (FastAPI auto-generated OpenAPI).
+Full reference at `/docs` (FastAPI auto-generated OpenAPI). Every operation has a
+fixed `operationId` (`retrieve_chunks`, `answer_question`, `list_collections`, ...),
+so a client generated from the schema, or an agent's tool list, keeps its names;
+`tests/test_openapi.py` lists them all.
 
 ---
 
@@ -187,7 +191,7 @@ other machine, set `API_KEY`.
   key in SETTINGS and keeps it in the browser's local storage. It is one
   shared key: it controls access, but it is not per-user authentication.
 - **Rate limits.** Each client gets a limit per minute: 30 questions
-  (`/query`, `/agent/chat*`, `/health?deep=true`), 60 uploads and 2 eval
+  (`/query`, `/retrieve`, `/agent/chat*`, `/health?deep=true`), 60 uploads and 2 eval
   runs. The client is the key when auth is on, the IP otherwise. Past a
   limit, the API answers 429 with `Retry-After`. The counts live in the API
   process's memory: one uvicorn process, starting over on a restart. Behind a

@@ -511,6 +511,14 @@ From the outside in: CORS, then `RequestContextMiddleware`
   `API_KEY` is unset. `tests/test_api_access.py` sends a bare request to
   every route in the OpenAPI schema and expects 401, so a router added
   without the key fails the tests.
+- **Operation IDs.** Each route sets its `operation_id`. Clients name the
+  calls by these IDs: the MCP server, a generated SDK, an agent's tool list.
+  FastAPI's default, from the function name and the path, changed with any
+  rename. `tests/test_openapi.py` fixes the full list.
+- **Retrieval for other agents.** `POST /retrieve` runs
+  `retrieval_pipeline.retrieve`, the search the chat and `/query` use, and
+  returns the chunks with their text; nothing is generated. A
+  `document_id` implies its collection.
 - **Rate limits** (`app/api/rate_limit.py`). A sliding 60 s window per
   bucket and client, in process memory. The key names the client only when
   auth is on: with it off, a made-up key per request would get a fresh
