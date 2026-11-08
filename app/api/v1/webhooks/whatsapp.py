@@ -20,12 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.thread_id import normalize_phone, thread_title, whatsapp_thread_id
 from app.agent.utils.messages import stamped
+from app.agent.utils.turn_errors import failure_kind
 from app.config import settings
 from app.db import get_db
 from app.metrics import agent_turn_duration_seconds
 from app.models import Collection, Conversation
 from app.services.twilio_client import send_whatsapp_message
 from app.services.whatsapp.formatter import format_for_whatsapp
+from app.telemetry import AGENT_WORKFLOW, error_type, workflow
 
 logger = logging.getLogger(__name__)
 
@@ -170,16 +172,27 @@ async def whatsapp_webhook(
 
     agent = request.app.state.agent
     turn_started = time.perf_counter()
-    try:
-        result = await agent.ainvoke(
-            {
-                "messages": [HumanMessage(content=body, additional_kwargs=stamped())],
-                "collection_id": conv.collection_id,
-            },
-            config={"configurable": {"thread_id": thread_id}, "recursion_limit": 10},
-        )
-    except Exception:
-        logger.exception("agent_invoke_failed thread_id=%s", thread_id)
+    with workflow(
+        AGENT_WORKFLOW,
+        conversation_id=thread_id,
+        channel="whatsapp",
+        collection_id=conv.collection_id,
+    ) as turn:
+        try:
+            result = await agent.ainvoke(
+                {
+                    "messages": [HumanMessage(content=body, additional_kwargs=stamped())],
+                    "collection_id": conv.collection_id,
+                },
+                config={"configurable": {"thread_id": thread_id}, "recursion_limit": 10},
+            )
+        except Exception as exc:
+            logger.exception("agent_invoke_failed thread_id=%s", thread_id)
+            turn.fail(error_type(exc))
+            result = None
+        else:
+            turn.outcome(result.get("pending_action"), failure_kind(result.get("metadata") or {}))
+    if result is None:
         try:
             await send_whatsapp_message(
                 from_raw, "Disculpá, tuve un problema. Intentá de nuevo en un momento."

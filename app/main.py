@@ -20,6 +20,7 @@ from app.config import settings
 from app.logging_config import configure_logging, get_logger
 from app.services.ingestion import fail_interrupted_jobs, stop_ingestions
 from app.services.llm import validate_agent_models
+from app.telemetry import configure_tracing
 from app.api.v1 import (
     admin,
     agent,
@@ -37,6 +38,7 @@ from app.api.v1.webhooks import whatsapp as webhook_whatsapp
 
 
 configure_logging()
+configure_tracing()
 logger = get_logger(__name__)
 
 
@@ -86,6 +88,17 @@ app = FastAPI(
     description="Agentic RAG system with WhatsApp integration",
     version="0.1.0",
     lifespan=lifespan,
+    # FastAPI's own OpenTelemetry: a span per HTTP request, the root of a
+    # turn's trace, on the provider `configure_tracing` installed. Its
+    # exporters stay off (app/telemetry.py has the one), as do its dependency,
+    # endpoint and serialization spans, its metrics (Prometheus has them) and
+    # its logs, which would carry exception messages.
+    telemetry={
+        "auto_configure": False,
+        "operation_spans": False,
+        "metrics": False,
+        "logs": False,
+    },
 )
 
 API_PREFIX = "/api/v1"

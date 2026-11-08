@@ -61,6 +61,16 @@ Fixes from the November 2026 audit, and a review of the frontend.
   (`GET /query/history?source=&q=`), and pagination.
 - Frontend tests: vitest for the API client's stream parser, and a
   Playwright test of the chat against a mocked backend.
+- OpenTelemetry traces. Each turn is a trace: FastAPI's span of the request,
+  the turn, a span per graph node, and under them each model call,
+  embedding request and retrieval, with the GenAI semantic conventions'
+  attributes (model, provider, tokens, effort, the error's kind) and the
+  cost from `pricing.py`. The turn adds up its calls, the classifier's and
+  the summary's included. No span holds prompt, answer or document text.
+  Log lines carry `trace_id`, and `query_logs.trace_id` (migration 0016)
+  links a row to its trace. Spans are exported over OTLP/HTTP only when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set; `docker compose --profile tracing`
+  runs Langfuse locally to read them. ADR 0006 has the design.
 
 ### Security
 

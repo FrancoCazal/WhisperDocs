@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.thread_id import thread_title
 from app.agent.utils.messages import stamped
+from app.agent.utils.turn_errors import failure_kind
 from app.api.errors import APIError, request_id
 from app.api.rate_limit import questions_limit
 from app.db import SessionLocal, get_db
@@ -19,6 +20,7 @@ from app.metrics import agent_turn_duration_seconds
 from app.models import Collection, Conversation, Document, QueryLog
 from app.services.llm.errors import classify_error, failure_text
 from app.services.llm.pricing import estimate_cost_usd
+from app.telemetry import AGENT_WORKFLOW, workflow
 from app.schemas.agent import (
     AgentChatRequest,
     AgentChatResponse,
@@ -81,23 +83,34 @@ async def agent_chat(
 
     agent = request.app.state.agent
     turn_started = time.perf_counter()
-    try:
-        result = await agent.ainvoke(
-            {
-                "messages": [HumanMessage(content=payload.message, additional_kwargs=stamped())],
-                "collection_id": conv.collection_id,
-                "document_id": conv.document_id,
-            },
-            config={
-                # top_k is per request, not conversation state (audit A6).
-                "configurable": {"thread_id": thread_id, "top_k": payload.top_k},
-                "recursion_limit": 10,
-            },
-        )
-    except Exception as exc:
-        logger.exception("agent_invoke_failed", thread_id=thread_id)
-        message, kind = _agent_failure(exc)
-        raise APIError(status.HTTP_502_BAD_GATEWAY, "agent_failed", message, kind=kind) from exc
+    with workflow(
+        AGENT_WORKFLOW,
+        conversation_id=thread_id,
+        channel="web",
+        collection_id=conv.collection_id,
+        document_id=conv.document_id,
+    ) as turn:
+        try:
+            result = await agent.ainvoke(
+                {
+                    "messages": [
+                        HumanMessage(content=payload.message, additional_kwargs=stamped())
+                    ],
+                    "collection_id": conv.collection_id,
+                    "document_id": conv.document_id,
+                },
+                config={
+                    # top_k is per request, not conversation state (audit A6).
+                    "configurable": {"thread_id": thread_id, "top_k": payload.top_k},
+                    "recursion_limit": 10,
+                },
+            )
+        except Exception as exc:
+            logger.exception("agent_invoke_failed", thread_id=thread_id)
+            message, kind = _agent_failure(exc)
+            turn.fail(kind)
+            raise APIError(status.HTTP_502_BAD_GATEWAY, "agent_failed", message, kind=kind) from exc
+        turn.outcome(result.get("pending_action"), failure_kind(result.get("metadata") or {}))
 
     final = result["messages"][-1]
     answer = final.content if isinstance(final.content, str) else str(final.content)
@@ -107,7 +120,7 @@ async def agent_chat(
     )
     retrieved = result.get("retrieved_chunks") or []
     md = result.get("metadata") or {}
-    turn = _turn_metadata(md, md.get("retrieval_chunks_count", len(retrieved)))
+    usage = _turn_metadata(md, md.get("retrieval_chunks_count", len(retrieved)))
 
     conv.last_active_at = func.now()
 
@@ -119,14 +132,15 @@ async def agent_chat(
                 question=payload.message,
                 answer=answer,
                 collection_id=conv.collection_id,
-                chunks_retrieved=turn.chunks_retrieved,
-                model_used=turn.model or "agent",
-                tokens_input=turn.tokens_input,
-                tokens_output=turn.tokens_output,
-                latency_ms=turn.latency_ms,
-                cost_usd=turn.cost_usd,
+                chunks_retrieved=usage.chunks_retrieved,
+                model_used=usage.model or "agent",
+                tokens_input=usage.tokens_input,
+                tokens_output=usage.tokens_output,
+                latency_ms=usage.latency_ms,
+                cost_usd=usage.cost_usd,
                 session_id=thread_id,
                 agent_action=action,
+                trace_id=turn.trace_id,
             )
         )
 
@@ -137,7 +151,7 @@ async def agent_chat(
         action=action,
         answer=answer,
         citations=[AgentCitation(**c) for c in retrieved],
-        metadata=turn,
+        metadata=usage,
         failed=bool(md.get("turn_failed")),
         errors=md.get("turn_errors") or [],
     )
@@ -245,84 +259,99 @@ async def agent_chat_stream(
 
         final_state: dict = {}
         turn_started = time.perf_counter()
-        try:
-            async for event in agent.astream_events(
-                {
-                    "messages": [
-                        HumanMessage(content=payload.message, additional_kwargs=stamped())
-                    ],
-                    "collection_id": active_collection_id,
-                    "document_id": active_document_id,
-                },
-                config={
-                    "configurable": {"thread_id": thread_id, "top_k": payload.top_k},
-                    "recursion_limit": 10,
-                },
-                version="v2",
-            ):
-                kind = event["event"]
-                name = event.get("name", "")
-                if kind == "on_custom_event" and name == "agent_token":
-                    payload_data = event.get("data") or {}
-                    yield _sse(
-                        "token",
-                        {
-                            "node": payload_data.get("node"),
-                            "delta": payload_data.get("delta", ""),
-                        },
-                    )
-                    continue
-                if kind == "on_chain_start" and name in {
-                    "check_compaction",
-                    "summarize",
-                    "decide_action",
-                    "search_docs",
-                    "ask_clarification",
-                    "answer_direct",
-                }:
-                    yield _sse("node_start", {"node": name})
-                elif kind == "on_chain_end" and name in {
-                    "check_compaction",
-                    "summarize",
-                    "decide_action",
-                    "search_docs",
-                    "ask_clarification",
-                    "answer_direct",
-                }:
-                    output = event.get("data", {}).get("output") or {}
-                    summary: dict = {}
-                    if name == "decide_action":
-                        summary["action"] = output.get("pending_action")
-                    if name == "search_docs":
-                        meta = output.get("metadata") or {}
-                        summary["chunks"] = meta.get("retrieval_chunks_count", 0)
-                    yield _sse("node_end", {"node": name, "summary": summary})
-                elif kind == "on_chain_end" and name == "LangGraph":
-                    final_state = event.get("data", {}).get("output") or {}
-        except Exception as exc:
-            logger.exception("agent_stream_failed", thread_id=thread_id)
-            message, kind = _agent_failure(exc)
-            yield error_event(message, "agent_failed", kind=kind)
-            return
+        # The span stays current across this generator's yields, so the
+        # graph's spans nest under it.
+        with workflow(
+            AGENT_WORKFLOW,
+            conversation_id=thread_id,
+            channel="web",
+            collection_id=active_collection_id,
+            document_id=active_document_id,
+        ) as turn:
+            try:
+                async for event in agent.astream_events(
+                    {
+                        "messages": [
+                            HumanMessage(content=payload.message, additional_kwargs=stamped())
+                        ],
+                        "collection_id": active_collection_id,
+                        "document_id": active_document_id,
+                    },
+                    config={
+                        "configurable": {"thread_id": thread_id, "top_k": payload.top_k},
+                        "recursion_limit": 10,
+                    },
+                    version="v2",
+                ):
+                    kind = event["event"]
+                    name = event.get("name", "")
+                    if kind == "on_custom_event" and name == "agent_token":
+                        payload_data = event.get("data") or {}
+                        yield _sse(
+                            "token",
+                            {
+                                "node": payload_data.get("node"),
+                                "delta": payload_data.get("delta", ""),
+                            },
+                        )
+                        continue
+                    if kind == "on_chain_start" and name in {
+                        "check_compaction",
+                        "summarize",
+                        "decide_action",
+                        "search_docs",
+                        "ask_clarification",
+                        "answer_direct",
+                    }:
+                        yield _sse("node_start", {"node": name})
+                    elif kind == "on_chain_end" and name in {
+                        "check_compaction",
+                        "summarize",
+                        "decide_action",
+                        "search_docs",
+                        "ask_clarification",
+                        "answer_direct",
+                    }:
+                        output = event.get("data", {}).get("output") or {}
+                        summary: dict = {}
+                        if name == "decide_action":
+                            summary["action"] = output.get("pending_action")
+                        if name == "search_docs":
+                            meta = output.get("metadata") or {}
+                            summary["chunks"] = meta.get("retrieval_chunks_count", 0)
+                        yield _sse("node_end", {"node": name, "summary": summary})
+                    elif kind == "on_chain_end" and name == "LangGraph":
+                        final_state = event.get("data", {}).get("output") or {}
+            except Exception as exc:
+                logger.exception("agent_stream_failed", thread_id=thread_id)
+                message, kind = _agent_failure(exc)
+                turn.fail(kind)
+                yield error_event(message, "agent_failed", kind=kind)
+                return
 
-        if not final_state:
-            yield error_event("The agent returned no answer.", "agent_failed")
-            return
+            if not final_state:
+                turn.fail("unknown")
+                yield error_event("The agent returned no answer.", "agent_failed")
+                return
+            turn.outcome(
+                final_state.get("pending_action"),
+                failure_kind(final_state.get("metadata") or {}),
+            )
 
-        messages = final_state.get("messages") or []
-        final_msg = messages[-1] if messages else None
-        answer = ""
-        if final_msg is not None:
-            content = getattr(final_msg, "content", "")
-            answer = content if isinstance(content, str) else str(content)
+            messages = final_state.get("messages") or []
+            final_msg = messages[-1] if messages else None
+            answer = ""
+            if final_msg is not None:
+                content = getattr(final_msg, "content", "")
+                answer = content if isinstance(content, str) else str(content)
 
-        action = final_state.get("pending_action")
-        agent_turn_duration_seconds.labels(action=action or "unknown").observe(
-            time.perf_counter() - turn_started
-        )
-        retrieved = final_state.get("retrieved_chunks") or []
-        md = final_state.get("metadata") or {}
-        turn = _turn_metadata(md, md.get("retrieval_chunks_count", len(retrieved)))
+            action = final_state.get("pending_action")
+            agent_turn_duration_seconds.labels(action=action or "unknown").observe(
+                time.perf_counter() - turn_started
+            )
+            retrieved = final_state.get("retrieved_chunks") or []
+            md = final_state.get("metadata") or {}
+            usage = _turn_metadata(md, md.get("retrieval_chunks_count", len(retrieved)))
 
         async with SessionLocal() as db:
             conv = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
@@ -334,14 +363,15 @@ async def agent_chat_stream(
                             question=payload.message,
                             answer=answer,
                             collection_id=conv.collection_id,
-                            chunks_retrieved=turn.chunks_retrieved,
-                            model_used=turn.model or "agent",
-                            tokens_input=turn.tokens_input,
-                            tokens_output=turn.tokens_output,
-                            latency_ms=turn.latency_ms,
-                            cost_usd=turn.cost_usd,
+                            chunks_retrieved=usage.chunks_retrieved,
+                            model_used=usage.model or "agent",
+                            tokens_input=usage.tokens_input,
+                            tokens_output=usage.tokens_output,
+                            latency_ms=usage.latency_ms,
+                            cost_usd=usage.cost_usd,
                             session_id=thread_id,
                             agent_action=action,
+                            trace_id=turn.trace_id,
                         )
                     )
                 await db.commit()
@@ -357,7 +387,7 @@ async def agent_chat_stream(
                 "action": action,
                 "answer": answer,
                 "citations": list(retrieved),
-                "metadata": turn.model_dump(),
+                "metadata": usage.model_dump(),
                 "failed": bool(md.get("turn_failed")),
                 "errors": list(md.get("turn_errors") or []),
             },

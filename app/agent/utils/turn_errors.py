@@ -47,6 +47,16 @@ def turn_error(step: TurnStep, exc: BaseException, model: str | None) -> TurnErr
     return {"step": step, "kind": classify_error(exc), "model": model}
 
 
+def failure_kind(metadata: Mapping[str, Any]) -> ErrorKind | None:
+    """The kind of error that failed the answer, or None when the turn
+    answered. The answering step runs last, so its error is the last one
+    recorded."""
+    if not metadata.get("turn_failed"):
+        return None
+    errors = metadata.get("turn_errors") or []
+    return errors[-1]["kind"] if errors else "unknown"
+
+
 def errors_so_far(state: Mapping[str, Any]) -> list[TurnError]:
     """The errors earlier nodes of this turn recorded."""
     metadata = state.get("metadata") or {}

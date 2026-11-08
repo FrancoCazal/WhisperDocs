@@ -15,11 +15,15 @@ Providers ask this module about a model before building a request:
   `BedrockProvider` sends them `BEDROCK_CLAUDE_EFFORT`, adds
   `THINKING_HEADROOM_TOKENS` to `max_tokens`, and asks for structured output
   as a JSON schema (Bedrock's native structured output).
+- Which effort or thinking level goes with it (`reasoning_level`). The
+  providers send it, and the call's span records it.
 """
 
 from __future__ import annotations
 
 import re
+
+from app.config import settings
 
 # claude-sonnet-4-5-20250929 -> (4, 5); claude-sonnet-4-20250514 -> (4, 0);
 # anthropic.claude-opus-5-5 -> (5, 5). The minor version is one or two digits
@@ -59,3 +63,14 @@ def is_gemini_3_or_later(model: str) -> bool:
 def accepts_custom_sampling(model: str) -> bool:
     """Whether a non-default `temperature` may be sent for this model."""
     return not (is_claude_4_7_or_later(model) or is_gemini_3_or_later(model))
+
+
+def reasoning_level(model: str) -> str | None:
+    """The effort or thinking level sent with a call to this model, if any:
+    `BEDROCK_CLAUDE_EFFORT` for Claude 4.7+, `GEMINI_THINKING_LEVEL` for
+    Gemini 3+. None sends nothing, and the model uses its default."""
+    if is_claude_4_7_or_later(model):
+        return settings.bedrock_claude_effort
+    if is_gemini_3_or_later(model):
+        return settings.gemini_thinking_level
+    return None

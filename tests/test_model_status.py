@@ -174,8 +174,12 @@ class _Embeddings:
         class _Item:
             embedding = [1.0, 0.0]
 
+        class _Usage:
+            prompt_tokens = total_tokens = 3
+
         class _Response:
             data = [_Item() for _ in input]
+            usage = _Usage()
 
         return _Response()
 

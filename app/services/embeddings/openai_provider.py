@@ -4,6 +4,7 @@ import math
 
 from openai import AsyncOpenAI
 
+from app import telemetry
 from app.config import settings
 from app.services.embeddings.base import EmbeddingError
 from app.services.model_status import model_status
@@ -55,14 +56,17 @@ class OpenAIEmbeddingProvider:
         all_vectors: list[list[float]] = []
         for i in range(0, len(texts), self.BATCH_SIZE):
             batch = texts[i : i + self.BATCH_SIZE]
-            try:
-                response = await self.client.embeddings.create(
-                    model=self._model,
-                    input=batch,
-                )
-            except Exception as exc:
-                model_status.failed("embedding", self._model, exc)
-                raise EmbeddingError(f"Failed to generate embeddings: {exc}") from exc
+            with telemetry.embeddings(provider="openai", model=self._model) as call:
+                try:
+                    response = await self.client.embeddings.create(
+                        model=self._model,
+                        input=batch,
+                    )
+                except Exception as exc:
+                    model_status.failed("embedding", self._model, exc)
+                    raise EmbeddingError(f"Failed to generate embeddings: {exc}") from exc
+                if response.usage is not None:
+                    call.usage(response.usage.prompt_tokens)
 
             for item in response.data:
                 vec = item.embedding

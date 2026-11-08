@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import telemetry
 from app.config import settings
 from app.services.mmr import mmr_select
 from app.services.reranker import NoopReranker, Reranker, get_reranker
@@ -31,11 +32,32 @@ async def retrieve(
     20), then narrows to `top_k` via the reranker. Without reranking, returns
     `top_k` directly from RRF fusion.
 
+    Runs inside a `retrieval` span (app/telemetry.py).
+
     Each leg of the hybrid search returns `fetch_k` rows, and never fewer than
     DEFAULT_CANDIDATE_POOL, which RRF needs to fuse well. A fixed depth of 20
     capped the pool: with RERANKER_CANDIDATE_POOL=50 the reranker still got
     at most 40 chunks, often fewer (audit R15).
     """
+    with telemetry.retrieval(
+        top_k=top_k, collection_id=collection_id, document_id=document_id
+    ) as span:
+        chunks = await _retrieve(
+            db, query_text, query_embedding, collection_id, top_k, reranker, document_id
+        )
+        span.returned(len(chunks))
+        return chunks
+
+
+async def _retrieve(
+    db: AsyncSession,
+    query_text: str,
+    query_embedding: list[float],
+    collection_id: int | None,
+    top_k: int,
+    reranker: Reranker | None,
+    document_id: int | None,
+) -> list[RetrievedChunk]:
     retriever = VectorRetriever(db)
     active_reranker = reranker if reranker is not None else get_reranker()
     is_noop = isinstance(active_reranker, NoopReranker)

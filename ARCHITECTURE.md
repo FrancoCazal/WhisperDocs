@@ -300,6 +300,7 @@ erDiagram
     int latency_ms
     string session_id
     string agent_action
+    string trace_id
     timestamp created_at
   }
 
@@ -580,7 +581,36 @@ Postgres (the compose database)
 
 - **Logs** — `structlog` with JSON output in production (`LOG_JSON=1`),
   console-pretty otherwise. Every line of a request carries its
-  `request_id` (see API edge).
+  `request_id` (see API edge); inside a turn, also its `thread_id`, and
+  inside a span its `trace_id` and `span_id`.
+- **Traces** — OpenTelemetry, in `app/telemetry.py`
+  ([ADR 0006](docs/adr/0006-opentelemetry-traces.md)). One trace per
+  request:
+
+  ```text
+  POST /api/v1/agent/chat                  FastAPI's span       SERVER
+    invoke_workflow whisperdocs-agent      the turn             INTERNAL
+      check_compaction, decide_action, …   one per graph node   INTERNAL
+        chat gemini-3.8-flash              a model call         CLIENT
+        embeddings text-embedding-3-small  an embedding request CLIENT
+        retrieval                          the pipeline         INTERNAL
+  ```
+
+  - Attribute names follow the GenAI semantic conventions, pinned to the
+    2026-11-06 state of their repository (they are in Development). A model
+    call records its provider, model, `max_tokens`, temperature and effort
+    when they are sent, token counts, cost from `pricing.py`, and on failure
+    the `classify_error` kind as `error.type`.
+  - The turn adds up the tokens and cost of every call in it, the
+    classifier's and the summary's included. `query_logs.cost_usd` stays the
+    answer's cost.
+  - No span holds prompt, answer or document text, nor an exception's
+    message.
+  - `query_logs.trace_id` holds the turn's trace id. `/query` and the MCP
+    server's `ask_documents` are `invoke_workflow whisperdocs-query` traces.
+  - A TracerProvider is always installed, so the ids exist. Spans leave the
+    process only with `OTEL_EXPORTER_OTLP_ENDPOINT` set, over OTLP/HTTP.
+    `docker compose --profile tracing` runs Langfuse to read them.
 - **Metrics** — Prometheus `/metrics` endpoint:
   - `whisperdocs_agent_turn_duration_seconds{action}` — whole turn, recorded
     by `/agent/chat`, `/agent/chat/stream` and the WhatsApp webhook
@@ -638,3 +668,4 @@ See [`docs/adr/`](docs/adr/) for short rationale notes:
 - [0003 — Hybrid retrieval with RRF](docs/adr/0003-hybrid-retrieval-rrf.md)
 - [0004 — Dual LLM provider routing](docs/adr/0004-dual-llm-provider-routing.md)
 - [0005 — An MCP server over the same services as the API](docs/adr/0005-mcp-server.md)
+- [0006 — OpenTelemetry traces with the GenAI conventions](docs/adr/0006-opentelemetry-traces.md)

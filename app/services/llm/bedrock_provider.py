@@ -20,6 +20,7 @@ from app.services.llm.model_policy import (
     THINKING_HEADROOM_TOKENS,
     accepts_custom_sampling,
     is_claude_4_7_or_later,
+    reasoning_level,
 )
 
 T = TypeVar("T", bound=BaseModel)
@@ -80,6 +81,9 @@ _extract_text = extract_text
 class BedrockProvider:
     """AWS Bedrock via langchain-aws ChatBedrockConverse (for Claude)."""
 
+    # `gen_ai.provider.name` on its spans (app/telemetry.py).
+    otel_provider_name = "aws.bedrock"
+
     def __init__(self) -> None:
         boto_cfg = BotoConfig(
             read_timeout=settings.bedrock_timeout_seconds,
@@ -99,10 +103,11 @@ class BedrockProvider:
         if is_claude_4_7_or_later(model):
             # Adaptive thinking counts toward max_tokens (model_policy.py).
             kwargs["max_tokens"] = max_tokens + THINKING_HEADROOM_TOKENS
-            if settings.bedrock_claude_effort:
+            effort = reasoning_level(model)
+            if effort:
                 # langchain-aws sends it as `thinking: adaptive` plus
                 # `output_config.effort` in additionalModelRequestFields.
-                kwargs["reasoning_effort"] = settings.bedrock_claude_effort
+                kwargs["reasoning_effort"] = effort
         return ChatBedrockConverse(**kwargs)
 
     @_retry

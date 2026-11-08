@@ -2,7 +2,8 @@
 
 Behind `POST /query` and the MCP server's `ask_documents` (audit M-1), so both
 answer a question alike: the same search, the same prompt, the same model, and
-a row in `query_logs` either way.
+a row in `query_logs` either way. Each answer is an `invoke_workflow
+whisperdocs-query` trace (app/telemetry.py), whose id goes into the row.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from app.services.llm import llm_service_for
 from app.services.llm.pricing import estimate_cost_usd
 from app.services.rag import RAG_SYSTEM_PROMPT, build_user_prompt
 from app.services.retrieval_pipeline import retrieve as retrieve_pipeline
+from app.telemetry import QUERY_WORKFLOW, Workflow, workflow
 
 NO_DOCUMENTS_ANSWER = "I don't have any indexed documents to answer this question."
 
@@ -27,13 +29,28 @@ class GenerationError(Exception):
 
 
 async def answer_question(
-    db: AsyncSession, embedder: EmbeddingProvider, request: QueryRequest
+    db: AsyncSession,
+    embedder: EmbeddingProvider,
+    request: QueryRequest,
+    channel: str = "api",
 ) -> QueryResponse:
     """Answer `request.question` from the indexed documents, and log it.
 
     Raises the embedder's `EmbeddingError`, or `GenerationError` when the
     model call fails.
     """
+    with workflow(
+        QUERY_WORKFLOW,
+        conversation_id=request.session_id,
+        channel=channel,
+        collection_id=request.collection_id,
+    ) as turn:
+        return await _answer(db, embedder, request, turn)
+
+
+async def _answer(
+    db: AsyncSession, embedder: EmbeddingProvider, request: QueryRequest, turn: Workflow
+) -> QueryResponse:
     start = time.perf_counter()
     provider, model, temperature = llm_service_for("rag")
 
@@ -59,6 +76,7 @@ async def answer_question(
                 tokens_output=0,
                 latency_ms=latency_ms,
                 session_id=request.session_id,
+                trace_id=turn.trace_id,
             )
         )
         await db.commit()
@@ -107,6 +125,7 @@ async def answer_question(
             latency_ms=latency_ms,
             cost_usd=cost_usd,
             session_id=request.session_id,
+            trace_id=turn.trace_id,
         )
     )
     await db.commit()

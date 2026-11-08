@@ -157,6 +157,15 @@ class Settings(BaseSettings):
     mmr_enabled: bool = False
     mmr_lambda: float = 0.5
 
+    # OpenTelemetry traces (app/telemetry.py). Without an endpoint, spans get
+    # trace ids for the logs and `query_logs` and never leave the process.
+    # The endpoint is the OTLP/HTTP base URL; `/v1/traces` is appended, as the
+    # standard variable does. Local Langfuse (`docker compose --profile
+    # tracing`): http://langfuse-web:3000/api/public/otel. Headers use the
+    # standard format, `name=value` pairs separated by commas, URL-encoded.
+    otel_exporter_otlp_endpoint: str = ""
+    otel_exporter_otlp_headers: SecretStr | None = None
+
     agent: AgentSettings = AgentSettings()
 
     @property

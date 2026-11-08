@@ -11,6 +11,17 @@ from app.agent.nodes import (
 )
 from app.agent.router import route_action, route_compaction
 from app.agent.state import AgentState
+from app.telemetry import traced_node
+
+_NODES = {
+    "check_compaction": check_compaction_node,
+    "summarize": summarize_node,
+    "decide_action": decide_action_node,
+    "search_docs": search_docs_node,
+    "ask_clarification": ask_clarification_node,
+    "answer_direct": answer_direct_node,
+    "out_of_scope": out_of_scope_node,
+}
 
 
 def build_agent_graph() -> StateGraph:
@@ -19,15 +30,12 @@ def build_agent_graph() -> StateGraph:
     The caller compiles with the appropriate checkpointer:
       - AsyncPostgresSaver in production (§3.4)
       - MemorySaver in unit tests (§7.2)
+
+    Each node runs inside a span named after it (app/telemetry.py).
     """
     graph = StateGraph(AgentState)
-    graph.add_node("check_compaction", check_compaction_node)
-    graph.add_node("summarize", summarize_node)
-    graph.add_node("decide_action", decide_action_node)
-    graph.add_node("search_docs", search_docs_node)
-    graph.add_node("ask_clarification", ask_clarification_node)
-    graph.add_node("answer_direct", answer_direct_node)
-    graph.add_node("out_of_scope", out_of_scope_node)
+    for name, node in _NODES.items():
+        graph.add_node(name, traced_node(name, node))
 
     graph.add_edge(START, "check_compaction")
 

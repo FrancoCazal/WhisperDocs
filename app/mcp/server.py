@@ -192,7 +192,7 @@ def build_server(
         async with sessions() as db:
             try:
                 await resolve_scope(db, collection_id=collection_id, document_id=None)
-                return await answer_question(db, embedder(), request)
+                return await answer_question(db, embedder(), request, channel="mcp")
             except ScopeError as exc:
                 raise ToolError(f"{exc}: list_collections gives the ids.") from exc
             except EmbeddingError as exc:

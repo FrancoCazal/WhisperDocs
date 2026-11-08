@@ -30,6 +30,9 @@ _PRICING: dict[str, Pricing] = {
     # $2/$10, geographic profiles such as `us.` $2.20/$11.
     "global.anthropic.claude-sonnet-5-5": Pricing(2.00, 10.00),
     "us.anthropic.claude-sonnet-5-5": Pricing(2.20, 11.00),
+    # OpenAI embeddings: input only. From the model's page on
+    # developers.openai.com, read on 2026-11-08.
+    "text-embedding-3-small": Pricing(0.02, 0.00),
 }
 
 _FALLBACK = Pricing(input_per_1m=1.00, output_per_1m=5.00)

@@ -12,7 +12,7 @@
 
 ![System overview dashboard](media/whisperdocs1.png)
 
-**Stack** · FastAPI · PostgreSQL + pgvector · LangGraph · Gemini + AWS Bedrock (Claude) · OpenAI Embeddings · Twilio · React + TanStack Router · structlog · Prometheus
+**Stack** · FastAPI · PostgreSQL + pgvector · LangGraph · Gemini + AWS Bedrock (Claude) · OpenAI Embeddings · Twilio · React + TanStack Router · structlog · Prometheus · OpenTelemetry + Langfuse
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows, and data model. Decision records live under [`docs/adr/`](docs/adr/).
 
@@ -27,7 +27,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 - **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE. Parsing runs off the event loop, and a job cut short by a restart ends as `failed`, not stuck.
 - **Eval suite (50-query golden set)** — single-turn retrieval + generation path. LLM-as-judge for correctness + hallucination, retrieval precision/recall@k, latency p50/p95, generation cost USD. Diff between runs for regression detection.
 - **Cost tracking** — per-call USD via `pricing.py`, persisted on `query_logs`. Single source for runner, API, dashboard.
-- **Structured logging + metrics** — `structlog` JSON output, Prometheus `/metrics` (turn duration, tokens, retrieval relevance, errors).
+- **Logs, metrics and traces** — `structlog` JSON output, Prometheus `/metrics` (turn duration, tokens, retrieval relevance, errors), and an OpenTelemetry trace per turn: each graph node, model call, embedding and retrieval, with its tokens and cost, under the GenAI semantic conventions. A local Langfuse shows them (see [Tracing](#tracing)).
 - **WhatsApp integration** — full agent pipeline over Twilio webhooks.
 - **MCP server** — the knowledge base for Claude Code, Claude Desktop and Cursor:
   search, answers with citations, the lists and a resource per document, over
@@ -128,6 +128,8 @@ TWILIO_AUTH_TOKEN=...
 RERANKER_ENABLED=false           # cross-encoder reranking (needs .[rerank])
 MMR_ENABLED=false                # source diversity
 AGENT_STREAMING_TOKENS=true      # token-level SSE
+OTEL_EXPORTER_OTLP_ENDPOINT=...  # OTLP/HTTP base URL for traces; unset = they stay in the process
+OTEL_EXPORTER_OTLP_HEADERS=...   # e.g. the viewer's auth (see Tracing)
 ```
 
 See `.env.example` for every knob.
@@ -239,6 +241,41 @@ defaults).
 - **Its own process.** The API's rate limits and its model status do not see
   the MCP server's calls; the server logs to stderr, which the client keeps
   as its MCP log.
+
+---
+
+## Tracing
+
+Each turn is an OpenTelemetry trace: the HTTP request, the turn, a span per
+graph node, and under them each model call, embedding request and retrieval.
+A model call records its model, provider, token counts, cost (from
+`pricing.py`), effort or temperature when sent, and the kind of error when it
+fails; the turn adds up its calls. Spans carry no prompt, answer or document
+text. The attribute names follow the OpenTelemetry GenAI semantic conventions
+(see [ADR 0006](docs/adr/0006-opentelemetry-traces.md)).
+
+Every log line inside a turn carries its `trace_id`, and so does the turn's
+row in `query_logs`.
+
+To read the traces in a local [Langfuse](https://langfuse.com):
+
+```bash
+docker compose --profile tracing up -d    # Langfuse on http://localhost:3000
+```
+
+Add these two lines to `.env` and restart the API
+(`docker compose up -d api`):
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20cGstbGYtd2hpc3BlcmRvY3MtbG9jYWw6c2stbGYtd2hpc3BlcmRvY3MtbG9jYWw=,x-langfuse-ingestion-version=4
+```
+
+Sign in as `admin@whisperdocs.local`, password `whisperdocs-local`. The
+compose file creates the project and its keys on the first start; the header
+is their Basic auth. These are local-only credentials. Any other OTLP/HTTP
+backend works the same way: Phoenix, Jaeger, an OpenTelemetry Collector or
+Langfuse Cloud. Without an endpoint, no span leaves the process.
 
 ---
 

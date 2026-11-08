@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 from app.services.llm.base import LLMResponse, LLMStreamDelta, extract_text
-from app.services.llm.model_policy import accepts_custom_sampling, is_gemini_3_or_later
+from app.services.llm.model_policy import accepts_custom_sampling, reasoning_level
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -41,6 +41,9 @@ class GeminiProvider:
     successor to `ChatVertexAI`. Same auth (ADC / service-account), same billing.
     """
 
+    # `gen_ai.provider.name` on its spans (app/telemetry.py).
+    otel_provider_name = "gcp.vertex_ai"
+
     def _build_chat(
         self, model: str, temperature: float, max_tokens: int
     ) -> ChatGoogleGenerativeAI:
@@ -58,8 +61,9 @@ class GeminiProvider:
         # the field unset lets langchain-google-genai send nothing.
         if accepts_custom_sampling(model):
             kwargs["temperature"] = temperature
-        if is_gemini_3_or_later(model) and settings.gemini_thinking_level:
-            kwargs["thinking_level"] = settings.gemini_thinking_level
+        level = reasoning_level(model)
+        if level:
+            kwargs["thinking_level"] = level
         return ChatGoogleGenerativeAI(**kwargs)
 
     async def _invoke_raw(self, chat: ChatGoogleGenerativeAI, lc_messages: list):

@@ -8,10 +8,12 @@ client's connection. The logs go to stderr in the API's format
 
 from app.logging_config import configure_logging
 from app.mcp.server import build_server
+from app.telemetry import configure_tracing
 
 
 def main() -> None:
     configure_logging()
+    configure_tracing()
     build_server().run("stdio")
 
 

@@ -3,6 +3,19 @@ import os
 import sys
 
 import structlog
+from opentelemetry import trace
+
+
+def add_trace_context(
+    logger: object, method_name: str, event_dict: structlog.types.EventDict
+) -> structlog.types.EventDict:
+    """The current span's `trace_id` and `span_id`, so a log line leads to
+    its trace (app/telemetry.py). Outside a span, nothing."""
+    context = trace.get_current_span().get_span_context()
+    if context.is_valid:
+        event_dict.setdefault("trace_id", format(context.trace_id, "032x"))
+        event_dict.setdefault("span_id", format(context.span_id, "016x"))
+    return event_dict
 
 
 def configure_logging() -> None:
@@ -19,6 +32,7 @@ def configure_logging() -> None:
 
     shared_processors: list = [
         structlog.contextvars.merge_contextvars,
+        add_trace_context,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         timestamper,

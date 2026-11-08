@@ -55,5 +55,156 @@ services:
     ports:
       - "8080:8080"
 
+  # ---- Profile `tracing`: Langfuse, to read the agent's traces ----------------
+  # `docker compose --profile tracing up -d`, then http://localhost:3000, user
+  # admin@whisperdocs.local, password whisperdocs-local. The API sends its
+  # spans there with these two lines in .env and a restart of `api`:
+  #   OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel
+  #   OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20cGstbGYtd2hpc3BlcmRvY3MtbG9jYWw6c2stbGYtd2hpc3BlcmRvY3MtbG9jYWw=,x-langfuse-ingestion-version=4
+  # (Basic auth with the project keys below: base64 of `public:secret`.)
+  #
+  # Adapted from Langfuse's own docker-compose.yml (v4.76.0): web, worker,
+  # Postgres, ClickHouse, Redis and MinIO; the optional AI gateway is left out.
+  # Every value is fixed here, not read from .env, so the API's credentials
+  # never reach these containers. They are local-only secrets: only the web
+  # port is published, on 127.0.0.1.
+  langfuse-worker:
+    profiles: [tracing]
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.76.0
+    restart: unless-stopped
+    depends_on: &langfuse-depends-on
+      langfuse-db:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+    environment: &langfuse-env
+      NEXTAUTH_URL: http://localhost:3000
+      DATABASE_URL: postgresql://postgres:postgres@langfuse-db:5432/postgres
+      SALT: whisperdocs-local-salt
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: myredissecret
+
+  langfuse-web:
+    profiles: [tracing]
+    image: docker.langfuse.com/langfuse/langfuse:4.76.0
+    restart: unless-stopped
+    depends_on: *langfuse-depends-on
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: whisperdocs-local-secret
+      # The organization, project, keys and user exist from the first start.
+      LANGFUSE_INIT_ORG_ID: whisperdocs
+      LANGFUSE_INIT_ORG_NAME: WhisperDocs
+      LANGFUSE_INIT_PROJECT_ID: whisperdocs
+      LANGFUSE_INIT_PROJECT_NAME: whisperdocs
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-whisperdocs-local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-whisperdocs-local
+      LANGFUSE_INIT_USER_EMAIL: admin@whisperdocs.local
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: whisperdocs-local
+
+  langfuse-clickhouse:
+    profiles: [tracing]
+    image: clickhouse/clickhouse-server:26.3.62.3
+    restart: unless-stopped
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  langfuse-minio:
+    profiles: [tracing]
+    # Chainguard publishes MinIO under `latest` only.
+    image: cgr.dev/chainguard/minio:latest
+    restart: unless-stopped
+    entrypoint: sh
+    # Creates the `langfuse` bucket before starting.
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  langfuse-redis:
+    profiles: [tracing]
+    image: redis:7
+    restart: unless-stopped
+    command: --requirepass myredissecret --maxmemory-policy noeviction
+    volumes:
+      - langfuse_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  langfuse-db:
+    profiles: [tracing]
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
 volumes:
   pgdata:
+  langfuse_postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio_data:
+  langfuse_redis_data:

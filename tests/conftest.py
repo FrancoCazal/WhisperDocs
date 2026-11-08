@@ -21,6 +21,10 @@ import pytest
 # Without credentials in the environment (as in CI), botocore asks the EC2
 # metadata endpoint for them when a client is created.
 os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
+# Spans stay in the process: an endpoint in the dev .env would send every
+# test's spans to the trace viewer (app/telemetry.py). Set before `settings`
+# is first imported; the environment wins over .env.
+os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = ""
 
 _real_getaddrinfo = socket.getaddrinfo
 
@@ -79,6 +83,30 @@ def open_api(monkeypatch):
     limiter.reset()
     yield
     limiter.reset()
+
+
+_span_exporter = None
+
+
+@pytest.fixture
+def spans():
+    """The spans that ended during the test, in the order they ended
+    (`spans.get_finished_spans()`). One in-memory exporter for the session,
+    added to the provider `configure_tracing` installs."""
+    global _span_exporter
+    if _span_exporter is None:
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        from app.telemetry import configure_tracing
+
+        _span_exporter = InMemorySpanExporter()
+        configure_tracing().add_span_processor(SimpleSpanProcessor(_span_exporter))
+    _span_exporter.clear()
+    yield _span_exporter
+    _span_exporter.clear()
 
 
 @pytest.fixture(autouse=True)
