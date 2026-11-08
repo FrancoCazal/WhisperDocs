@@ -1,8 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { api, fmtCost, fmtDate, fmtNumber, truncate } from "@/lib/api";
+import { api, fmtCost, fmtDate, fmtNumber, truncate, type LogSource } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
+import { SourceTag } from "@/components/ui-kit/SourceTag";
+import { useDebounced } from "@/lib/useDebounced";
+import { toneText } from "@/lib/metricTone";
 import { LoadMore } from "@/components/ui-kit/LoadMore";
 import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import {
@@ -25,16 +28,38 @@ export const Route = createFileRoute("/historial")({
   component: HistorialPage,
 });
 
+const fieldCls =
+  "bg-surface-lowest border border-border-subtle px-2 h-9 text-text-primary body-sm focus:outline-none focus:border-border-focus";
+
 function HistorialPage() {
   const [collFilter, setCollFilter] = useState<number | null>(null);
+  const [source, setSource] = useState<LogSource | null>(null);
+  // The search asks the server once the typing pauses.
+  const [search, setSearch] = useState("");
+  const searchQ = useDebounced(search.trim(), 300);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const filtering = collFilter !== null || source !== null || searchQ !== "";
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
   // Filtered by the server: a filter over the loaded pages would miss older rows.
-  const history = usePagedList(["history", "pages", collFilter ?? "all"], (cursor) =>
-    api.historyPage({ collection_id: collFilter ?? undefined, limit: PAGE_SIZE, cursor }),
+  const history = usePagedList(
+    ["history", "pages", { collection: collFilter, source, q: searchQ }],
+    (cursor) =>
+      api.historyPage({
+        collection_id: collFilter ?? undefined,
+        source: source ?? undefined,
+        q: searchQ || undefined,
+        limit: PAGE_SIZE,
+        cursor,
+      }),
   );
   const rows = history.items;
+
+  function clearFilters() {
+    setCollFilter(null);
+    setSource(null);
+    setSearch("");
+  }
 
   const collectionName = (id: number | null) =>
     id === null ? "—" : (collections.data?.find((c) => c.id === id)?.name ?? `#${id}`);
@@ -46,12 +71,33 @@ function HistorialPage() {
         subtitle="QUERY LOG"
         actions={
           <>
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              maxLength={200}
+              placeholder="SEARCH QUESTIONS"
+              aria-label="Search questions"
+              className={`${fieldCls} w-48 placeholder:text-text-tertiary placeholder:label-xs`}
+            />
+            <label className="flex items-center gap-2 label-sm text-text-secondary">
+              SOURCE:
+              <select
+                value={source ?? ""}
+                onChange={(e) => setSource((e.target.value || null) as LogSource | null)}
+                className={fieldCls}
+              >
+                <option value="">ALL</option>
+                <option value="chat">CHAT</option>
+                <option value="query">QUERY</option>
+              </select>
+            </label>
             <label className="flex items-center gap-2 label-sm text-text-secondary">
               COLLECTION:
               <select
                 value={collFilter ?? ""}
                 onChange={(e) => setCollFilter(e.target.value ? Number(e.target.value) : null)}
-                className="bg-surface-lowest border border-border-subtle px-2 h-9 text-text-primary body-sm focus:outline-none focus:border-border-focus"
+                className={fieldCls}
               >
                 <option value="">ALL</option>
                 {collections.data?.map((c) => (
@@ -79,10 +125,10 @@ function HistorialPage() {
             <LoadingLine />
           </div>
         ) : rows.length === 0 ? (
-          collFilter !== null ? (
-            <EmptyState label={`NO QUERIES IN ${collectionName(collFilter).toUpperCase()}`}>
-              <button type="button" onClick={() => setCollFilter(null)} className={emptyActionCls}>
-                SHOW ALL COLLECTIONS
+          filtering ? (
+            <EmptyState label="NO QUERIES MATCH THE FILTERS">
+              <button type="button" onClick={clearFilters} className={emptyActionCls}>
+                CLEAR FILTERS
               </button>
             </EmptyState>
           ) : (
@@ -93,10 +139,11 @@ function HistorialPage() {
             </EmptyState>
           )
         ) : (
-          <table className="w-full min-w-[760px]">
+          <table className="w-full min-w-[840px]">
             <thead>
               <tr className="label-sm text-text-secondary border-b border-border-subtle">
                 <th className="text-left pl-6 py-3 font-normal">TIMESTAMP</th>
+                <th className="text-left py-3 font-normal">SOURCE</th>
                 <th className="text-left py-3 font-normal">QUERY</th>
                 <th className="text-left py-3 font-normal">MODEL</th>
                 <th className="text-right py-3 font-normal">TOKENS IN/OUT</th>
@@ -116,6 +163,9 @@ function HistorialPage() {
                       <td className="pl-6 text-text-secondary tabular-nums">
                         {fmtDate(q.created_at)}
                       </td>
+                      <td>
+                        <SourceTag action={q.agent_action} />
+                      </td>
                       <td className="text-text-primary">
                         {/* The row opens on a click; the button, by keyboard. */}
                         <button
@@ -134,8 +184,10 @@ function HistorialPage() {
                       <td className="text-right tabular-nums text-text-primary">
                         {fmtNumber(q.tokens_input)} / {fmtNumber(q.tokens_output)}
                       </td>
-                      <td className="text-right tabular-nums text-text-primary">
-                        {q.latency_ms}MS
+                      <td
+                        className={`text-right tabular-nums ${toneText("latency", q.latency_ms)}`}
+                      >
+                        {fmtNumber(q.latency_ms)}MS
                       </td>
                       <td className="text-right pr-6 tabular-nums text-text-primary">
                         {fmtCost(q.cost_usd)}
@@ -143,7 +195,7 @@ function HistorialPage() {
                     </tr>
                     {open && (
                       <tr className="bg-surface-low">
-                        <td colSpan={6} className="p-6 border-b border-border-subtle">
+                        <td colSpan={7} className="p-6 border-b border-border-subtle">
                           <div className="grid grid-cols-2 gap-6">
                             <div>
                               <div className="label-sm text-text-secondary mb-2">QUERY</div>

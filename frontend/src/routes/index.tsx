@@ -4,7 +4,7 @@ import { api, fmtCost, fmtDate, fmtNumber, fmtPct, truncate } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
 import { StatCard } from "@/components/ui-kit/StatCard";
-import { StatDot } from "@/components/ui-kit/StatDot";
+import { SourceTag } from "@/components/ui-kit/SourceTag";
 import {
   EmptyState,
   ErrorBanner,
@@ -12,7 +12,7 @@ import {
   emptyActionCls,
 } from "@/components/ui-kit/EmptyState";
 import { GettingStarted } from "@/components/dashboard/GettingStarted";
-import { LATENCY_WARN_MS, metricTone, toneText } from "@/lib/metricTone";
+import { LATENCY_WARN_MS, toneText } from "@/lib/metricTone";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -191,7 +191,7 @@ function Dashboard() {
                       <th className="text-left py-3 font-normal">QUERY</th>
                       <th className="text-right py-3 font-normal">LATENCY</th>
                       <th className="text-right py-3 font-normal">TOKENS</th>
-                      <th className="text-center pr-5 py-3 font-normal w-14">OK</th>
+                      <th className="text-right pr-5 py-3 font-normal w-20">SOURCE</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -212,12 +212,8 @@ function Dashboard() {
                         <td className="py-3 text-right tabular-nums text-text-secondary">
                           {fmtNumber(q.tokens_input + q.tokens_output)}
                         </td>
-                        <td className="py-3 text-center pr-5">
-                          {metricTone("latency", q.latency_ms) === "poor" ? (
-                            <StatDot tone="error" label="SLOW" />
-                          ) : (
-                            <StatDot tone="success" label="OK" />
-                          )}
+                        <td className="py-3 text-right pr-5">
+                          <SourceTag action={q.agent_action} />
                         </td>
                       </tr>
                     ))}

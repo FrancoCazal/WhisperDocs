@@ -340,6 +340,9 @@ export type ConversationMessage = {
   failed: boolean;
 };
 
+// Which answers a query log holds: the agent's chat or the Query page.
+export type LogSource = "chat" | "query";
+
 export type SavedNote = {
   id: number;
   conversation_id: number | null;
@@ -605,8 +608,11 @@ export const api = {
     top_k: number;
     session_id?: string;
   }) => request<QueryResponse>("/query", { method: "POST", body: JSON.stringify(body) }),
-  history: async (limit = 50): Promise<QueryLog[]> => {
-    const page = await request<Page<QueryLog>>(`/query/history?limit=${limit}`);
+  // `source`: the chat's answers or the Query page's; both when left out.
+  history: async (limit = 50, source?: LogSource): Promise<QueryLog[]> => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (source) q.set("source", source);
+    const page = await request<Page<QueryLog>>(`/query/history?${q.toString()}`);
     return page.items;
   },
   historyPage: (params: {
@@ -614,12 +620,17 @@ export const api = {
     cursor?: number;
     session_id?: string;
     collection_id?: number;
+    source?: LogSource;
+    // Text the question contains (literal, case-insensitive).
+    q?: string;
   }) => {
     const q = new URLSearchParams();
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.cursor !== undefined) q.set("cursor", String(params.cursor));
     if (params.session_id) q.set("session_id", params.session_id);
     if (params.collection_id !== undefined) q.set("collection_id", String(params.collection_id));
+    if (params.source) q.set("source", params.source);
+    if (params.q?.trim()) q.set("q", params.q.trim());
     return request<Page<QueryLog>>(`/query/history?${q.toString()}`);
   },
 

@@ -1,10 +1,11 @@
 import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_db
+from app.db import contains_text, get_db
 from app.models import QueryLog
 from app.schemas.pagination import Page
 from app.schemas.query import (
@@ -139,9 +140,20 @@ async def query_history(
     cursor: int | None = None,
     session_id: str | None = Query(default=None, max_length=50),
     collection_id: int | None = None,
+    source: Literal["chat", "query"] | None = Query(
+        default=None, description="chat: the agent's answers; query: POST /query's"
+    ),
+    q: str | None = Query(default=None, max_length=200, description="Text the question contains"),
     db: AsyncSession = Depends(get_db),
 ) -> Page[QueryLogRead]:
     filters = []
+    # The agent logs its node as agent_action; /query logs none.
+    if source == "chat":
+        filters.append(QueryLog.agent_action.is_not(None))
+    elif source == "query":
+        filters.append(QueryLog.agent_action.is_(None))
+    if q and q.strip():
+        filters.append(contains_text(QueryLog.question, q.strip()))
     if session_id:
         filters.append(QueryLog.session_id == session_id)
     if collection_id is not None:

@@ -90,8 +90,7 @@ function logsToSession(sessionId: string, logs: QueryLog[]): Session {
 function sessionsFromLogs(logs: QueryLog[]): Session[] {
   const grouped = new Map<string, QueryLog[]>();
   for (const log of logs) {
-    // The chat's turns are logged too, with their thread as session_id.
-    if (!log.session_id || log.agent_action !== null) continue;
+    if (!log.session_id) continue;
     if (!grouped.has(log.session_id)) grouped.set(log.session_id, []);
     grouped.get(log.session_id)!.push(log);
   }
@@ -170,7 +169,8 @@ function ConsultaPage() {
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
   const historyQuery = useQuery({
     queryKey: ["query-history"],
-    queryFn: () => api.history(200),
+    // The Query page's own answers: the chat's are logged too.
+    queryFn: () => api.history(200, "query"),
     staleTime: Infinity,
   });
   // History's sessions join the list once, when it first loads. Set during

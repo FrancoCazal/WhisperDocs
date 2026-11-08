@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.utils.messages import FAILED_TURN
-from app.db import get_db
+from app.db import contains_text, get_db
 from app.models import Conversation, SavedNote
 from app.schemas.conversation import (
     ConversationMessage,
@@ -36,9 +36,7 @@ async def list_conversations(
 ) -> Page[ConversationRead]:
     filters = []
     if q and q.strip():
-        # Literal text: the LIKE wildcards in it match themselves.
-        literal = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        filters.append(Conversation.title.ilike(f"%{literal}%", escape="\\"))
+        filters.append(contains_text(Conversation.title, q.strip()))
     if user_number is not None:
         filters.append(Conversation.user_number == user_number)
     if is_saved is not None:
