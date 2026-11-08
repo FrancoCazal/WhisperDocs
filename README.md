@@ -107,6 +107,7 @@ Dependencies are locked in `uv.lock`; CI and the Docker image install it with
 
 ```bash
 DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs
+DB_PORT=5435                     # the compose database's port on the host; change it if 5435 is taken
 OPENAI_API_KEY=sk-...
 
 # Generation providers
