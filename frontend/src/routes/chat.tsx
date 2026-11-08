@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   api,
   fmtTimestamp,
@@ -34,6 +34,9 @@ export const Route = createFileRoute("/chat")({
       },
     ],
   }),
+  // ?thread=<id>: the thread on screen, so a reload or a link reopens it.
+  validateSearch: (search: Record<string, unknown>): { thread?: string } =>
+    typeof search.thread === "string" && search.thread ? { thread: search.thread } : {},
   component: ChatPage,
 });
 
@@ -62,6 +65,8 @@ function savedTurn(m: ConversationMessage, fallbackTs: string): Turn {
 
 function ChatPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate({ from: "/chat" });
+  const { thread: urlThread = null } = Route.useSearch();
 
   const [threadId, setThreadId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -82,6 +87,9 @@ function ChatPage() {
   // Bumped whenever another thread is shown: a stream or a load started for
   // the previous one sees the change and leaves the screen alone.
   const viewRef = useRef(0);
+  // The thread on screen, set at once (state lags a render): the URL effect
+  // compares against it, so a stream's new id is not taken for navigation.
+  const shownRef = useRef<string | null>(null);
   // Follow new output only while the reader is at the bottom.
   const stickRef = useRef(true);
   const streaming = live !== null;
@@ -198,7 +206,7 @@ function ChatPage() {
           if (viewRef.current !== view) return;
           resetIdle();
           if (e.type === "thread") {
-            setThreadId(e.thread_id);
+            if (shownRef.current !== e.thread_id) showThread(e.thread_id, "replace");
           } else if (e.type === "node_start") {
             got.trace = [
               ...got.trace,
@@ -295,19 +303,28 @@ function ChatPage() {
     }
   }
 
-  function startNew() {
+  /** Show thread `id`; `url` says how ?thread= follows (keep: it already does). */
+  function showThread(id: string | null, url: "push" | "replace" | "keep") {
+    shownRef.current = id;
+    setThreadId(id);
+    if (url !== "keep") {
+      void navigate({ search: id ? { thread: id } : {}, replace: url === "replace" });
+    }
+  }
+
+  function startNew(url: "push" | "keep" = "push") {
     leaveThread();
-    setThreadId(null);
+    showThread(null, url);
     setChannel("web");
     setTurns([]);
   }
 
-  async function openConversation(c: Conversation) {
+  async function openConversation(c: Conversation, url: "push" | "keep" = "push") {
     // The thread on screen; a failed load can be retried by opening it again.
     if (c.thread_id === threadId && (turns.length > 0 || loadingThread)) return;
     leaveThread();
     const view = viewRef.current;
-    setThreadId(c.thread_id);
+    showThread(c.thread_id, url);
     setChannel(c.channel);
     setCollectionId(c.collection_id ?? null);
     setTurns([]);
@@ -328,6 +345,35 @@ function ChatPage() {
       if (viewRef.current === view) setLoadingThread(false);
     }
   }
+
+  /** A thread named by the URL: from the list if it is there, else by id. */
+  async function openFromUrl(id: string) {
+    const listed = conversations.data?.find((c) => c.thread_id === id);
+    if (listed) return openConversation(listed, "keep");
+    leaveThread();
+    const view = viewRef.current;
+    shownRef.current = id;
+    setLoadingThread(true);
+    try {
+      const c = await api.getConversation(id);
+      if (viewRef.current === view) await openConversation(c, "keep");
+    } catch (e) {
+      if (viewRef.current !== view) return;
+      startNew("keep");
+      void navigate({ search: {}, replace: true });
+      setErrorMsg(`thread ${id.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // The URL changed by itself (a reload, back/forward, a link): show its thread.
+  const followUrl = useEffectEvent((id: string | null) => {
+    if (id === shownRef.current) return;
+    if (id) void openFromUrl(id);
+    else startNew("keep");
+  });
+  // followUrl is an effect event, which eslint-plugin-react-hooks 5 does not know yet.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => followUrl(urlThread), [urlThread]);
 
   function toggleSaved() {
     if (!threadId || !activeConv) return;
@@ -393,7 +439,7 @@ function ChatPage() {
             collections={collections.data}
             activeThreadId={threadId}
             onOpen={openConversation}
-            onNew={startNew}
+            onNew={() => startNew()}
           />
         </aside>
 
@@ -572,7 +618,10 @@ function ChatPage() {
               <div className="max-w-4xl mx-auto label-sm text-text-secondary border border-border-subtle bg-surface-container-low px-4 py-3">
                 {channel.toUpperCase()} THREAD · READ ONLY. Its user talks to the agent on{" "}
                 {channel === "whatsapp" ? "WhatsApp" : channel}; to ask here, start a{" "}
-                <button onClick={startNew} className="text-text-primary hover:text-primary-blue">
+                <button
+                  onClick={() => startNew()}
+                  className="text-text-primary hover:text-primary-blue"
+                >
                   + NEW
                 </button>{" "}
                 thread.

@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { api, fmtCost, fmtDate, fmtNumber, truncate } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
@@ -98,9 +98,8 @@ function HistorialPage() {
               {rows.map((q) => {
                 const open = expanded === q.id;
                 return (
-                  <>
+                  <Fragment key={q.id}>
                     <tr
-                      key={q.id}
                       onClick={() => setExpanded(open ? null : q.id)}
                       className="body-sm h-9 border-b border-border-subtle/50 hover:bg-surface-high cursor-pointer"
                     >
@@ -120,7 +119,7 @@ function HistorialPage() {
                       </td>
                     </tr>
                     {open && (
-                      <tr key={`${q.id}-detail`} className="bg-surface-low">
+                      <tr className="bg-surface-low">
                         <td colSpan={6} className="p-6 border-b border-border-subtle">
                           <div className="grid grid-cols-2 gap-6">
                             <div>
@@ -134,6 +133,15 @@ function HistorialPage() {
                               <div className="body-sm text-text-primary">
                                 {collectionName(q.collection_id)}
                               </div>
+                              {q.agent_action && q.session_id && (
+                                <Link
+                                  to="/chat"
+                                  search={{ thread: q.session_id }}
+                                  className="inline-block mt-4 label-sm text-text-primary hover:text-primary-blue"
+                                >
+                                  OPEN THREAD {q.session_id.slice(0, 8)} →
+                                </Link>
+                              )}
                               <div className="label-sm text-text-secondary mt-4 mb-2">
                                 CHUNKS RETRIEVED
                               </div>
@@ -151,7 +159,7 @@ function HistorialPage() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

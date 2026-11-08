@@ -606,6 +606,7 @@ export const api = {
     return request<Page<Conversation>>(`/conversations?${q.toString()}`);
   },
 
+  getConversation: (threadId: string) => request<Conversation>(`/conversations/${threadId}`),
   getConversationMessages: (threadId: string) =>
     request<ConversationMessage[]>(`/conversations/${threadId}/messages`),
 
