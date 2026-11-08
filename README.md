@@ -345,7 +345,15 @@ Metrics: accuracy, hallucination rate, retrieval precision@k and recall@k (avera
 in-scope queries), latency avg/p50/p95, and generation cost in USD (RAG model only; judge calls
 and embeddings are not included). Bucketed by difficulty and category. The run aborts with exit
 code 2 when more than 10% of the judge calls fail (`AGENT_EVAL_MAX_JUDGE_ERROR_RATE`), instead of
-scoring those items as failures.
+scoring those items as failures. A finished run exits 3 when its accuracy is below 80% or its
+hallucination rate above 10% (`AGENT_EVAL_MIN_ACCURACY`, `AGENT_EVAL_MAX_HALLUCINATION_RATE`, or
+`--min-accuracy` and `--max-hallucination`), so a script or CI job fails on a regression. The
+five full runs of 2026-04-28 scored 88-96% and 2-6%.
+
+The `Eval suite` workflow runs it from GitHub Actions, by hand only, since it calls paid APIs:
+`smoke` (10 items) or `full`. It needs the provider secrets (`OPENAI_API_KEY`, `GCP_PROJECT`,
+`GCP_SA_KEY_JSON`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`); the reports go to the run's
+artifacts.
 
 Dataset: JSONL at `eval/golden/queries.jsonl`.
 

@@ -6,10 +6,16 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.config import settings
 from app.db import SessionLocal
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judges import Judge
-from app.eval.report import render_badge_json, render_diff_markdown, render_markdown
+from app.eval.report import (
+    gate_failures,
+    render_badge_json,
+    render_diff_markdown,
+    render_markdown,
+)
 from app.eval.schemas import EvalReport, TestItem
 from app.models import Collection
 from app.services.embedder import EmbeddingService
@@ -18,6 +24,18 @@ from app.services.llm import llm_service_for
 
 DEFAULT_DATASET = Path("eval/golden/queries.jsonl")
 DEFAULT_RESULTS_DIR = Path("eval/results")
+
+# Exit codes: 2 when the judge failed too often to score the run (argparse
+# also exits 2, on a bad flag), 3 when a run missed a threshold.
+EXIT_ABORTED = 2
+EXIT_BELOW_THRESHOLD = 3
+
+
+def _fraction(value: str) -> float:
+    number = float(value)
+    if not 0.0 <= number <= 1.0:
+        raise argparse.ArgumentTypeError(f"{value} is not between 0 and 1")
+    return number
 
 
 def load_dataset(path: Path) -> list[TestItem]:
@@ -168,6 +186,20 @@ def main() -> None:
             default=None,
             help="Run only the first N dataset items (smoke runs).",
         )
+        p.add_argument(
+            "--min-accuracy",
+            type=_fraction,
+            default=settings.agent.eval_min_accuracy,
+            help=f"Exit {EXIT_BELOW_THRESHOLD} below this accuracy; 0 turns it off "
+            "(default: AGENT_EVAL_MIN_ACCURACY, %(default)s).",
+        )
+        p.add_argument(
+            "--max-hallucination",
+            type=_fraction,
+            default=settings.agent.eval_max_hallucination_rate,
+            help=f"Exit {EXIT_BELOW_THRESHOLD} above this hallucination rate; 1 turns it off "
+            "(default: AGENT_EVAL_MAX_HALLUCINATION_RATE, %(default)s).",
+        )
 
     diff_parser = sub.add_parser("diff", help="Compare two report JSON files.")
     diff_parser.add_argument("previous", type=Path)
@@ -181,7 +213,7 @@ def main() -> None:
         return
 
     try:
-        asyncio.run(
+        report = asyncio.run(
             run_eval(
                 dataset_path=args.dataset,
                 results_dir=args.results_dir,
@@ -195,7 +227,18 @@ def main() -> None:
         )
     except EvalAbortedError as exc:
         print(f"\n{exc}\nFirst judge error: {exc.first_error}", file=sys.stderr)
-        sys.exit(2)
+        sys.exit(EXIT_ABORTED)
+
+    failures = gate_failures(
+        report.metrics,
+        min_accuracy=args.min_accuracy,
+        max_hallucination=args.max_hallucination,
+    )
+    if failures:
+        print("\nBelow the thresholds:", file=sys.stderr)
+        for failure in failures:
+            print(f"- {failure}", file=sys.stderr)
+        sys.exit(EXIT_BELOW_THRESHOLD)
 
 
 if __name__ == "__main__":

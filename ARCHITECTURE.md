@@ -484,7 +484,10 @@ retrieval, the prompt and its context budget are the ones the chat uses. The
 classifier, query rewrite and history handling are covered by the unit tests in
 `tests/agent/`. A run aborts (`EvalAbortedError`, exit code 2 from the CLI,
 HTTP 502 from `/eval/run`) when the share of failed judge calls exceeds
-`AGENT_EVAL_MAX_JUDGE_ERROR_RATE` (default 0.1).
+`AGENT_EVAL_MAX_JUDGE_ERROR_RATE` (default 0.1). A finished run below
+`AGENT_EVAL_MIN_ACCURACY` (0.80) or above `AGENT_EVAL_MAX_HALLUCINATION_RATE`
+(0.10) makes the CLI exit 3, which fails the manual `Eval suite` workflow;
+the CLI's `--min-accuracy` and `--max-hallucination` override them.
 
 Dataset format (`eval/golden/queries.jsonl`):
 

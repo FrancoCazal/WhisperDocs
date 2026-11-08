@@ -101,9 +101,18 @@ Fixes from the November 2026 audit, and a review of the frontend.
   statement's values (`hide_parameters`).
 - WhatsApp: a repeated message (same `MessageSid`) is answered once, and
   each number gets the questions' limit per minute.
+- The eval workflow reads the service account key from the environment
+  instead of pasting the secret into its script, declares read-only
+  permissions, and no longer publishes the reports, answers included, to
+  `gh-pages`; they stay in the run's artifacts.
 
 ### Changed
 
+- The eval CLI exits 3 when a run is below `AGENT_EVAL_MIN_ACCURACY` (0.80)
+  or above `AGENT_EVAL_MAX_HALLUCINATION_RATE` (0.10), so the eval workflow
+  fails on a regression. The workflow drops its branches for pull requests
+  and schedules, which never ran, sets `AWS_REGION` (the app ignored
+  `AWS_DEFAULT_REGION`) and defaults `GCP_LOCATION` to `global`.
 - The WhatsApp webhook answers 204 at once and runs the turn in the
   background: Twilio waits at most 15 s, and a turn's p95 was 9.1 s. A
   number's messages are answered one at a time, in order, so a

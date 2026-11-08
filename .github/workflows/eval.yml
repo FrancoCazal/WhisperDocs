@@ -1,5 +1,10 @@
 name: Eval suite
 
+# Manual only: a run calls paid model APIs. It needs the secrets
+# OPENAI_API_KEY, GCP_PROJECT, GCP_SA_KEY_JSON, AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY. The variables GCP_LOCATION, AWS_REGION,
+# AGENT_EVAL_MIN_ACCURACY and AGENT_EVAL_MAX_HALLUCINATION_RATE are read when
+# set.
 on:
   workflow_dispatch:
     inputs:
@@ -11,7 +16,11 @@ on:
         options:
           - smoke
           - full
-  # Manual only: the run calls paid model APIs and needs the provider secrets.
+
+# The run only reads the repository. Its reports, answers included, go to
+# the run's artifacts, not to a branch.
+permissions:
+  contents: read
 
 jobs:
   eval:
@@ -37,20 +46,29 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://whisperdocs:whisperdocs@localhost:5432/whisperdocs
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
-      GCP_LOCATION: ${{ vars.GCP_LOCATION || 'us-central1' }}
+      # gemini-3.8-flash is served from the `global` location only.
+      GCP_LOCATION: ${{ vars.GCP_LOCATION || 'global' }}
       # The runner context is not available at job level, so use a fixed path.
       GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-sa.json
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      # The app reads AWS_REGION (settings.aws_region), not AWS_DEFAULT_REGION.
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       LOG_JSON: "1"
 
     steps:
       - uses: actions/checkout@v4
 
+      # The key comes in through the environment. A `${{ }}` expression is
+      # pasted into the script before the shell runs it, so a key holding a
+      # quote would end the string early, and the key would be part of the
+      # script's text.
       - name: Write GCP service account key
+        env:
+          GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY_JSON }}
         run: |
-          echo '${{ secrets.GCP_SA_KEY_JSON }}' > "${GOOGLE_APPLICATION_CREDENTIALS}"
+          umask 077
+          printf '%s' "$GCP_SA_KEY_JSON" > "$GOOGLE_APPLICATION_CREDENTIALS"
 
       - uses: astral-sh/setup-uv@v6
         with:
@@ -73,46 +91,29 @@ jobs:
       - name: Seed eval corpus
         run: python -m scripts.seed_eval
 
-      - name: Determine run mode
-        id: mode
-        run: |
-          MODE="${{ github.event.inputs.mode }}"
-          if [ -z "$MODE" ]; then
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              MODE="smoke"
-            else
-              MODE="full"
-            fi
-          fi
-          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
-          if [ "$MODE" = "smoke" ]; then
-            echo "limit=--limit 10" >> "$GITHUB_OUTPUT"
-          else
-            echo "limit=" >> "$GITHUB_OUTPUT"
-          fi
-
+      # Exits 2 when the judge failed too often to score the run, and 3 when
+      # the run is below the accuracy or above the hallucination rate; either
+      # fails the job. The thresholds are app/config.py's unless the
+      # variables set them. An unset variable is an empty string, so it is
+      # passed only when set.
       - name: Run eval
+        env:
+          MODE: ${{ inputs.mode }}
+          MIN_ACCURACY: ${{ vars.AGENT_EVAL_MIN_ACCURACY }}
+          MAX_HALLUCINATION: ${{ vars.AGENT_EVAL_MAX_HALLUCINATION_RATE }}
         run: |
-          python -m app.eval.runner run \
-            --collection-name "Eval Golden" \
-            --markdown \
-            ${{ steps.mode.outputs.limit }}
+          args=(--collection-name "Eval Golden" --markdown)
+          if [ "$MODE" = "smoke" ]; then args+=(--limit 10); fi
+          if [ -n "$MIN_ACCURACY" ]; then args+=(--min-accuracy "$MIN_ACCURACY"); fi
+          if [ -n "$MAX_HALLUCINATION" ]; then args+=(--max-hallucination "$MAX_HALLUCINATION"); fi
+          python -m app.eval.runner run "${args[@]}"
 
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: eval-reports-${{ steps.mode.outputs.mode }}
+          name: eval-reports-${{ inputs.mode }}
           path: |
             eval/results/*.json
             eval/results/*.md
-
-      - name: Publish badge to gh-pages
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./eval/results
-          publish_branch: gh-pages
-          keep_files: true
-          destination_dir: badges
+          if-no-files-found: ignore

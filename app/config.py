@@ -42,6 +42,14 @@ class AgentSettings(BaseSettings):
     # few of them the report measures the judge, not the system.
     eval_max_judge_error_rate: float = 0.1
 
+    # A run below this accuracy or above this hallucination rate makes the
+    # eval CLI exit 3, which fails the eval workflow (audit E17). The five
+    # full runs of 2026-04-28 (50 items each) scored 0.88-0.96 and 0.02-0.06;
+    # these sit under that spread, so a run fails on a regression and not on
+    # noise. 0 and 1 turn them off; the CLI's flags override them.
+    eval_min_accuracy: float = 0.80
+    eval_max_hallucination_rate: float = 0.10
+
     # Max tokens consumed by retrieved-chunk context block in the RAG prompt.
     # Iteratively drops lowest-relevance chunks until under budget. Leaves
     # headroom for system prompt + history + answer in the model context window.

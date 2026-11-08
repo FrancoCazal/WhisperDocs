@@ -1,4 +1,4 @@
-"""Markdown rendering for EvalReport."""
+"""Markdown rendering for EvalReport, and the thresholds a run must meet."""
 
 import json
 
@@ -14,6 +14,22 @@ def _pct(value: float | None) -> str:
 
 def _ms(value: float | None) -> str:
     return MISSING if value is None else f"{value:.0f} ms"
+
+
+def gate_failures(
+    metrics: AggregateMetrics, *, min_accuracy: float, max_hallucination: float
+) -> list[str]:
+    """The thresholds a run missed, one line each; none when it met them.
+    The eval workflow fails a run on any (audit E17). A minimum of 0 and a
+    maximum of 1 can never be missed."""
+    failures: list[str] = []
+    if metrics.accuracy < min_accuracy:
+        failures.append(f"accuracy {metrics.accuracy:.1%} is below {min_accuracy:.1%}")
+    if metrics.hallucination_rate > max_hallucination:
+        failures.append(
+            f"hallucination rate {metrics.hallucination_rate:.1%} is above {max_hallucination:.1%}"
+        )
+    return failures
 
 
 def render_badge_json(report: EvalReport) -> str:
