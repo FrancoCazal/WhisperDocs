@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { toast } from "sonner";
 import { api, fmtDate, type Collection, type Conversation } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LoadMore } from "@/components/ui-kit/LoadMore";
@@ -32,6 +33,7 @@ export function ThreadSidebar({
   const deleteNoteMut = useMutation({
     mutationFn: (noteId: number) => api.deleteNote(noteId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["notes"] }),
+    onError: (e) => toast.error("COULD NOT DELETE THE NOTE", { description: e.message }),
   });
 
   return (

@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   api,
   fmtDate,
@@ -218,8 +219,12 @@ function DocumentsPage() {
   }
 
   const del = useMutation({
-    mutationFn: (id: number) => api.deleteDocument(id),
-    onSuccess: refreshDocuments,
+    mutationFn: (d: DocumentRead) => api.deleteDocument(d.id),
+    onSuccess: (_r, d) => {
+      refreshDocuments();
+      toast.success(`DELETED ${d.title}`);
+    },
+    onError: (e, d) => toast.error(`COULD NOT DELETE ${d.title}`, { description: e.message }),
   });
 
   const bulkDel = useMutation({
@@ -229,6 +234,7 @@ function DocumentsPage() {
       setBulkResult(result);
       setSelected(new Set());
     },
+    onError: (e) => toast.error("BULK DELETE FAILED", { description: e.message }),
     onSettled: refreshDocuments,
   });
 
@@ -445,9 +451,13 @@ function DocumentsPage() {
         <RecentJobs collectionId={filter} collections={collections.data} />
       </div>
 
-      {documents.query.error && <ErrorBanner message="failed to load documents" />}
-      {del.error && <ErrorBanner message={`delete failed: ${del.error.message}`} />}
-      {bulkDel.error && <ErrorBanner message={`bulk delete failed: ${bulkDel.error.message}`} />}
+      {documents.query.error && (
+        <ErrorBanner
+          message="failed to load documents"
+          onRetry={() => void documents.query.refetch()}
+          retrying={documents.query.isFetching}
+        />
+      )}
       {bulkResult && <BulkResultBanner result={bulkResult} onClose={() => setBulkResult(null)} />}
 
       <ConfirmDialog
@@ -466,7 +476,7 @@ function DocumentsPage() {
         title={`DELETE "${toDelete?.title ?? ""}"?`}
         confirmLabel="✕ DELETE"
         destructive
-        onConfirm={() => toDelete && del.mutate(toDelete.id)}
+        onConfirm={() => toDelete && del.mutate(toDelete)}
       >
         Its {fmtNumber(toDelete?.chunk_count)} chunks are removed from the index. This cannot be
         undone.

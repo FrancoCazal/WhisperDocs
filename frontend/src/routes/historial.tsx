@@ -65,7 +65,13 @@ function HistorialPage() {
         }
       />
 
-      {history.query.error && <ErrorBanner message="failed to load query history" />}
+      {history.query.error && (
+        <ErrorBanner
+          message="failed to load query history"
+          onRetry={() => void history.query.refetch()}
+          retrying={history.query.isFetching}
+        />
+      )}
 
       <div className="border border-border-subtle bg-surface-container overflow-x-auto">
         {history.query.isLoading ? (

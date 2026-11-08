@@ -124,7 +124,13 @@ function EvaluacionPage() {
         }
       />
 
-      {runs.error && <ErrorBanner message="failed to load evaluation runs" />}
+      {runs.error && (
+        <ErrorBanner
+          message="failed to load evaluation runs"
+          onRetry={() => void runs.refetch()}
+          retrying={runs.isFetching}
+        />
+      )}
 
       {/* TOP: the run on screen */}
       <div ref={reportRef} className="scroll-mt-16">
@@ -141,7 +147,11 @@ function EvaluacionPage() {
           <RunReport report={report.data} runs={runs.data ?? []} />
         ) : report.error ? (
           <div className="mb-8">
-            <ErrorBanner message={`failed to load run: ${report.error.message}`} />
+            <ErrorBanner
+              message={`failed to load run: ${report.error.message}`}
+              onRetry={() => void report.refetch()}
+              retrying={report.isFetching}
+            />
           </div>
         ) : shownId !== null || runs.isLoading ? (
           <div className="mb-8">

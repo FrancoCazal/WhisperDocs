@@ -126,6 +126,12 @@ function Dashboard() {
       {anyError && (
         <ErrorBanner
           message={`backend unreachable at ${(import.meta.env.VITE_API_BASE_URL as string) ?? "http://localhost:8000"}`}
+          onRetry={() => {
+            for (const q of [collections, history, evals, conversations]) {
+              if (q.error) void q.refetch();
+            }
+          }}
+          retrying={[collections, history, evals, conversations].some((q) => q.isFetching)}
         />
       )}
 

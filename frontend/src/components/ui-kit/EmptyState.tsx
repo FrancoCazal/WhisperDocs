@@ -20,10 +20,32 @@ export function LoadingLine({ label = "LOADING" }: { label?: string }) {
   return <div className="label-sm text-text-secondary blink-cursor">{label}...</div>;
 }
 
-export function ErrorBanner({ message }: { message: string }) {
+/** A failure, said in place. With `onRetry`, a button runs the request again. */
+export function ErrorBanner({
+  message,
+  onRetry,
+  retrying = false,
+}: {
+  message: string;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
   return (
-    <div className="border border-error/40 bg-error/5 px-4 py-2 label-sm text-error mb-4">
-      ERROR: {message} · RETRY ↻
+    <div
+      role="alert"
+      className="border border-error/40 bg-error/5 px-4 py-2 label-sm text-error mb-4 flex flex-wrap items-center gap-x-3 gap-y-1"
+    >
+      <span className="flex-1 min-w-0 break-words">ERROR: {message}</span>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          className="label-sm text-text-primary hover:text-primary-blue disabled:text-text-tertiary"
+        >
+          {retrying ? "RETRYING..." : "↻ RETRY"}
+        </button>
+      )}
     </div>
   );
 }

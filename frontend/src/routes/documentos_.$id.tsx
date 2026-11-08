@@ -35,16 +35,13 @@ function DocumentDetailError({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
   return (
     <div>
-      <ErrorBanner message={error instanceof Error ? error.message : String(error)} />
-      <button
-        onClick={() => {
-          router.invalidate();
+      <ErrorBanner
+        message={error instanceof Error ? error.message : String(error)}
+        onRetry={() => {
+          void router.invalidate();
           reset();
         }}
-        className="label-sm border border-text-primary text-text-primary px-3 h-8 hover:bg-text-primary hover:text-surface"
-      >
-        RETRY ↻
-      </button>
+      />
     </div>
   );
 }
@@ -91,9 +88,21 @@ function DocumentDetailPage() {
           </Link>
         </div>
       ) : (
-        doc.error && <ErrorBanner message={`failed to load document: ${doc.error.message}`} />
+        doc.error && (
+          <ErrorBanner
+            message={`failed to load document: ${doc.error.message}`}
+            onRetry={() => void doc.refetch()}
+            retrying={doc.isFetching}
+          />
+        )
       )}
-      {chunks.error && <ErrorBanner message={`failed to load chunks: ${chunks.error.message}`} />}
+      {chunks.error && (
+        <ErrorBanner
+          message={`failed to load chunks: ${chunks.error.message}`}
+          onRetry={() => void chunks.refetch()}
+          retrying={chunks.isFetching}
+        />
+      )}
 
       {doc.isLoading ? (
         <LoadingLine />

@@ -14,7 +14,8 @@ import {
 } from "@/lib/api";
 import { LoadingLine, emptyActionCls } from "@/components/ui-kit/EmptyState";
 import { LengthHint } from "@/components/ui-kit/LengthHint";
-import { Modal } from "@/components/ui-kit/Modal";
+import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
+import { toast } from "sonner";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { AssistantTurn, UserTurn } from "@/components/chat/Turns";
 import { SourcesSheet, type SourcesView } from "@/components/chat/SourcesSheet";
@@ -169,11 +170,20 @@ function ChatPage() {
     mutationFn: ({ tid, saved }: { tid: string; saved: boolean }) =>
       api.patchConversation(tid, { is_saved: saved }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["conversations", "list"] }),
+    onError: (e, v) =>
+      toast.error(v.saved ? "COULD NOT SAVE THE THREAD" : "COULD NOT UNSAVE THE THREAD", {
+        description: e.message,
+      }),
   });
 
   const deleteConvMut = useMutation({
     mutationFn: (tid: string) => api.deleteConversation(tid),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["conversations", "list"] }),
+    onSuccess: (_r, tid) => {
+      toast.success(`THREAD ${tid.slice(0, 8)} DELETED`);
+      return qc.invalidateQueries({ queryKey: ["conversations", "list"] });
+    },
+    onError: (e, tid) =>
+      toast.error(`COULD NOT DELETE THREAD ${tid.slice(0, 8)}`, { description: e.message }),
   });
 
   const pinNoteMut = useMutation({
@@ -183,7 +193,7 @@ function ChatPage() {
       setPinned((s) => new Set(s).add(pinKey(v.tid, v.content)));
       return qc.invalidateQueries({ queryKey: ["notes"] });
     },
-    onError: (e) => setErrorMsg(`pin failed: ${e.message}`),
+    onError: (e) => toast.error("COULD NOT PIN THE ANSWER", { description: e.message }),
   });
 
   useEffect(() => {
@@ -428,20 +438,14 @@ function ChatPage() {
     patchSaveMut.mutate({ tid: threadId, saved: !activeConv.is_saved });
   }
 
-  async function confirmDeleteCurrent() {
+  function confirmDeleteCurrent() {
     if (!threadId) return;
-    setConfirmDelete(false);
-    try {
-      await deleteConvMut.mutateAsync(threadId);
-      startNew();
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-    }
+    // A failure is a toast, and the thread stays on screen.
+    deleteConvMut.mutate(threadId, { onSuccess: () => startNew() });
   }
 
   function pinTurn(t: AssistantTurnData) {
     if (!threadId) return;
-    setErrorMsg(null);
     pinNoteMut.mutate({ tid: threadId, content: t.text });
   }
 
@@ -449,31 +453,16 @@ function ChatPage() {
 
   return (
     <>
-      <Modal
+      <ConfirmDialog
         open={confirmDelete}
-        onClose={() => setConfirmDelete(false)}
+        onOpenChange={setConfirmDelete}
         title={`DELETE THREAD ${threadId?.slice(0, 8) ?? ""}?`}
-        width="max-w-sm"
+        confirmLabel="✕ DELETE"
+        destructive
+        onConfirm={confirmDeleteCurrent}
       >
-        <p className="body-sm text-text-secondary mb-6">
-          This action cannot be undone. Thread and all messages will be permanently removed.
-        </p>
-        <div className="flex items-center gap-3 justify-end">
-          <button
-            onClick={() => setConfirmDelete(false)}
-            className="label-sm text-text-secondary hover:bg-surface-container px-4 h-8 border border-border-subtle"
-          >
-            CANCEL
-          </button>
-          <button
-            onClick={confirmDeleteCurrent}
-            disabled={deleteConvMut.isPending}
-            className="label-sm text-error hover:bg-error hover:text-surface px-4 h-8 border border-error/40 disabled:opacity-50"
-          >
-            {deleteConvMut.isPending ? "DELETING..." : "✕ DELETE"}
-          </button>
-        </div>
-      </Modal>
+        The thread and all its messages are removed for good. This cannot be undone.
+      </ConfirmDialog>
       <SourcesSheet view={sources} onClose={() => setSources(null)} />
       <div className="-m-3 sm:-m-6 md:-m-8 flex h-[calc(100vh-48px)] md:h-[calc(100vh-48px-28px)]">
         {/* Sidebar — desktop only (mobile uses Sheet trigger in header) */}

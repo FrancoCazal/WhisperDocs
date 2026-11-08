@@ -65,6 +65,8 @@ export function RunCompare({ report, runs }: { report: EvalReport; runs: EvalRun
       {other.error ? (
         <ErrorBanner
           message={`failed to load run ${short(otherId ?? "")}: ${other.error.message}`}
+          onRetry={() => void other.refetch()}
+          retrying={other.isFetching}
         />
       ) : !pair || !diff ? (
         <LoadingLine />

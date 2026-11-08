@@ -1,7 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, fmtDate, fmtNumber, LIMITS } from "@/lib/api";
+import { toast } from "sonner";
+import { api, fmtDate, fmtNumber, LIMITS, type Collection } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
 import {
@@ -32,6 +34,7 @@ function CollectionsPage() {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<Collection | null>(null);
 
   const create = useMutation({
     mutationFn: () => api.createCollection({ name, description: desc || undefined }),
@@ -46,12 +49,16 @@ function CollectionsPage() {
   });
 
   const del = useMutation({
-    mutationFn: (id: number) => api.deleteCollection(id),
+    mutationFn: (c: Collection) => api.deleteCollection(c.id),
     // Its documents go with it.
-    onSuccess: () => {
+    onSuccess: (_r, c) => {
       void qc.invalidateQueries({ queryKey: ["collections"] });
       void qc.invalidateQueries({ queryKey: ["documents"] });
+      toast.success(`COLLECTION "${c.name}" DELETED`, {
+        description: `${fmtNumber(c.document_count)} documents removed with it.`,
+      });
     },
+    onError: (e, c) => toast.error(`COULD NOT DELETE "${c.name}"`, { description: e.message }),
   });
 
   return (
@@ -66,7 +73,24 @@ function CollectionsPage() {
         }
       />
 
-      {collections.error && <ErrorBanner message="failed to load collections" />}
+      {collections.error && (
+        <ErrorBanner
+          message="failed to load collections"
+          onRetry={() => void collections.refetch()}
+          retrying={collections.isFetching}
+        />
+      )}
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => !open && setToDelete(null)}
+        title={`DELETE COLLECTION "${toDelete?.name ?? ""}"?`}
+        confirmLabel="DELETE COLLECTION"
+        destructive
+        onConfirm={() => toDelete && del.mutate(toDelete)}
+      >
+        Its {fmtNumber(toDelete?.document_count ?? 0)} documents and{" "}
+        {fmtNumber(toDelete?.chunk_count ?? 0)} chunks are deleted with it. This cannot be undone.
+      </ConfirmDialog>
 
       <div className="border border-border-subtle bg-surface-container overflow-x-auto">
         {collections.isLoading ? (
@@ -120,14 +144,9 @@ function CollectionsPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (
-                            confirm(
-                              `Delete collection "${c.name}"? This cascades to all documents.`,
-                            )
-                          ) {
-                            del.mutate(c.id);
-                          }
+                          setToDelete(c);
                         }}
+                        disabled={del.isPending && del.variables?.id === c.id}
                         className="label-sm text-error hover:bg-error hover:text-surface px-2 h-6"
                       >
                         DELETE

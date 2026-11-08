@@ -1,6 +1,7 @@
 import { Link, createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Shell } from "@/components/layout/Shell";
+import { Toaster } from "@/components/ui/sonner";
 
 import appCss from "../styles.css?url";
 
@@ -71,6 +72,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* The Shell renders the route's Outlet inside <main>. */}
       <Shell />
+      <Toaster />
     </QueryClientProvider>
   );
 }
