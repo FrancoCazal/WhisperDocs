@@ -14,8 +14,12 @@ import {
 } from "@/lib/api";
 import { ErrorBanner } from "@/components/ui-kit/EmptyState";
 import { LengthHint } from "@/components/ui-kit/LengthHint";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export const Route = createFileRoute("/consulta")({
+  // Client only: a new session's id is random, so a server render could never
+  // match the client's, and the history comes from a client query anyway.
+  ssr: false,
   head: () => ({
     meta: [
       { title: "Consulta — WhisperDocs" },
@@ -76,11 +80,12 @@ function logsToSession(sessionId: string, logs: QueryLog[]): Session {
   return { id: sessionId, turns, createdAt: sorted[0]?.created_at ?? new Date().toISOString() };
 }
 
-/** The logged sessions, newest first. */
+/** The logged sessions of this page, newest first. */
 function sessionsFromLogs(logs: QueryLog[]): Session[] {
   const grouped = new Map<string, QueryLog[]>();
   for (const log of logs) {
-    if (!log.session_id) continue;
+    // The chat's turns are logged too, with their thread as session_id.
+    if (!log.session_id || log.agent_action !== null) continue;
     if (!grouped.has(log.session_id)) grouped.set(log.session_id, []);
     grouped.get(log.session_id)!.push(log);
   }
@@ -95,6 +100,54 @@ const EXAMPLES = [
   "Compare OpenAI vs Anthropic pricing",
 ];
 
+// The sessions, as a list: the desktop sidebar and the mobile panel show the same one.
+function SessionList({
+  sessions,
+  activeId,
+  loading,
+  onPick,
+}: {
+  sessions: Session[];
+  activeId: string;
+  loading: boolean;
+  onPick: (id: string) => void;
+}) {
+  return (
+    <div className="flex-1 overflow-auto">
+      {loading && (
+        <div className="px-4 py-2 label-xs text-text-tertiary border-b border-border-subtle/50">
+          LOADING HISTORY...
+        </div>
+      )}
+      {sessions.map((s) => {
+        const preview = s.turns.find((t) => t.kind === "user")?.text ?? "(empty session)";
+        const isActive = s.id === activeId;
+        return (
+          <button
+            key={s.id}
+            onClick={() => onPick(s.id)}
+            aria-current={isActive ? "true" : undefined}
+            className={`relative w-full text-left px-4 py-3 border-b border-border-subtle/50 hover:bg-surface-container transition-colors ${
+              isActive ? "bg-surface-container" : ""
+            }`}
+          >
+            {isActive && (
+              <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-text-primary" />
+            )}
+            <div className="label-sm text-text-primary">{s.id}</div>
+            <div className="body-sm text-text-secondary truncate mt-1">
+              {preview.length > 40 ? preview.slice(0, 39) + "…" : preview}
+            </div>
+            <div className="label-xs text-text-tertiary mt-1">
+              {new Date(s.createdAt).toLocaleTimeString("en-GB")}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 const PROGRESS_STEPS = ["EMBEDDING QUERY...", "RETRIEVING CHUNKS...", "GENERATING RESPONSE..."];
 
 function ConsultaPage() {
@@ -106,6 +159,8 @@ function ConsultaPage() {
   const [input, setInput] = useState("");
   const [progressIdx, setProgressIdx] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // The mobile sessions panel: controlled, so picking a session closes it.
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
@@ -201,45 +256,60 @@ function ConsultaPage() {
             + NEW
           </button>
         </div>
-        <div className="flex-1 overflow-auto">
-          {historyQuery.isLoading && (
-            <div className="px-4 py-2 label-xs text-text-tertiary border-b border-border-subtle/50">
-              LOADING HISTORY...
-            </div>
-          )}
-          {sessions.map((s) => {
-            const preview = s.turns.find((t) => t.kind === "user")?.text ?? "(empty session)";
-            const isActive = s.id === activeId;
-            return (
-              <button
-                key={s.id}
-                onClick={() => setActiveId(s.id)}
-                className={`relative w-full text-left px-4 py-3 border-b border-border-subtle/50 hover:bg-surface-container transition-colors ${
-                  isActive ? "bg-surface-container" : ""
-                }`}
-              >
-                {isActive && (
-                  <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-text-primary" />
-                )}
-                <div className="label-sm text-text-primary">{s.id}</div>
-                <div className="body-sm text-text-secondary truncate mt-1">
-                  {preview.length > 40 ? preview.slice(0, 39) + "…" : preview}
-                </div>
-                <div className="label-xs text-text-tertiary mt-1">
-                  {new Date(s.createdAt).toLocaleTimeString("en-GB")}
-                </div>
-              </button>
-            );
-          })}
-        </div>
+        <SessionList
+          sessions={sessions}
+          activeId={active.id}
+          loading={historyQuery.isLoading}
+          onPick={setActiveId}
+        />
       </aside>
 
       {/* Main conversation */}
       <section className="flex-1 min-w-0 flex flex-col bg-surface">
         {/* Session header */}
-        <div className="h-12 px-6 flex items-center justify-between border-b border-border-subtle shrink-0">
-          <div className="label-sm text-text-secondary">
-            WHISPER_SESSION: <span className="text-text-primary">{active.id}</span>
+        <div className="min-h-12 px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border-subtle shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Mobile: the sessions live in a panel. */}
+            <Sheet open={sessionsOpen} onOpenChange={setSessionsOpen}>
+              <SheetTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Open sessions panel"
+                  className="md:hidden h-8 w-8 grid place-items-center border border-border-subtle text-text-primary hover:bg-surface-container"
+                >
+                  ☰
+                </button>
+              </SheetTrigger>
+              <SheetContent
+                side="left"
+                className="w-72 max-w-[85vw] bg-surface-low border-r border-border-subtle p-0 flex flex-col gap-0"
+              >
+                <SheetHeader className="px-4 py-3 border-b border-border-subtle flex-row items-center justify-between space-y-0 pr-12">
+                  <SheetTitle className="label-sm text-text-primary">SESSIONS</SheetTitle>
+                  <button
+                    onClick={() => {
+                      setSessionsOpen(false);
+                      startNew();
+                    }}
+                    className="label-sm text-text-primary hover:bg-text-primary hover:text-surface px-2 h-6"
+                  >
+                    + NEW
+                  </button>
+                </SheetHeader>
+                <SessionList
+                  sessions={sessions}
+                  activeId={active.id}
+                  loading={historyQuery.isLoading}
+                  onPick={(id) => {
+                    setSessionsOpen(false);
+                    setActiveId(id);
+                  }}
+                />
+              </SheetContent>
+            </Sheet>
+            <div className="label-sm text-text-secondary truncate">
+              WHISPER_SESSION: <span className="text-text-primary">{active.id}</span>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-2 label-sm text-text-secondary">
@@ -272,7 +342,7 @@ function ConsultaPage() {
         </div>
 
         {/* Conversation area */}
-        <div ref={scrollRef} className="flex-1 overflow-auto px-8 py-6">
+        <div ref={scrollRef} className="flex-1 overflow-auto px-3 sm:px-8 py-6">
           {errorMsg && <ErrorBanner message={errorMsg} />}
 
           {active.turns.length === 0 ? (

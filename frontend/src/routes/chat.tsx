@@ -118,6 +118,9 @@ function ChatPage() {
     return last?.kind === "assistant" && !last.outcome && last.citations.length > 0 ? last : null;
   }, [turns]);
 
+  // The mobile threads panel: controlled, so picking a thread closes it.
+  const [threadsOpen, setThreadsOpen] = useState(false);
+
   // One sheet for every answer's sources, opened by a turn or an "[n]".
   const [sources, setSources] = useState<SourcesView | null>(null);
   const openSources = useCallback(
@@ -459,7 +462,7 @@ function ChatPage() {
           {/* Header */}
           <div className="min-h-12 px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle shrink-0">
             <div className="flex items-center gap-2">
-              <Sheet>
+              <Sheet open={threadsOpen} onOpenChange={setThreadsOpen}>
                 <SheetTrigger asChild>
                   <button
                     type="button"
@@ -471,12 +474,26 @@ function ChatPage() {
                 </SheetTrigger>
                 <SheetContent
                   side="left"
-                  className="w-72 max-w-[85vw] bg-surface-low border-r border-border-subtle p-0 overflow-auto"
+                  className="w-72 max-w-[85vw] bg-surface-low border-r border-border-subtle p-0 flex flex-col gap-0"
                 >
                   <SheetHeader className="px-4 py-3 border-b border-border-subtle">
                     <SheetTitle className="label-sm text-text-primary">THREADS / NOTES</SheetTitle>
                   </SheetHeader>
-                  <div className="p-2 label-xs text-text-tertiary">Tap a thread to open it.</div>
+                  {/* The desktop sidebar's list; picking a thread closes the panel. */}
+                  <ThreadSidebar
+                    conversations={conversations.data}
+                    loading={conversations.isLoading}
+                    collections={collections.data}
+                    activeThreadId={threadId}
+                    onOpen={(c) => {
+                      setThreadsOpen(false);
+                      void openConversation(c);
+                    }}
+                    onNew={() => {
+                      setThreadsOpen(false);
+                      startNew();
+                    }}
+                  />
                 </SheetContent>
               </Sheet>
               <div className="label-sm text-text-secondary">
