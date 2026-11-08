@@ -1,34 +1,20 @@
 import { Markdown } from "./Markdown";
-import { NODE_LABELS, type NodeProgress } from "./types";
+import { Elapsed, TraceSteps } from "./Trace";
+import type { NodeProgress } from "./types";
 
-export function StreamingTurn({ progress, text }: { progress: NodeProgress[]; text: string }) {
+export type LiveTurn = { startedAt: number; progress: NodeProgress[]; text: string };
+
+export function StreamingTurn({ live }: { live: LiveTurn }) {
   return (
     <div className="border-l-2 border-text-primary pl-4 py-2 space-y-2">
-      {progress.length === 0 && !text && (
-        <div className="label-sm text-text-tertiary">CONNECTING...</div>
-      )}
-      {progress.map((p, i) => {
-        const label = NODE_LABELS[p.node] ?? p.node.toUpperCase();
-        const detail = p.summary?.action
-          ? ` → ${p.summary.action}`
-          : p.summary?.chunks !== undefined
-            ? ` · ${p.summary.chunks} chunks`
-            : "";
-        return (
-          <div
-            key={`${p.node}-${i}`}
-            className={`label-sm ${
-              p.status === "running" ? "text-text-primary" : "text-text-tertiary"
-            }`}
-          >
-            {label}
-            {detail} {p.status === "running" ? "▌" : "✓"}
-          </div>
-        );
-      })}
-      {text && (
+      <div className="label-xs text-text-tertiary flex gap-2">
+        <span className="flex-1">{live.progress.length === 0 ? "CONNECTING..." : "WORKING"}</span>
+        <Elapsed since={live.startedAt} />
+      </div>
+      <TraceSteps steps={live.progress} />
+      {live.text && (
         <div>
-          <Markdown text={text} />
+          <Markdown text={live.text} />
           <span className="inline-block w-2 h-4 bg-text-primary animate-pulse align-middle" />
         </div>
       )}

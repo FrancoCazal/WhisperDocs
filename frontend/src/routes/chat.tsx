@@ -5,17 +5,22 @@ import {
   api,
   fmtTimestamp,
   type AgentChatResponse,
-  type AgentCitation,
   type Conversation,
+  type ConversationMessage,
 } from "@/lib/api";
-import { ErrorBanner } from "@/components/ui-kit/EmptyState";
+import { LoadingLine } from "@/components/ui-kit/EmptyState";
 import { Modal } from "@/components/ui-kit/Modal";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { AssistantTurn, UserTurn } from "@/components/chat/Turns";
 import { SourcesSheet } from "@/components/chat/SourcesSheet";
-import { StreamingTurn } from "@/components/chat/StreamingTurn";
+import { StreamingTurn, type LiveTurn } from "@/components/chat/StreamingTurn";
 import { ThreadSidebar } from "@/components/chat/ThreadSidebar";
-import type { AssistantTurnData, NodeProgress, Turn } from "@/components/chat/types";
+import {
+  IDLE_TIMEOUT_MS,
+  type AssistantTurnData,
+  type NodeProgress,
+  type Turn,
+} from "@/components/chat/types";
 
 export const Route = createFileRoute("/chat")({
   head: () => ({
@@ -36,6 +41,23 @@ const EXAMPLES = [
   "Hello, what can you do?",
 ];
 
+// The stream being read, and why it was aborted when it was.
+type StreamRun = { controller: AbortController; reason: "stopped" | "timeout" | null };
+
+function savedTurn(m: ConversationMessage, fallbackTs: string): Turn {
+  const ts = m.timestamp ?? fallbackTs;
+  if (m.role === "user") return { kind: "user", ts, text: m.content };
+  return {
+    kind: "assistant",
+    ts,
+    text: m.content,
+    action: null,
+    citations: m.failed ? [] : (m.citations ?? []),
+    metadata: m.failed ? null : m.metadata,
+    outcome: m.failed ? "failed" : undefined,
+  };
+}
+
 function ChatPage() {
   const qc = useQueryClient();
 
@@ -44,14 +66,19 @@ function ChatPage() {
   const [collectionId, setCollectionId] = useState<number | null>(null);
   const [topK, setTopK] = useState(5);
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [streamProgress, setStreamProgress] = useState<NodeProgress[]>([]);
-  const [streamingText, setStreamingText] = useState("");
+  const [live, setLive] = useState<LiveTurn | null>(null);
+  const [loadingThread, setLoadingThread] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const runRef = useRef<StreamRun | null>(null);
+  // Bumped whenever another thread is shown: a stream or a load started for
+  // the previous one sees the change and leaves the screen alone.
+  const viewRef = useRef(0);
+  // Follow new output only while the reader is at the bottom.
+  const stickRef = useRef(true);
+  const streaming = live !== null;
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
   const conversations = useQuery({
@@ -64,12 +91,13 @@ function ChatPage() {
     [conversations.data, threadId],
   );
 
-  const lastAssistantTurn = useMemo(() => {
-    for (let i = turns.length - 1; i >= 0; i--) {
-      const t = turns[i];
-      if (t.kind === "assistant" && t.citations.length > 0) return t;
-    }
-    return null;
+  // The header's sources are the latest answer's: an older turn's chunks
+  // shown as the last turn's would be wrong.
+  const latestSources = useMemo(() => {
+    const last = turns[turns.length - 1];
+    return last?.kind === "assistant" && !last.outcome && last.citations.length > 0
+      ? last.citations
+      : null;
   }, [turns]);
 
   const patchSaveMut = useMutation({
@@ -87,145 +115,208 @@ function ChatPage() {
     mutationFn: ({ tid, content }: { tid: string; content: string }) =>
       api.createNote(tid, { content }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["notes"] }),
+    onError: (e) => setErrorMsg(`pin failed: ${e.message}`),
   });
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [turns.length, streaming, streamProgress.length, streamingText]);
+    const el = scrollRef.current;
+    if (el && stickRef.current) el.scrollTo({ top: el.scrollHeight });
+  }, [turns, live]);
 
   useEffect(() => {
     if (!streaming) inputRef.current?.focus();
   }, [streaming]);
 
   useEffect(() => {
-    return () => abortRef.current?.abort();
+    return () => runRef.current?.controller.abort();
   }, []);
+
+  /** Before another thread is shown: what runs for the current one stops. */
+  function leaveThread() {
+    viewRef.current += 1;
+    if (runRef.current) {
+      // The server stops the run; the question stays in the thread unanswered.
+      runRef.current.controller.abort();
+      runRef.current = null;
+      qc.invalidateQueries({ queryKey: ["conversations", "list"] });
+    }
+    setLive(null);
+    setErrorMsg(null);
+    setLoadingThread(false);
+  }
 
   async function send(message: string) {
     const trimmed = message.trim();
-    if (!trimmed || streaming) return;
-    setErrorMsg(null);
+    if (!trimmed || runRef.current || loadingThread) return;
+    const view = viewRef.current;
+    const run: StreamRun = { controller: new AbortController(), reason: null };
+    runRef.current = run;
+    const startedAt = performance.now();
+    // What the stream has sent so far; the finished turn is built from it.
+    const got: {
+      text: string;
+      trace: NodeProgress[];
+      final: AgentChatResponse | null;
+      error: string | null;
+    } = { text: "", trace: [], final: null, error: null };
+    const show = () => setLive({ startedAt, progress: got.trace, text: got.text });
+
     const userTurn: Turn = { kind: "user", ts: fmtTimestamp(), text: trimmed };
+    setErrorMsg(null);
     setTurns((prev) => [...prev, userTurn]);
     setInput("");
-    setStreamProgress([]);
-    setStreamingText("");
-    setStreaming(true);
+    stickRef.current = true;
+    show();
 
-    const controller = new AbortController();
-    abortRef.current = controller;
-    let finalPayload: AgentChatResponse | null = null;
-    let streamErr: string | null = null;
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const resetIdle = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => {
+        run.reason = "timeout";
+        run.controller.abort();
+      }, IDLE_TIMEOUT_MS);
+    };
+    resetIdle();
 
     try {
       await api.agentChatStream(
         { message: trimmed, thread_id: threadId, collection_id: collectionId, top_k: topK },
         (e) => {
+          if (viewRef.current !== view) return;
+          resetIdle();
           if (e.type === "thread") {
-            if (!threadId) setThreadId(e.thread_id);
+            setThreadId(e.thread_id);
           } else if (e.type === "node_start") {
-            setStreamProgress((prev) => [...prev, { node: e.node, status: "running" }]);
+            got.trace = [
+              ...got.trace,
+              { node: e.node, status: "running", startedAt: performance.now() },
+            ];
+            show();
           } else if (e.type === "node_end") {
-            setStreamProgress((prev) =>
-              prev.map((p) =>
-                p.node === e.node && p.status === "running"
-                  ? { ...p, status: "done", summary: e.summary }
-                  : p,
-              ),
+            const now = performance.now();
+            got.trace = got.trace.map((p) =>
+              p.node === e.node && p.status === "running"
+                ? { ...p, status: "done", summary: e.summary, ms: now - p.startedAt }
+                : p,
             );
+            show();
           } else if (e.type === "token") {
-            setStreamingText((prev) => prev + e.delta);
+            got.text += e.delta;
+            show();
           } else if (e.type === "final") {
-            finalPayload = e.payload;
+            got.final = e.payload;
           } else if (e.type === "error") {
-            streamErr = e.message;
+            got.error = e.message;
           }
         },
-        controller.signal,
+        run.controller.signal,
       );
     } catch (e) {
-      streamErr = e instanceof Error ? e.message : String(e);
+      // An abort is a stop, a timeout or a thread change, not an error.
+      if (!run.controller.signal.aborted) got.error = e instanceof Error ? e.message : String(e);
     } finally {
-      setStreaming(false);
-      abortRef.current = null;
+      clearTimeout(idle);
     }
+    // Another thread is on screen: this turn is not its.
+    if (viewRef.current !== view) return;
+    runRef.current = null;
+    setLive(null);
 
-    if (streamErr) {
-      setErrorMsg(streamErr);
-      return;
-    }
-    if (!finalPayload) {
-      setErrorMsg("Stream ended without final response");
-      return;
-    }
-    const resp = finalPayload as AgentChatResponse;
-    const aTurn: Turn = {
-      kind: "assistant",
+    const base = {
+      kind: "assistant" as const,
       ts: fmtTimestamp(),
-      text: resp.answer,
-      action: resp.action,
-      citations: resp.citations,
-      metadata: resp.metadata,
+      trace: got.trace.map((p) => (p.status === "running" ? { ...p, status: "cut" as const } : p)),
+      elapsedMs: performance.now() - startedAt,
     };
-    setTurns((prev) => [...prev, aTurn]);
-    setStreamProgress([]);
-    setStreamingText("");
+    const f = got.final;
+    let turn: AssistantTurnData;
+    if (f) {
+      turn = {
+        ...base,
+        text: f.answer,
+        action: f.action,
+        citations: f.failed ? [] : f.citations,
+        metadata: f.failed ? null : f.metadata,
+        outcome: f.failed ? "failed" : undefined,
+      };
+    } else if (run.reason) {
+      turn = {
+        ...base,
+        text: got.text,
+        action: null,
+        citations: [],
+        metadata: null,
+        outcome: run.reason,
+      };
+    } else {
+      turn = {
+        ...base,
+        text: got.error ?? "The stream ended without an answer.",
+        action: null,
+        citations: [],
+        metadata: null,
+        outcome: "error",
+      };
+    }
+    setTurns((prev) => [...prev, turn]);
     qc.invalidateQueries({ queryKey: ["conversations", "list"] });
     // The query log: history pages and the layout's last-answer bar.
-    qc.invalidateQueries({ queryKey: ["history"] });
+    if (f && !f.failed) qc.invalidateQueries({ queryKey: ["history"] });
+  }
+
+  function stop() {
+    const run = runRef.current;
+    if (!run) return;
+    run.reason = "stopped";
+    run.controller.abort();
+  }
+
+  /** Ask again the question that assistant turn `i` answered. */
+  function retry(i: number) {
+    for (let j = i - 1; j >= 0; j--) {
+      const t = turns[j];
+      if (t.kind === "user") {
+        void send(t.text);
+        return;
+      }
+    }
   }
 
   function startNew() {
+    leaveThread();
     setThreadId(null);
     setTurns([]);
-    setErrorMsg(null);
   }
 
   async function openConversation(c: Conversation) {
+    // The thread on screen; a failed load can be retried by opening it again.
+    if (c.thread_id === threadId && (turns.length > 0 || loadingThread)) return;
+    leaveThread();
+    const view = viewRef.current;
     setThreadId(c.thread_id);
     setCollectionId(c.collection_id ?? null);
-    setErrorMsg(null);
+    setTurns([]);
+    setLoadingThread(true);
     try {
       const msgs = await api.getConversationMessages(c.thread_id);
-      const loaded: Turn[] = msgs
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) =>
-          m.role === "user"
-            ? ({
-                kind: "user",
-                ts: m.timestamp ?? fmtTimestamp(c.last_active_at),
-                text: m.content,
-              } as Turn)
-            : ({
-                kind: "assistant",
-                ts: m.timestamp ?? fmtTimestamp(c.last_active_at),
-                text: m.content,
-                action: null,
-                citations: (m.citations as AgentCitation[]) ?? [],
-                metadata: m.metadata ?? {
-                  model: null,
-                  tokens_input: 0,
-                  tokens_output: 0,
-                  latency_ms: 0,
-                  chunks_retrieved: 0,
-                  cost_usd: 0,
-                },
-              } as Turn),
-        );
-      setTurns(loaded);
+      if (viewRef.current !== view) return;
+      const fallbackTs = fmtTimestamp(c.last_active_at);
+      setTurns(
+        msgs
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => savedTurn(m, fallbackTs)),
+      );
     } catch (e) {
+      if (viewRef.current !== view) return;
       setErrorMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (viewRef.current === view) setLoadingThread(false);
     }
   }
 
   function toggleSaved() {
     if (!threadId || !activeConv) return;
     patchSaveMut.mutate({ tid: threadId, saved: !activeConv.is_saved });
-  }
-
-  async function deleteCurrent() {
-    if (!threadId) return;
-    setConfirmDelete(true);
   }
 
   async function confirmDeleteCurrent() {
@@ -241,15 +332,11 @@ function ChatPage() {
 
   function pinTurn(t: AssistantTurnData) {
     if (!threadId) return;
-    pinNoteMut.mutate(
-      { tid: threadId, content: t.text },
-      {
-        onSuccess: () => {
-          setErrorMsg(null);
-        },
-      },
-    );
+    setErrorMsg(null);
+    pinNoteMut.mutate({ tid: threadId, content: t.text });
   }
+
+  const lastIndex = turns.length - 1;
 
   return (
     <>
@@ -351,7 +438,7 @@ function ChatPage() {
                   className="bg-surface-lowest border border-border-subtle px-2 h-7 w-14 text-text-primary body-sm tabular-nums focus:outline-none focus:border-border-focus"
                 />
               </label>
-              {lastAssistantTurn && <SourcesSheet citations={lastAssistantTurn.citations} />}
+              {latestSources && <SourcesSheet citations={latestSources} />}
               {threadId && (
                 <>
                   <button
@@ -362,9 +449,9 @@ function ChatPage() {
                     {activeConv?.is_saved ? "★ SAVED" : "☆ SAVE"}
                   </button>
                   <button
-                    onClick={deleteCurrent}
-                    disabled={deleteConvMut.isPending}
-                    className="label-sm text-error hover:bg-error hover:text-surface px-2 h-7 border border-error/40"
+                    onClick={() => setConfirmDelete(true)}
+                    disabled={deleteConvMut.isPending || streaming}
+                    className="label-sm text-error hover:bg-error hover:text-surface px-2 h-7 border border-error/40 disabled:opacity-50"
                   >
                     ✕ DELETE
                   </button>
@@ -376,30 +463,19 @@ function ChatPage() {
           {/* Conversation area */}
           <div
             ref={scrollRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            }}
             className="flex-1 overflow-auto px-3 sm:px-6 md:px-8 py-4 sm:py-6"
             aria-live="polite"
             aria-atomic="false"
           >
-            {errorMsg && (
-              <div className="mb-4">
-                <ErrorBanner message={errorMsg} />
-                <button
-                  onClick={() => {
-                    const lastUser = [...turns].reverse().find((t) => t.kind === "user");
-                    if (lastUser && lastUser.kind === "user") {
-                      setTurns((prev) => prev.filter((t) => t !== lastUser));
-                      setErrorMsg(null);
-                      void send(lastUser.text);
-                    }
-                  }}
-                  className="mt-2 label-sm text-text-primary hover:bg-text-primary hover:text-surface px-3 h-7 border border-border-subtle"
-                >
-                  ↻ RETRY
-                </button>
+            {turns.length === 0 && loadingThread ? (
+              <div className="max-w-4xl mx-auto">
+                <LoadingLine label="LOADING THREAD" />
               </div>
-            )}
-
-            {turns.length === 0 ? (
+            ) : turns.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto">
                 <div className="title-lg text-text-primary blink-cursor">AGENT_SESSION READY</div>
                 <div className="body-sm text-text-secondary mt-3">
@@ -439,42 +515,75 @@ function ChatPage() {
                         )
                       }
                       onPin={() => pinTurn(t)}
-                      pinning={pinNoteMut.isPending}
+                      pinning={pinNoteMut.isPending && pinNoteMut.variables?.content === t.text}
+                      onRetry={
+                        t.outcome && i === lastIndex && !streaming ? () => retry(i) : undefined
+                      }
                     />
                   ),
                 )}
 
-                {streaming && <StreamingTurn progress={streamProgress} text={streamingText} />}
+                {live && <StreamingTurn live={live} />}
               </div>
             )}
           </div>
 
           {/* Input */}
           <div className="border-t border-border-subtle px-3 sm:px-6 md:px-8 py-3 sm:py-4 shrink-0">
+            {errorMsg && (
+              <div
+                role="alert"
+                className="max-w-4xl mx-auto mb-3 flex items-start gap-3 border border-error/40 bg-error/5 px-4 py-2 label-sm text-error"
+              >
+                <span className="flex-1 min-w-0 break-words">ERROR: {errorMsg}</span>
+                <button
+                  onClick={() => setErrorMsg(null)}
+                  aria-label="Dismiss error"
+                  className="text-error hover:text-text-primary"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!streaming) send(input);
+                void send(input);
               }}
               className="max-w-4xl mx-auto flex items-center gap-3 border-b border-border-subtle focus-within:border-border-focus pb-2"
             >
               <span className="text-text-primary body-sm">{">"}</span>
+              {/* Typing stays open while an answer streams; sending waits for it. */}
               <input
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                disabled={streaming}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && streaming) stop();
+                }}
+                disabled={loadingThread}
                 placeholder="ASK THE AGENT..."
                 aria-label="Message to agent"
                 className="flex-1 min-w-0 bg-transparent border-0 outline-none text-text-primary placeholder:text-text-tertiary placeholder:label-sm body-sm py-2 focus-visible:ring-0"
               />
-              <button
-                type="submit"
-                disabled={streaming || !input.trim()}
-                className="label-sm text-text-primary disabled:text-text-tertiary hover:bg-text-primary hover:text-surface px-2 h-7 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
-              >
-                ↵ SEND
-              </button>
+              {streaming ? (
+                <button
+                  type="button"
+                  onClick={stop}
+                  title="Stop the answer (Esc)"
+                  className="label-sm text-error hover:bg-error hover:text-surface px-2 h-7 border border-error/40"
+                >
+                  ■ STOP
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={loadingThread || !input.trim()}
+                  className="label-sm text-text-primary disabled:text-text-tertiary hover:bg-text-primary hover:text-surface px-2 h-7 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
+                >
+                  ↵ SEND
+                </button>
+              )}
             </form>
           </div>
         </section>

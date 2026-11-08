@@ -182,6 +182,8 @@ export type AgentChatResponse = {
   answer: string;
   citations: AgentCitation[];
   metadata: AgentTurnMetadata;
+  // The answer reports a failure ("I had a problem…") and cites nothing.
+  failed: boolean;
 };
 
 export type AgentStreamEvent =
@@ -260,6 +262,7 @@ export type ConversationMessage = {
   timestamp: string | null;
   citations: Citation[] | null;
   metadata: AgentTurnMetadata | null;
+  failed: boolean;
 };
 
 export type SavedNote = {
@@ -528,6 +531,7 @@ export const api = {
               answer: String(data.answer ?? ""),
               citations: (data.citations as AgentCitation[]) ?? [],
               metadata: data.metadata as AgentTurnMetadata,
+              failed: data.failed === true,
             },
           });
         else if (evtName === "error")
