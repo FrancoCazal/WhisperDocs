@@ -532,6 +532,17 @@ From the outside in: CORS, then `RequestContextMiddleware`
   - `whisperdocs_errors_total{type}`
 - **Cost tracking** — `query_logs.cost_usd` populated per turn via `pricing.estimate_cost_usd(model, tokens_in, tokens_out)`.
 - **Health** — `/health` with `?deep=true` checks DB ping + pgvector extension + embedder reachability.
+- **Model status** — `app/services/model_status.py` keeps, for each role
+  (the seven agent nodes' models and the embedder), when its last call worked,
+  when one last failed and why (`classify_error`), and how many calls in a row
+  failed. `llm_service_for` hands out a `TrackedProvider` that records every
+  call, and the embedder records its own. The record is free to read:
+  `GET /admin/model-status`, the `models` block of `/health?deep=true` (a
+  failing role makes it `degraded`), and the frontend's notice. Like the
+  rate limits, it lives in process memory and starts over on a restart. The
+  eval CLI, a process of its own, does not show there.
+  - `whisperdocs_model_calls_total{role,model,outcome}` — outcome is `ok`
+    or the failure's kind
 
 ---
 

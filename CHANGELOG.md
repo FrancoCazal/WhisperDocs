@@ -31,6 +31,16 @@ Fixes from the November 2026 audit, and a review of the frontend.
   thread's messages, and the chat shows it under the answer. When a
   provider refuses every classifier call, the turn still answers from the
   documents, so before this list nothing showed the outage.
+- Each model role (classifier, query rewrite, answers, clarification, direct
+  answers, compacting, eval judge, embedding) keeps the outcome of its last
+  calls: when it last worked, when it last failed and why, and how many
+  calls in a row failed. The record comes from real calls; nothing is called
+  to check. `GET /admin/model-status` returns it, `/health?deep=true` adds it
+  and turns `degraded` while a role fails, and
+  `whisperdocs_model_calls_total{role,model,outcome}` counts the calls.
+  While a role fails, every page shows a notice naming the roles, the
+  reason and what the app does meanwhile. SETTINGS shows each role's
+  status.
 - History: filters by origin and by question text
   (`GET /query/history?source=&q=`), and pagination.
 - Frontend tests: vitest for the API client's stream parser, and a

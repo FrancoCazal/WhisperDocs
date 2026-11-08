@@ -160,7 +160,8 @@ See `.env.example` for every knob.
 | `POST` | `/api/v1/eval/run` | Eval suite |
 | `GET` | `/api/v1/eval/results` | List past eval reports |
 | `GET` | `/api/v1/admin/settings` | Runtime settings snapshot |
-| `GET` | `/api/v1/health` | Health check (`?deep=true` for full probe) |
+| `GET` | `/api/v1/admin/model-status` | Each model role's last calls, from real traffic (no model is called) |
+| `GET` | `/api/v1/health` | Health check (`?deep=true` for full probe and each model role's state) |
 | `GET` | `/api/v1/metrics` | Prometheus metrics |
 
 Uploads accept PDF, Markdown and plain text, up to 10 MB per file. Batches
