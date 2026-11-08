@@ -47,6 +47,9 @@ export const getRouter = () => {
     routeTree,
     context: { queryClient },
     scrollRestoration: true,
+    // A link's page starts loading when the pointer rests on it or it takes
+    // focus. The routes have no loaders: this fetches their code only.
+    defaultPreload: "intent",
     defaultPreloadStaleTime: 0,
     defaultErrorComponent: DefaultErrorComponent,
   });

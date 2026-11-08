@@ -291,6 +291,15 @@ function ChatPage() {
       error: string | null;
     } = { text: "", trace: [], final: null, error: null };
     const show = () => setLive({ startedAt, progress: got.trace, text: got.text });
+    // Tokens are drawn once per frame: each draw parses the whole answer's
+    // markdown again, and a fast stream sends several per frame.
+    let frame = 0;
+    const showSoon = () => {
+      frame ||= requestAnimationFrame(() => {
+        frame = 0;
+        if (viewRef.current === view) show();
+      });
+    };
 
     const userTurn: Turn = { kind: "user", ts: fmtTimestamp(), text: trimmed };
     setErrorMsg(null);
@@ -334,7 +343,7 @@ function ChatPage() {
             show();
           } else if (e.type === "token") {
             got.text += e.delta;
-            show();
+            showSoon();
           } else if (e.type === "final") {
             got.final = e.payload;
           } else if (e.type === "error") {
@@ -348,6 +357,8 @@ function ChatPage() {
       if (!run.controller.signal.aborted) got.error = e instanceof Error ? e.message : String(e);
     } finally {
       clearTimeout(idle);
+      // A frame still pending would bring the live turn back after it ends.
+      cancelAnimationFrame(frame);
     }
     // Another thread is on screen: this turn is not its.
     if (viewRef.current !== view) return;

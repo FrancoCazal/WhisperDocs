@@ -1,8 +1,14 @@
-import { createContext, memo, useContext, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github-dark.css";
 import type { AgentCitation } from "@/lib/api";
 import { interleaveCitations } from "./citations";
 
@@ -68,10 +74,42 @@ const COMPONENTS: Components = {
   li: CitedListItem,
 };
 const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS: Parameters<typeof ReactMarkdown>[0]["rehypePlugins"] = [
-  [rehypeHighlight, { detect: true, ignoreMissing: true }],
-];
 const NO_CITATIONS: AgentCitation[] = [];
+
+type RehypePlugins = NonNullable<Parameters<typeof ReactMarkdown>[0]["rehypePlugins"]>;
+const PLAIN: RehypePlugins = [];
+// The highlighter is its own chunk, fetched the first time an answer has a
+// code fence; once loaded, every answer shares it.
+let highlighter: RehypePlugins | null = null;
+let loading: Promise<RehypePlugins> | null = null;
+function loadHighlighter(): Promise<RehypePlugins> {
+  loading ??= import("./highlight").then(
+    (m) => (highlighter = [m.highlightPlugin]),
+    (e: unknown) => {
+      loading = null; // the next fence tries again; until then code stays plain
+      throw e;
+    },
+  );
+  return loading;
+}
+const FENCE = /^ {0,3}(```|~~~)/m;
+
+function useRehypePlugins(text: string): RehypePlugins {
+  const fenced = FENCE.test(text);
+  const [plugins, setPlugins] = useState(highlighter);
+  useEffect(() => {
+    if (!fenced || plugins) return;
+    let live = true;
+    loadHighlighter().then(
+      (p) => live && setPlugins(p),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [fenced, plugins]);
+  return fenced && plugins ? plugins : PLAIN;
+}
 
 // Memoized on (text, citations, onCite): a finished answer does not
 // re-render while another one streams, so `onCite` must be stable.
@@ -85,12 +123,13 @@ export const Markdown = memo(function Markdown({
   onCite?: (n: number) => void;
 }) {
   const value = useMemo(() => ({ citations, onCite }), [citations, onCite]);
+  const rehypePlugins = useRehypePlugins(text);
   return (
     <CitationsContext.Provider value={value}>
       <div className="body-read text-text-primary markdown-body">
         <ReactMarkdown
           remarkPlugins={REMARK_PLUGINS}
-          rehypePlugins={REHYPE_PLUGINS}
+          rehypePlugins={rehypePlugins}
           components={COMPONENTS}
         >
           {text}
