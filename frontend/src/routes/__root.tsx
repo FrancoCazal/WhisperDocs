@@ -16,19 +16,21 @@ function NotFoundComponent() {
   );
 }
 
+// What the README says the project is: the pages' own titles and
+// descriptions are about each page.
+const SITE_TITLE = "WhisperDocs — self-hosted RAG with citations";
+const SITE_DESCRIPTION =
+  "A self-hosted RAG engine with an intent-routed agent: it answers questions about your own documents with citations, and measures how good and how expensive each answer is.";
+
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "WhisperDocs — Backend Engineer's AI Reference" },
-      {
-        name: "description",
-        content: "WhisperDocs RAG operations console — grounded answers with citations.",
-      },
-      { name: "author", content: "WhisperDocs" },
-      { property: "og:title", content: "WhisperDocs Console" },
-      { property: "og:description", content: "RAG operations console for backend & AI engineers." },
+      { title: SITE_TITLE },
+      { name: "description", content: SITE_DESCRIPTION },
+      { property: "og:title", content: SITE_TITLE },
+      { property: "og:description", content: SITE_DESCRIPTION },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
