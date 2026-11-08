@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { api, fmtCost, fmtDate, fmtPct, type EvalReport } from "@/lib/api";
+import { parseEvalDataset, STARTER_DATASET } from "@/lib/evalDataset";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
 import { EmptyState, ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
@@ -21,36 +22,7 @@ export const Route = createFileRoute("/evaluacion")({
   component: EvaluacionPage,
 });
 
-const STARTER_DATASET = JSON.stringify(
-  [
-    {
-      question: "What distance metrics does pgvector support?",
-      expected: "cosine, l2, inner_product",
-      difficulty: "easy",
-      category: "in_scope",
-    },
-    {
-      question: "How do you create an IVFFlat index in pgvector?",
-      expected: "CREATE INDEX ... USING ivfflat",
-      difficulty: "medium",
-      category: "in_scope",
-    },
-    {
-      question: "Difference between selectinload and joinedload",
-      expected: "selectinload uses IN; joinedload uses JOIN",
-      difficulty: "medium",
-      category: "in_scope",
-    },
-    {
-      question: "What is the capital of France?",
-      expected: "out of scope",
-      difficulty: "easy",
-      category: "out_of_scope",
-    },
-  ],
-  null,
-  2,
-);
+const STARTER_TEXT = JSON.stringify(STARTER_DATASET, null, 2);
 
 function EvaluacionPage() {
   const qc = useQueryClient();
@@ -59,24 +31,20 @@ function EvaluacionPage() {
 
   const [currentRun, setCurrentRun] = useState<EvalReport | null>(null);
   const [open, setOpen] = useState(false);
-  const [dataset, setDataset] = useState(STARTER_DATASET);
+  const [dataset, setDataset] = useState(STARTER_TEXT);
   const [collId, setCollId] = useState<number | null>(null);
   const [topK, setTopK] = useState(5);
   const [conc, setConc] = useState(4);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const parsed = useMemo(() => parseEvalDataset(dataset), [dataset]);
+
   const runEval = useMutation({
     mutationFn: () => {
-      let parsed: unknown[];
-      try {
-        parsed = JSON.parse(dataset);
-        if (!Array.isArray(parsed)) throw new Error("Dataset must be a JSON array");
-      } catch (e) {
-        throw new Error(`Invalid dataset JSON: ${e instanceof Error ? e.message : e}`);
-      }
+      if (!parsed.items) throw new Error("Fix the dataset first");
       if (collId === null) throw new Error("Select a collection");
       return api.runEval({
-        dataset: parsed,
+        dataset: parsed.items,
         collection_id: collId,
         top_k: topK,
         concurrency: conc,
@@ -222,22 +190,46 @@ function EvaluacionPage() {
         title="EXECUTE EVALUATION"
         width="max-w-2xl"
       >
-        <Field label="DATASET (JSON ARRAY)">
-          <div className="flex justify-end mb-1">
+        {/* Not a <Field>: a <label> around the button makes a click on the
+            label's text press it and replace the user's dataset. */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <label htmlFor="eval-dataset" className="label-sm text-text-secondary">
+              DATASET (JSON ARRAY)
+            </label>
             <button
-              onClick={() => setDataset(STARTER_DATASET)}
+              type="button"
+              onClick={() => setDataset(STARTER_TEXT)}
               className="label-xs text-text-secondary hover:text-primary-blue"
             >
               ↺ LOAD STARTER DATASET
             </button>
           </div>
           <textarea
+            id="eval-dataset"
             value={dataset}
             onChange={(e) => setDataset(e.target.value)}
             rows={10}
+            spellCheck={false}
+            aria-invalid={parsed.items === null}
+            aria-describedby="eval-dataset-status"
             className={textareaCls}
           />
-        </Field>
+          <div id="eval-dataset-status" className="mt-2 label-xs">
+            {parsed.items ? (
+              <span className="text-text-tertiary">
+                {parsed.items.length} ITEMS · EACH CALLS THE ANSWER MODEL ONCE AND THE JUDGE TWICE
+              </span>
+            ) : (
+              <ul className="text-error space-y-0.5 normal-case">
+                {parsed.errors.slice(0, 6).map((e) => (
+                  <li key={e}>{e}</li>
+                ))}
+                {parsed.errors.length > 6 && <li>…and {parsed.errors.length - 6} more</li>}
+              </ul>
+            )}
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Field label="COLLECTION">
             <select
@@ -277,7 +269,14 @@ function EvaluacionPage() {
         {formError && <div className="label-sm text-error mb-3">ERROR: {formError}</div>}
         <div className="flex justify-end gap-2 mt-4">
           <Btn onClick={() => setOpen(false)}>CANCEL</Btn>
-          <Btn variant="primary" disabled={runEval.isPending} onClick={() => runEval.mutate()}>
+          <Btn
+            variant="primary"
+            disabled={runEval.isPending || parsed.items === null || collId === null}
+            onClick={() => {
+              setFormError(null);
+              runEval.mutate();
+            }}
+          >
             {runEval.isPending ? "EXECUTING..." : "EXECUTE"}
           </Btn>
         </div>

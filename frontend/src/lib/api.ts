@@ -150,6 +150,17 @@ export type QueryLog = {
   created_at: string;
 };
 
+// One question of an eval dataset (TestItem in app/eval/schemas.py).
+export type EvalItem = {
+  id: number;
+  question: string;
+  expected_answer: string;
+  difficulty: "easy" | "medium" | "hard";
+  category: "in_scope" | "out_of_scope";
+  // Titles of the documents a good retrieval returns.
+  expected_sources?: string[];
+};
+
 export type EvalMetrics = {
   total: number;
   accuracy: number;
@@ -627,7 +638,7 @@ export const api = {
 
   evalResults: (limit = 20) => request<EvalRunSummary[]>(`/eval/results?limit=${limit}`),
   runEval: (body: {
-    dataset: unknown[];
+    dataset: EvalItem[];
     collection_id: number;
     top_k: number;
     concurrency: number;
