@@ -151,6 +151,7 @@ describe("the agent's event stream", () => {
       message: "hi",
       thread_id: null,
       collection_id: null,
+      document_id: null,
       top_k: 5,
     });
   });

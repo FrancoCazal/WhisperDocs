@@ -74,8 +74,13 @@ class VectorRetriever:
         query_embedding: list[float],
         collection_id: int | None = None,
         top_k: int = 5,
+        document_id: int | None = None,
     ) -> list[RetrievedChunk]:
         """Vector leg: nearest chunks by cosine distance.
+
+        `document_id` searches that document only, and then `collection_id`
+        is not applied: the document is the narrower scope, and it stays
+        right if the document moves to another collection.
 
         On a large table Postgres walks the HNSW index in distance order and
         applies the collection filter afterwards, over only `hnsw.ef_search`
@@ -95,9 +100,14 @@ class VectorRetriever:
         chunks.
         """
         await self.db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
-        rows = await self._nearest(query_embedding, collection_id, top_k, exact=False)
-        if collection_id is not None and len(rows) < top_k:
-            rows = await self._nearest(query_embedding, collection_id, top_k, exact=True)
+        rows = await self._nearest(
+            query_embedding, collection_id, top_k, exact=False, document_id=document_id
+        )
+        filtered = collection_id is not None or document_id is not None
+        if filtered and len(rows) < top_k:
+            rows = await self._nearest(
+                query_embedding, collection_id, top_k, exact=True, document_id=document_id
+            )
 
         chunks: list[RetrievedChunk] = []
         for chunk, document, dist in rows:
@@ -122,6 +132,7 @@ class VectorRetriever:
         top_k: int,
         *,
         exact: bool,
+        document_id: int | None = None,
     ) -> list:
         """(Chunk, Document, distance) rows, nearest first.
 
@@ -137,7 +148,9 @@ class VectorRetriever:
             .order_by(distance + 0 if exact else distance)
             .limit(top_k)
         )
-        if collection_id is not None:
+        if document_id is not None:
+            query = query.where(Chunk.document_id == document_id)
+        elif collection_id is not None:
             query = query.where(Document.collection_id == collection_id)
 
         result = await self.db.execute(query)
@@ -148,8 +161,10 @@ class VectorRetriever:
         query_text: str,
         collection_id: int | None = None,
         limit: int = 20,
+        document_id: int | None = None,
     ) -> list[RetrievedChunk]:
-        """Full-text leg: chunks sharing any lexeme with the question.
+        """Full-text leg: chunks sharing any lexeme with the question, in
+        `document_id` when given (see `retrieve`), else in `collection_id`.
 
         Ranked by `ts_rank_cd`, Postgres cover-density ranking. It is not
         BM25: there is no IDF term. No length normalization: on the golden set
@@ -159,7 +174,12 @@ class VectorRetriever:
         if not query_text or not query_text.strip():
             return []
 
-        col_filter = "AND d.collection_id = :col_id" if collection_id is not None else ""
+        if document_id is not None:
+            scope_filter, scope_id = "AND c.document_id = :scope_id", document_id
+        elif collection_id is not None:
+            scope_filter, scope_id = "AND d.collection_id = :scope_id", collection_id
+        else:
+            scope_filter, scope_id = "", None
         sql = f"""
             SELECT
                 c.id AS chunk_id,
@@ -172,7 +192,7 @@ class VectorRetriever:
             JOIN documents d ON d.id = c.document_id
             CROSS JOIN (SELECT {or_tsquery_sql("q")} AS tsq) q
             WHERE c.tsv @@ q.tsq
-              {col_filter}
+              {scope_filter}
             ORDER BY rank DESC, c.id
             LIMIT :limit
         """
@@ -180,8 +200,8 @@ class VectorRetriever:
             bindparam("q", value=query_text),
             bindparam("limit", value=limit),
         )
-        if collection_id is not None:
-            stmt = stmt.bindparams(bindparam("col_id", value=collection_id))
+        if scope_id is not None:
+            stmt = stmt.bindparams(bindparam("scope_id", value=scope_id))
         rows = list((await self.db.execute(stmt)).mappings())
         if not rows:
             return []
@@ -207,6 +227,7 @@ class VectorRetriever:
         top_k: int = 5,
         k_rrf: int = 60,
         candidate_pool: int = DEFAULT_CANDIDATE_POOL,
+        document_id: int | None = None,
     ) -> list[RetrievedChunk]:
         """Top `candidate_pool` from each leg, fused with RRF, cut to `top_k`.
 
@@ -216,8 +237,12 @@ class VectorRetriever:
             query_embedding=query_embedding,
             collection_id=collection_id,
             top_k=candidate_pool,
+            document_id=document_id,
         )
         lexical = await self.lexical_retrieve(
-            query_text, collection_id=collection_id, limit=candidate_pool
+            query_text,
+            collection_id=collection_id,
+            limit=candidate_pool,
+            document_id=document_id,
         )
         return fuse_rrf(vector, lexical, top_k=top_k, k_rrf=k_rrf)

@@ -222,6 +222,7 @@ erDiagram
   Collection ||--o{ IngestionJob : "scoped to"
   Conversation ||--o{ SavedNote : "pins"
   Collection ||--o{ Conversation : "default scope"
+  Document |o--o{ Conversation : "narrows to"
   Conversation ||--o{ QueryLog : logs
   Collection ||--o{ QueryLog : "scoped to"
 
@@ -278,6 +279,8 @@ erDiagram
     string user_number
     string channel
     int collection_id FK
+    int document_id FK "searched in place of the collection"
+    string title "the first question"
     bool is_saved
     timestamp last_active_at
     timestamp created_at
@@ -320,7 +323,9 @@ LangGraph checkpointer state lives in dedicated tables managed by
 between graph nodes. Splits into two lifetimes:
 
 - **Persistent** (survive across turns via checkpointer): `messages`,
-  `summary`, `summary_covered_count`, `collection_id`.
+  `summary`, `summary_covered_count`, `collection_id`, `document_id` (the
+  one document a thread searches in place of its collection, from a
+  document's ASK IN CHAT).
 - **Transient** (reset by `check_compaction` each turn): `pending_action`,
   `retrieved_chunks`, `metadata`.
 

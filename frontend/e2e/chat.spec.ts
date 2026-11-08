@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // The chat end to end in a browser: a question, the streamed answer, the
-// thread in the URL, and a citation that opens its source. The backend is
-// played below.
+// thread in the URL, a citation that opens its source, and a chat that
+// searches one document. The backend is played below.
 
 const THREAD = "5f0c2a8e-1d2b-4c3d-9e4f-a1b2c3d4e5f6";
 const NOW = "2026-11-08T12:00:00Z";
@@ -49,10 +49,15 @@ const STREAM = sse([
   ],
 ]);
 
-/** Answers every API request the chat makes; returns the requests it did
- *  not expect, which a test then requires to be none. */
-async function playBackend(page: Page): Promise<string[]> {
+/** Answers every API request the chat makes, and `extra` GETs. Returns the
+ *  requests it did not expect, which a test then requires to be none, and
+ *  the bodies of the questions the chat sent. */
+async function playBackend(
+  page: Page,
+  extra: Record<string, unknown> = {},
+): Promise<{ unexpected: string[]; sent: unknown[] }> {
   const unexpected: string[] = [];
+  const sent: unknown[] = [];
   const conversation = {
     id: 1,
     thread_id: THREAD,
@@ -70,7 +75,7 @@ async function playBackend(page: Page): Promise<string[]> {
     const path = new URL(req.url()).pathname.replace(/^.*\/api\/v1/, "");
     const method = req.method();
     if (method === "POST" && path === "/agent/chat/stream") {
-      expect(req.postDataJSON()).toMatchObject({ message: "What is RAG?", thread_id: null });
+      sent.push(req.postDataJSON());
       return route.fulfill({ status: 200, contentType: "text/event-stream", body: STREAM });
     }
     const page0 = { items: [], next_cursor: null, total: 0 };
@@ -87,16 +92,17 @@ async function playBackend(page: Page): Promise<string[]> {
       [`/conversations/${THREAD}`]: conversation,
       "/notes": [],
       "/query/history": page0,
+      ...extra,
     };
     if (method === "GET" && path in answers) return route.fulfill({ json: answers[path] });
     unexpected.push(`${method} ${path}`);
     return route.fulfill({ status: 404, json: { detail: "not played" } });
   });
-  return unexpected;
+  return { unexpected, sent };
 }
 
 test("a question streams an answer whose citation opens its source", async ({ page }) => {
-  const unexpected = await playBackend(page);
+  const { unexpected, sent } = await playBackend(page);
   const errors: string[] = [];
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
@@ -123,6 +129,52 @@ test("a question streams an answer whose citation opens its source", async ({ pa
   await expect(sources).toContainText("rag-fundamentals.md");
   await expect(sources).toContainText("RAG retrieves passages from your documents");
 
+  expect(sent).toEqual([
+    expect.objectContaining({ message: "What is RAG?", thread_id: null, document_id: null }),
+  ]);
   expect(unexpected).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test("a document's ASK IN CHAT searches only that document", async ({ page }) => {
+  const { unexpected, sent } = await playBackend(page, {
+    "/collections": [
+      {
+        id: 1,
+        name: "Docs",
+        description: null,
+        created_at: NOW,
+        document_count: 1,
+        chunk_count: 3,
+        total_tokens: 120,
+      },
+    ],
+    [`/documents/${CITATION.document_id}`]: {
+      id: CITATION.document_id,
+      collection_id: 1,
+      title: CITATION.document_title,
+      filename: CITATION.document_title,
+      file_type: "md",
+      chunk_count: 3,
+      total_tokens: 120,
+      created_at: NOW,
+      raw_text: CITATION.text_preview,
+    },
+  });
+  await page.goto(`/chat?document=${CITATION.document_id}`);
+
+  // The chat takes the document, and leaves the URL to the thread it becomes.
+  await expect(page.getByTitle(`Questions search only ${CITATION.document_title}.`)).toBeVisible();
+  await expect(page).not.toHaveURL(/document=/);
+
+  const composer = page.getByRole("textbox", { name: "Message to agent" });
+  await composer.fill("What is RAG?");
+  await composer.press("Enter");
+  await expect(page.getByText("RAG answers from retrieved passages")).toBeVisible();
+  expect(sent).toEqual([expect.objectContaining({ document_id: CITATION.document_id })]);
+
+  // Leaving the document goes back to its collection, for the next question.
+  await page.getByRole("button", { name: "Search the whole collection" }).click();
+  await expect(page.getByRole("combobox", { name: /COLLECTION/ })).toHaveValue("1");
+  expect(unexpected).toEqual([]);
 });

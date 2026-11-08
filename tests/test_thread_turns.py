@@ -1,5 +1,6 @@
 """A thread remembers each turn's time and the node that answered it, and a
-turn can move the thread to every collection (frontend review P3).
+turn can move the thread to every collection (frontend review P3), or narrow
+it to one document (BE-6).
 
 Runs the real app over ASGI, without its lifespan, with the database and the
 compiled graph replaced.
@@ -15,10 +16,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agent.thread_id import thread_title
 from app.agent.utils.messages import stamped
-from app.api.v1.agent import apply_turn_collection, ensure_title
+from app.api.v1.agent import apply_turn_scope, ensure_title
 from app.db import get_db
 from app.main import app
-from app.models import Conversation
+from app.models import Conversation, Document
 from app.schemas.agent import AgentChatRequest
 
 THREAD = "8f14e45f-ceea-467f-a0e6-0a8b7c1d2e3f"
@@ -35,16 +36,39 @@ THREAD = "8f14e45f-ceea-467f-a0e6-0a8b7c1d2e3f"
 )
 def test_a_turn_moves_the_thread_only_when_it_names_a_collection(body, expected):
     conv = Conversation(thread_id="t", collection_id=3, channel="web")
-    apply_turn_collection(conv, AgentChatRequest.model_validate(body))
+    apply_turn_scope(conv, AgentChatRequest.model_validate(body), None)
     assert conv.collection_id == expected
 
 
+def _document(id_: int = 12, collection_id: int = 5) -> Document:
+    return Document(id=id_, collection_id=collection_id, title="d.md", filename="d.md")
+
+
+@pytest.mark.parametrize(
+    ("body", "document", "expected"),
+    [
+        ({"message": "q", "document_id": 12}, _document(), (12, 5)),
+        ({"message": "q", "collection_id": 3}, None, (8, 3)),
+        ({"message": "q", "collection_id": 3, "document_id": None}, None, (None, 3)),
+    ],
+    ids=["a-document-narrows-it-to-its-collection", "left-out-keeps-it", "null-is-its-collection"],
+)
+def test_a_turn_narrows_the_thread_only_when_it_names_a_document(body, document, expected):
+    conv = Conversation(thread_id="t", collection_id=3, document_id=8, channel="web")
+    apply_turn_scope(conv, AgentChatRequest.model_validate(body), document)
+    assert (conv.document_id, conv.collection_id) == expected
+
+
 class _Db:
-    def __init__(self, conv: Conversation) -> None:
+    def __init__(self, conv: Conversation, documents: dict[int, Document] | None = None) -> None:
         self.conv = conv
+        self.documents = documents or {}
 
     async def scalar(self, _statement):
         return self.conv
+
+    async def get(self, _model, id_):
+        return self.documents.get(id_)
 
     def add(self, _obj) -> None:
         pass
@@ -82,7 +106,7 @@ def conv():
     conv = Conversation(thread_id="t", collection_id=3, channel="web")
 
     async def fake_db():
-        yield _Db(conv)
+        yield _Db(conv, {12: _document()})
 
     app.dependency_overrides[get_db] = fake_db
     yield conv
@@ -111,6 +135,35 @@ async def test_all_on_an_existing_thread_searches_every_collection(conv):
     assert r.status_code == 200
     assert conv.collection_id is None
     assert agent.inputs[0]["collection_id"] is None
+
+
+async def test_a_turn_with_a_document_searches_only_it(conv):
+    agent = _Agent()
+    r = await _call(
+        agent,
+        "POST",
+        "/agent/chat",
+        json={"message": "q", "thread_id": THREAD, "collection_id": 3, "document_id": 12},
+    )
+
+    assert r.status_code == 200
+    assert (conv.document_id, conv.collection_id) == (12, 5)
+    assert agent.inputs[0]["document_id"] == 12
+    assert agent.inputs[0]["collection_id"] == 5
+
+
+async def test_a_document_that_does_not_exist_is_refused(conv):
+    agent = _Agent()
+    r = await _call(
+        agent,
+        "POST",
+        "/agent/chat",
+        json={"message": "q", "thread_id": THREAD, "document_id": 99},
+    )
+
+    assert r.status_code == 400
+    assert r.json()["detail"] == "Document 99 not found"
+    assert agent.inputs == []
 
 
 async def test_the_question_is_stamped_with_when_it_was_asked(conv):

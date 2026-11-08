@@ -65,6 +65,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
         "",
     )
     collection_id = state.get("collection_id")
+    document_id = state.get("document_id")
     state_summary = state.get("summary")
     top_k = _requested_top_k(config)
 
@@ -95,6 +96,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
                     query_embedding=query_embedding,
                     collection_id=collection_id,
                     top_k=top_k,
+                    document_id=document_id,
                 )
             except Exception:
                 errors_total.labels(type="retrieval").inc()
@@ -102,6 +104,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
                     "retrieval_failed",
                     node="search_docs",
                     collection_id=collection_id,
+                    document_id=document_id,
                     top_k=top_k,
                 )
                 retrieval_failed = True
@@ -122,6 +125,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
         chunks=len(chunks),
         top_relevance=top_rel,
         collection_id=collection_id,
+        document_id=document_id,
         top_k=top_k,
         failed=retrieval_failed,
     )
@@ -291,6 +295,7 @@ def _turn_result(
             **gen_md,
             **extra_md,
             "collection_id_active": collection_id,
+            "document_id_active": state.get("document_id"),
             "retrieval_chunks_count": len(chunks),
             "retrieval_top_relevance": top_rel,
             "turn_failed": failed,

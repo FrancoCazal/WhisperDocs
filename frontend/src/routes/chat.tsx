@@ -46,12 +46,12 @@ export const Route = createFileRoute("/chat")({
     ],
   }),
   // ?thread=<id>: the thread on screen, so a reload or a link reopens it.
-  // ?collection=<id>: a new chat in that collection (a document's ASK IN CHAT).
-  validateSearch: (search: Record<string, unknown>): { thread?: string; collection?: number } => {
-    const out: { thread?: string; collection?: number } = {};
+  // ?document=<id>: a new chat that searches only that document (its ASK IN CHAT).
+  validateSearch: (search: Record<string, unknown>): { thread?: string; document?: number } => {
+    const out: { thread?: string; document?: number } = {};
     if (typeof search.thread === "string" && search.thread) out.thread = search.thread;
-    const c = Number(search.collection);
-    if (search.collection !== undefined && Number.isInteger(c) && c > 0) out.collection = c;
+    const d = Number(search.document);
+    if (search.document !== undefined && Number.isInteger(d) && d > 0) out.document = d;
     return out;
   },
   component: ChatPage,
@@ -98,11 +98,13 @@ function ChatPage() {
   const qc = useQueryClient();
   const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
   const navigate = useNavigate({ from: "/chat" });
-  const { thread: urlThread = null, collection: urlCollection } = Route.useSearch();
+  const { thread: urlThread = null, document: urlDocument } = Route.useSearch();
 
   const [threadId, setThreadId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [collectionId, setCollectionId] = useState<number | null>(null);
+  // The one document the thread searches, in place of the collection.
+  const [documentId, setDocumentId] = useState<number | null>(null);
   const { topK, defaultTopK, setTopK } = useTopK();
   const [input, setInput] = useState("");
   const [live, setLive] = useState<LiveTurn | null>(null);
@@ -130,6 +132,12 @@ function ChatPage() {
   const streaming = live !== null;
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
+  // Its title for the scope, and its collection for when the thread leaves it.
+  const scopeDocument = useQuery({
+    queryKey: ["document", documentId],
+    queryFn: () => api.getDocument(documentId as number),
+    enabled: documentId !== null,
+  });
   // The thread list's search (asked once the typing pauses) and SAVED filter.
   const [threadQ, setThreadQ] = useState("");
   const [savedOnly, setSavedOnly] = useState(false);
@@ -321,7 +329,13 @@ function ChatPage() {
 
     try {
       await api.agentChatStream(
-        { message: trimmed, thread_id: threadId, collection_id: collectionId, top_k: topK },
+        {
+          message: trimmed,
+          thread_id: threadId,
+          collection_id: collectionId,
+          document_id: documentId,
+          top_k: topK,
+        },
         (e) => {
           if (viewRef.current !== view) return;
           resetIdle();
@@ -440,6 +454,7 @@ function ChatPage() {
     leaveThread();
     showThread(null, url);
     setChannel("web");
+    setDocumentId(null);
     setTurns([]);
   }
 
@@ -451,6 +466,7 @@ function ChatPage() {
     showThread(c.thread_id, url);
     setChannel(c.channel);
     setCollectionId(c.collection_id ?? null);
+    setDocumentId(c.document_id ?? null);
     setTurns([]);
     setLoadingThread(true);
     try {
@@ -495,18 +511,24 @@ function ChatPage() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => followUrl(urlThread), [urlThread]);
 
-  // ?collection=N starts a new chat scoped to it, then leaves the URL: the
-  // thread it becomes takes the URL over, and a reload keeps that thread.
-  const takeCollection = useEffectEvent((id: number) => {
+  // ?document=N starts a new chat that searches only it, then leaves the URL:
+  // the thread it becomes takes the URL over, and keeps the document.
+  const takeDocument = useEffectEvent((id: number) => {
     if (urlThread) return;
     startNew("keep");
-    setCollectionId(id);
+    setDocumentId(id);
     void navigate({ search: {}, replace: true });
   });
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (urlCollection !== undefined) takeCollection(urlCollection);
-  }, [urlCollection]);
+    if (urlDocument !== undefined) takeDocument(urlDocument);
+  }, [urlDocument]);
+
+  // The next question searches the document's collection again.
+  function leaveDocument() {
+    if (scopeDocument.data) setCollectionId(scopeDocument.data.collection_id);
+    setDocumentId(null);
+  }
 
   function toggleSaved() {
     if (!threadId || !activeConv) return;
@@ -625,6 +647,12 @@ function ChatPage() {
                 collections={collections.data}
                 collectionId={collectionId}
                 onCollection={setCollectionId}
+                scopeDocument={
+                  documentId === null
+                    ? null
+                    : { id: documentId, title: scopeDocument.data?.title ?? null }
+                }
+                onLeaveDocument={leaveDocument}
                 topK={topK}
                 defaultTopK={defaultTopK}
                 onTopK={setTopK}

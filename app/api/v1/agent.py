@@ -14,7 +14,7 @@ from app.agent.utils.messages import stamped
 from app.db import SessionLocal, get_db
 from app.logging_config import get_logger
 from app.metrics import agent_turn_duration_seconds
-from app.models import Collection, Conversation, QueryLog
+from app.models import Collection, Conversation, Document, QueryLog
 from app.services.llm.pricing import estimate_cost_usd
 from app.schemas.agent import (
     AgentChatRequest,
@@ -49,29 +49,20 @@ async def agent_chat(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> AgentChatResponse:
-    if payload.collection_id is not None:
-        exists = await db.scalar(
-            select(Collection.id).where(Collection.id == payload.collection_id)
-        )
-        if exists is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Collection {payload.collection_id} not found",
-            )
+    document, error = await check_turn_scope(db, payload)
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
     thread_id = str(payload.thread_id) if payload.thread_id else str(uuid.uuid4())
 
     conv = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
     if conv is None:
-        conv = Conversation(
-            thread_id=thread_id,
-            collection_id=payload.collection_id,
-            channel="web",
-        )
+        conv = Conversation(thread_id=thread_id, channel="web")
+        apply_turn_scope(conv, payload, document)
         db.add(conv)
         await db.flush()
     else:
-        apply_turn_collection(conv, payload)
+        apply_turn_scope(conv, payload, document)
     ensure_title(conv, payload.message)
 
     agent = request.app.state.agent
@@ -81,6 +72,7 @@ async def agent_chat(
             {
                 "messages": [HumanMessage(content=payload.message, additional_kwargs=stamped())],
                 "collection_id": conv.collection_id,
+                "document_id": conv.document_id,
             },
             config={
                 # top_k is per request, not conversation state (audit A6).
@@ -135,12 +127,43 @@ async def agent_chat(
     )
 
 
-def apply_turn_collection(conv: Conversation, payload: AgentChatRequest) -> None:
+async def check_turn_scope(
+    db: AsyncSession, payload: AgentChatRequest
+) -> tuple[Document | None, str | None]:
+    """The document the turn names, if any, and the error for a collection or
+    a document that does not exist."""
+    if payload.collection_id is not None:
+        exists = await db.scalar(
+            select(Collection.id).where(Collection.id == payload.collection_id)
+        )
+        if exists is None:
+            return None, f"Collection {payload.collection_id} not found"
+    if payload.document_id is None:
+        return None, None
+    document = await db.get(Document, payload.document_id)
+    if document is None:
+        return None, f"Document {payload.document_id} not found"
+    return document, None
+
+
+def apply_turn_scope(
+    conv: Conversation, payload: AgentChatRequest, document: Document | None
+) -> None:
     """A turn that names `collection_id` moves the thread to it, and an
     explicit null moves it to every collection (ALL); a turn that leaves the
-    field out keeps the thread's collection (§2.4)."""
+    field out keeps the thread's collection (§2.4).
+
+    `document_id` works the same way, one level down. A document narrows the
+    thread to it, and moves the thread to the document's collection, so a
+    later null goes back to that collection; null searches the collection
+    again. While the thread has a document, retrieval searches only it.
+    """
     if "collection_id" in payload.model_fields_set:
         conv.collection_id = payload.collection_id
+    if "document_id" in payload.model_fields_set:
+        conv.document_id = payload.document_id
+        if document is not None:
+            conv.collection_id = document.collection_id
 
 
 def ensure_title(conv: Conversation, message: str) -> None:
@@ -171,31 +194,25 @@ async def agent_chat_stream(
 
     async def event_stream() -> AsyncIterator[bytes]:
         thread_id = str(payload.thread_id) if payload.thread_id else str(uuid.uuid4())
-        collection_id = payload.collection_id
 
         async with SessionLocal() as db:
-            if collection_id is not None:
-                exists = await db.scalar(
-                    select(Collection.id).where(Collection.id == collection_id)
-                )
-                if exists is None:
-                    yield _sse("error", {"message": f"Collection {collection_id} not found"})
-                    return
+            document, error = await check_turn_scope(db, payload)
+            if error:
+                yield _sse("error", {"message": error})
+                return
 
             conv = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
             if conv is None:
-                conv = Conversation(
-                    thread_id=thread_id,
-                    collection_id=collection_id,
-                    channel="web",
-                )
+                conv = Conversation(thread_id=thread_id, channel="web")
+                apply_turn_scope(conv, payload, document)
                 db.add(conv)
                 await db.flush()
             else:
-                apply_turn_collection(conv, payload)
+                apply_turn_scope(conv, payload, document)
             ensure_title(conv, payload.message)
             await db.commit()
             active_collection_id = conv.collection_id
+            active_document_id = conv.document_id
 
         yield _sse("thread", {"thread_id": thread_id})
 
@@ -210,6 +227,7 @@ async def agent_chat_stream(
                         HumanMessage(content=payload.message, additional_kwargs=stamped())
                     ],
                     "collection_id": active_collection_id,
+                    "document_id": active_document_id,
                 },
                 config={
                     "configurable": {"thread_id": thread_id, "top_k": payload.top_k},

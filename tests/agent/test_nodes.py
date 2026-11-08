@@ -295,6 +295,39 @@ async def test_search_docs_top_relevance_is_the_best_cosine(
     assert [c["cosine"] for c in result["retrieved_chunks"]] == [None, 0.55]
 
 
+async def test_search_docs_searches_only_the_threads_document(
+    fake_provider,
+    mock_llm_service_for,
+    mock_embedder,
+    mock_session_local,
+    rag_chunk,
+    monkeypatch,
+):
+    calls: list[dict] = []
+
+    async def fake_retrieve(**kwargs):
+        calls.append(kwargs)
+        return [rag_chunk(0)]
+
+    monkeypatch.setattr("app.agent.nodes.search_docs.retrieve_pipeline", fake_retrieve)
+    mock_llm_service_for("app.agent.nodes.search_docs", fake_provider)
+    monkeypatch.setattr(
+        "app.agent.utils.query_rewrite.llm_service_for",
+        lambda _n: (fake_provider, "fake", 0.0),
+    )
+
+    result = await search_docs_node(
+        {
+            "messages": [HumanMessage(content="¿quién es tino?")],
+            "collection_id": 3,
+            "document_id": 12,
+        }
+    )
+
+    assert (calls[0]["collection_id"], calls[0]["document_id"]) == (3, 12)
+    assert result["metadata"]["document_id_active"] == 12
+
+
 def _rag_calls(provider) -> list:
     """Calls with the RAG system prompt: query rewrite may use the same fake."""
     prompt = search_docs_module.RAG_SYSTEM_PROMPT_AGENT

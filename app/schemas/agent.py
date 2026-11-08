@@ -5,6 +5,10 @@ class AgentChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=5000)
     thread_id: UUID4 | None = None
     collection_id: int | None = None
+    # One document to search in place of the collection. Like collection_id,
+    # a turn that names it changes the thread's, and null goes back to the
+    # collection (see apply_turn_scope).
+    document_id: int | None = None
     top_k: int = Field(default=5, ge=1, le=20)
 
 

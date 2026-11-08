@@ -21,8 +21,11 @@ async def retrieve(
     collection_id: int | None,
     top_k: int,
     reranker: Reranker | None = None,
+    document_id: int | None = None,
 ) -> list[RetrievedChunk]:
     """Hybrid (vector + full-text) retrieval, optionally followed by cross-encoder rerank.
+
+    `document_id` searches only that document (see `VectorRetriever.retrieve`).
 
     When reranking is active, fetches `reranker_candidate_pool` chunks (default
     20), then narrows to `top_k` via the reranker. Without reranking, returns
@@ -48,6 +51,7 @@ async def retrieve(
         collection_id=collection_id,
         top_k=fetch_k,
         candidate_pool=max(fetch_k, DEFAULT_CANDIDATE_POOL),
+        document_id=document_id,
     )
 
     if not candidates:

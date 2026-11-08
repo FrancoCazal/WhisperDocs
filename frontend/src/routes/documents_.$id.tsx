@@ -151,13 +151,11 @@ function DocumentDetailPage() {
         </h1>
         {doc.data && (
           <div className="flex flex-wrap items-center gap-2">
-            {/* Retrieval filters by collection, not by document: the chat
-                searches all of this document's collection. */}
             <Link
               to="/chat"
-              search={{ collection: doc.data.collection_id }}
+              search={{ document: doc.data.id }}
               className={btnCls("primary")}
-              title={`A new chat scoped to ${collectionName(doc.data.collection_id)}: it searches the whole collection, not only this document.`}
+              title="A new chat that searches only this document."
             >
               ASK IN CHAT
             </Link>

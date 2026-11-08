@@ -13,6 +13,7 @@ class TurnMetadata(TypedDict, total=False):
     classifier_tokens_output: int
     classifier_latency_ms: int
     collection_id_active: int | None
+    document_id_active: int | None
     retrieval_chunks_count: int
     retrieval_top_relevance: float | None
     # True when embedding or retrieval raised: the turn was answered without
@@ -52,6 +53,8 @@ class AgentState(MessagesState):
           Generation nodes inject `summary` plus messages[summary_covered_count:]
           to keep prompts bounded while preserving the full history.
         - collection_id: last collection used; mutable per turn.
+        - document_id: the one document searched in place of the
+          collection, or None; mutable per turn.
 
     Transient per turn (reset in check_compaction at start of each turn):
         - pending_action: routing flag, valid only during the turn.
@@ -60,6 +63,7 @@ class AgentState(MessagesState):
     """
 
     collection_id: int | None
+    document_id: int | None
     summary: str | None
     summary_covered_count: int | None
     pending_action: (

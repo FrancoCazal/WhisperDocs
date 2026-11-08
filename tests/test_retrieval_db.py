@@ -1,5 +1,5 @@
-"""Retrieval against a real Postgres: full-text leg (audit R1, N3) and the
-collection filter on the HNSW index (R3).
+"""Retrieval against a real Postgres: full-text leg (audit R1, N3), the
+collection filter on the HNSW index (R3), and the document filter (BE-6).
 
 Needs a database migrated to head: point TEST_DATABASE_URL at it, e.g.
 `postgresql+asyncpg://whisperdocs:pw@localhost:5432/whisperdocs_test`, and run
@@ -16,7 +16,10 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from app.config import settings
 from app.models import Chunk, Collection, Document
+from app.services.reranker import NoopReranker
+from app.services.retrieval_pipeline import retrieve
 from app.services.retriever import VectorRetriever
 
 DB_URL = os.environ.get("TEST_DATABASE_URL")
@@ -145,6 +148,34 @@ async def test_other_collections_are_not_searched(session):
     await _collection(session, "fts-theirs", {"theirs.md": ("en", ["pgvector internals"])})
 
     assert await _titles(session, "pgvector", mine) == ["mine.md"]
+
+
+async def test_a_document_scope_searches_only_that_document(session, monkeypatch):
+    """Both legs: every chunk has the same vector and the word, so either leg
+    unfiltered brings the other document back. The document wins over a
+    collection that is not its own."""
+    monkeypatch.setattr(settings, "mmr_enabled", False)
+    cid = await _collection(
+        session,
+        "doc-scope",
+        {"mine.md": ("en", ["pgvector basics"]), "other.md": ("en", ["pgvector internals"])},
+    )
+    elsewhere = await _collection(session, "doc-scope-2", {"far.md": ("en", ["pgvector"])})
+    mine = await session.scalar(
+        select(Document.id).where(Document.collection_id == cid, Document.title == "mine.md")
+    )
+
+    for collection_id in (cid, elsewhere, None):
+        chunks = await retrieve(
+            session,
+            "pgvector",
+            _EMBEDDING,
+            collection_id,
+            top_k=5,
+            reranker=NoopReranker(),
+            document_id=mine,
+        )
+        assert [c.document_title for c in chunks] == ["mine.md"], collection_id
 
 
 def _unit(axis: int, noise_axis: int | None = None, noise: float = 0.0) -> list[float]:

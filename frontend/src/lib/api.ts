@@ -321,6 +321,8 @@ export type Conversation = {
   user_number: string | null;
   channel: string;
   collection_id: number | null;
+  // The one document the thread searches, in place of its collection.
+  document_id?: number | null;
   // The thread's first question; null until it has one.
   title: string | null;
   is_saved: boolean;
@@ -641,6 +643,7 @@ export const api = {
       message: string;
       thread_id?: string | null;
       collection_id?: number | null;
+      document_id?: number | null;
       top_k?: number;
     },
     onEvent: (e: AgentStreamEvent) => void,
@@ -653,6 +656,7 @@ export const api = {
         message: body.message,
         thread_id: body.thread_id ?? null,
         collection_id: body.collection_id ?? null,
+        document_id: body.document_id ?? null,
         top_k: body.top_k ?? 5,
       }),
       signal,
