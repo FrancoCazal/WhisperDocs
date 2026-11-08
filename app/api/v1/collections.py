@@ -41,7 +41,12 @@ def _read(row) -> CollectionRead:
     )
 
 
-@router.post("", response_model=CollectionRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    operation_id="create_collection",
+    response_model=CollectionRead,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_collection(
     payload: CollectionCreate,
     db: AsyncSession = Depends(get_db),
@@ -60,13 +65,13 @@ async def create_collection(
     return collection
 
 
-@router.get("", response_model=list[CollectionRead])
+@router.get("", operation_id="list_collections", response_model=list[CollectionRead])
 async def list_collections(db: AsyncSession = Depends(get_db)) -> list[CollectionRead]:
     result = await db.execute(_with_totals().order_by(Collection.created_at.desc()))
     return [_read(row) for row in result.all()]
 
 
-@router.get("/{collection_id}", response_model=CollectionRead)
+@router.get("/{collection_id}", operation_id="get_collection", response_model=CollectionRead)
 async def get_collection(
     collection_id: int,
     db: AsyncSession = Depends(get_db),
@@ -77,7 +82,9 @@ async def get_collection(
     return _read(row)
 
 
-@router.delete("/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{collection_id}", operation_id="delete_collection", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_collection(
     collection_id: int,
     db: AsyncSession = Depends(get_db),

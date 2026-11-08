@@ -5,7 +5,7 @@ from app.metrics import render_metrics
 router = APIRouter(tags=["metrics"])
 
 
-@router.get("/metrics")
+@router.get("/metrics", operation_id="get_metrics")
 async def metrics() -> Response:
     body, content_type = render_metrics()
     return Response(content=body, media_type=content_type)

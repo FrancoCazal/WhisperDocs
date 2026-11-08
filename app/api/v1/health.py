@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health")
+@router.get("/health", operation_id="check_health")
 async def health(
     request: Request,
     deep: bool = False,

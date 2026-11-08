@@ -178,6 +178,56 @@ async def test_a_document_scope_searches_only_that_document(session, monkeypatch
         assert [c.document_title for c in chunks] == ["mine.md"], collection_id
 
 
+async def test_the_retrieve_route_runs_the_whole_search(session, monkeypatch):
+    """POST /retrieve end to end (audit R20): the real pipeline on the
+    database, with only the embedder replaced. A collection returns both of
+    its documents with their text; a document, only itself."""
+    import httpx
+
+    from app.db import get_db
+    from app.main import app
+    from app.services.embedder import get_embedder
+
+    monkeypatch.setattr(settings, "mmr_enabled", False)
+    monkeypatch.setattr("app.services.retrieval_pipeline.get_reranker", lambda: NoopReranker())
+    cid = await _collection(
+        session,
+        "retrieve-route",
+        {"mine.md": ("en", ["pgvector basics"]), "other.md": ("en", ["pgvector internals"])},
+    )
+    mine = await session.scalar(
+        select(Document.id).where(Document.collection_id == cid, Document.title == "mine.md")
+    )
+
+    class _Embedder:
+        async def embed(self, _text):
+            return _EMBEDDING
+
+    async def db():
+        yield session
+
+    app.dependency_overrides[get_db] = db
+    app.dependency_overrides[get_embedder] = lambda: _Embedder()
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test/api/v1") as c:
+            in_collection = await c.post(
+                "/retrieve", json={"query": "pgvector", "collection_id": cid}
+            )
+            in_document = await c.post("/retrieve", json={"query": "pgvector", "document_id": mine})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert in_collection.status_code == 200
+    chunks = in_collection.json()["chunks"]
+    assert sorted((c["document_title"], c["text"]) for c in chunks) == [
+        ("mine.md", "pgvector basics"),
+        ("other.md", "pgvector internals"),
+    ]
+    assert all(c["cosine"] == pytest.approx(1.0) for c in chunks)
+    assert [c["document_title"] for c in in_document.json()["chunks"]] == ["mine.md"]
+
+
 def _unit(axis: int, noise_axis: int | None = None, noise: float = 0.0) -> list[float]:
     v = [0.0] * 1536
     v[axis] = 1.0

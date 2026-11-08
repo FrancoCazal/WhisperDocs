@@ -29,7 +29,9 @@ class EvalRunRequest(BaseModel):
     concurrency: int = Field(default=4, ge=1, le=16)
 
 
-@router.post("/run", response_model=EvalReport, dependencies=[Depends(eval_limit)])
+@router.post(
+    "/run", operation_id="run_eval", response_model=EvalReport, dependencies=[Depends(eval_limit)]
+)
 async def run_evaluation(
     payload: EvalRunRequest,
     embedder: EmbeddingService = Depends(get_embedder),
@@ -66,7 +68,7 @@ async def run_evaluation(
 
 # The two readers below are plain `def`: FastAPI runs them in its threadpool,
 # so reading and parsing reports (~100 KB each) never blocks the event loop.
-@router.get("/results")
+@router.get("/results", operation_id="list_eval_results")
 def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
     if not RESULTS_DIR.exists():
         return []
@@ -103,7 +105,12 @@ def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
 # Only what the report saved: an older one has no recall, no latency
 # percentiles and no judge error flag, and their defaults would read as
 # measurements (frontend review FR-19).
-@router.get("/results/{run_id}", response_model=EvalReport, response_model_exclude_unset=True)
+@router.get(
+    "/results/{run_id}",
+    operation_id="get_eval_result",
+    response_model=EvalReport,
+    response_model_exclude_unset=True,
+)
 def get_result(run_id: str) -> EvalReport:
     """One run in full: every item's answers and judge verdicts."""
     try:

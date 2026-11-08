@@ -29,7 +29,12 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/query", tags=["query"])
 
 
-@router.post("", response_model=QueryResponse, dependencies=[Depends(questions_limit)])
+@router.post(
+    "",
+    operation_id="answer_question",
+    response_model=QueryResponse,
+    dependencies=[Depends(questions_limit)],
+)
 async def query(
     payload: QueryRequest,
     db: AsyncSession = Depends(get_db),
@@ -143,7 +148,7 @@ async def query(
     )
 
 
-@router.get("/history", response_model=Page[QueryLogRead])
+@router.get("/history", operation_id="list_query_history", response_model=Page[QueryLogRead])
 async def query_history(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = None,

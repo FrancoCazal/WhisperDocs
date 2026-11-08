@@ -197,6 +197,7 @@ async def _ingest_single(
 
 @router.post(
     "/upload",
+    operation_id="upload_document",
     response_model=DocumentRead,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(uploads_limit)],
@@ -222,7 +223,10 @@ async def upload_document(
 
 
 @router.post(
-    "/upload-batch", response_model=BatchUploadResponse, dependencies=[Depends(uploads_limit)]
+    "/upload-batch",
+    operation_id="upload_documents_batch",
+    response_model=BatchUploadResponse,
+    dependencies=[Depends(uploads_limit)],
 )
 async def upload_documents_batch(
     response: Response,
@@ -277,7 +281,7 @@ async def upload_documents_batch(
     )
 
 
-@router.get("", response_model=Page[DocumentRead])
+@router.get("", operation_id="list_documents", response_model=Page[DocumentRead])
 async def list_documents(
     collection_id: int | None = None,
     limit: int = Query(default=50, ge=1, le=200),
@@ -302,7 +306,7 @@ async def list_documents(
     )
 
 
-@router.get("/{document_id:int}", response_model=DocumentDetail)
+@router.get("/{document_id:int}", operation_id="get_document", response_model=DocumentDetail)
 async def get_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
@@ -313,7 +317,9 @@ async def get_document(
     return document
 
 
-@router.get("/{document_id:int}/chunks", response_model=list[ChunkRead])
+@router.get(
+    "/{document_id:int}/chunks", operation_id="list_document_chunks", response_model=list[ChunkRead]
+)
 async def list_document_chunks(
     document_id: int,
     db: AsyncSession = Depends(get_db),
@@ -327,7 +333,9 @@ async def list_document_chunks(
     return list(result.scalars().all())
 
 
-@router.delete("/{document_id:int}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{document_id:int}", operation_id="delete_document", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
@@ -342,7 +350,7 @@ async def delete_document(
 # ── Bulk operations ──────────────────────────────────────────────────────────
 
 
-@router.post("/bulk-delete", response_model=BulkOpResult)
+@router.post("/bulk-delete", operation_id="bulk_delete_documents", response_model=BulkOpResult)
 async def bulk_delete_documents(
     payload: BulkDocumentIds,
     db: AsyncSession = Depends(get_db),
@@ -379,7 +387,7 @@ async def bulk_delete_documents(
     )
 
 
-@router.post("/bulk-move", response_model=BulkOpResult)
+@router.post("/bulk-move", operation_id="bulk_move_documents", response_model=BulkOpResult)
 async def bulk_move_documents(
     payload: BulkMoveRequest,
     db: AsyncSession = Depends(get_db),
@@ -428,6 +436,7 @@ async def bulk_move_documents(
 
 @router.post(
     "/upload-async",
+    operation_id="upload_document_async",
     response_model=IngestionJobCreate,
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(uploads_limit)],
@@ -470,7 +479,7 @@ async def upload_document_async(
     return IngestionJobCreate(job_id=job_id, status=IngestionStatus.PENDING.value)
 
 
-@router.get("/jobs/{job_id}", response_model=IngestionJobRead)
+@router.get("/jobs/{job_id}", operation_id="get_ingestion_job", response_model=IngestionJobRead)
 async def get_ingestion_job(
     job_id: int,
     db: AsyncSession = Depends(get_db),
@@ -481,7 +490,7 @@ async def get_ingestion_job(
     return job
 
 
-@router.get("/jobs", response_model=list[IngestionJobRead])
+@router.get("/jobs", operation_id="list_ingestion_jobs", response_model=list[IngestionJobRead])
 async def list_ingestion_jobs(
     collection_id: int | None = None,
     limit: int = Query(default=50, ge=1, le=200),
@@ -498,7 +507,7 @@ def _sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
 
-@router.get("/jobs/{job_id}/stream")
+@router.get("/jobs/{job_id}/stream", operation_id="stream_ingestion_job")
 async def stream_ingestion_job(job_id: int) -> StreamingResponse:
     """SSE: emits `progress` on every state change and a terminal `complete` or `error`."""
 

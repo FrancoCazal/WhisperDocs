@@ -5,7 +5,8 @@ bucket; past that it gets a 429 with `Retry-After`. The client is its API key
 (hashed) when the API checks keys, its IP otherwise. Each bucket has its own setting
 (0 turns it off):
 
-  questions    /query, /agent/chat, /agent/chat/stream, /health?deep=true
+  questions    /query, /retrieve, /agent/chat, /agent/chat/stream,
+               /health?deep=true
                RATE_LIMIT_PER_MINUTE
   uploads      the three upload routes          RATE_LIMIT_UPLOAD_PER_MINUTE
   eval         /eval/run                        RATE_LIMIT_EVAL_PER_MINUTE

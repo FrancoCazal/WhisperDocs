@@ -7,7 +7,7 @@ from app.services.model_status import model_status
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.get("/settings")
+@router.get("/settings", operation_id="get_settings")
 async def get_settings() -> dict:
     """Read-only snapshot of agent settings. Useful for UI debugging.
 
@@ -43,7 +43,7 @@ async def get_settings() -> dict:
     }
 
 
-@router.get("/model-status", response_model=ModelStatusRead)
+@router.get("/model-status", operation_id="get_model_status", response_model=ModelStatusRead)
 async def get_model_status() -> dict:
     """What the last calls of each role did: the classifier, the query rewrite,
     ..., the embedder. Read from the record real calls leave; nothing is called

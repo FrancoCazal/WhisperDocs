@@ -109,7 +109,7 @@ def _is_expired(conv: Conversation) -> bool:
 # ---------- endpoints ----------
 
 
-@router.post("/whatsapp", status_code=204)
+@router.post("/whatsapp", operation_id="receive_whatsapp_message", status_code=204)
 async def whatsapp_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -208,7 +208,7 @@ async def whatsapp_webhook(
         logger.exception("twilio_send_failed thread_id=%s", thread_id)
 
 
-@router.post("/whatsapp/status", status_code=204)
+@router.post("/whatsapp/status", operation_id="receive_whatsapp_status", status_code=204)
 async def whatsapp_status_webhook(request: Request) -> None:
     form = await request.form()
     params = dict(form)

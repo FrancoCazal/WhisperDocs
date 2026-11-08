@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
-@router.get("", response_model=Page[ConversationRead])
+@router.get("", operation_id="list_conversations", response_model=Page[ConversationRead])
 async def list_conversations(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = Query(default=None, description="Last id from previous page"),
@@ -67,13 +67,17 @@ async def _get_conversation_or_404(db: AsyncSession, thread_id: str) -> Conversa
     return conv
 
 
-@router.get("/{thread_id}", response_model=ConversationRead)
+@router.get("/{thread_id}", operation_id="get_conversation", response_model=ConversationRead)
 async def get_conversation(thread_id: str, db: AsyncSession = Depends(get_db)) -> Conversation:
     """One thread, for a client that has its id (a link) but not a list page holding it."""
     return await _get_conversation_or_404(db, thread_id)
 
 
-@router.get("/{thread_id}/messages", response_model=list[ConversationMessage])
+@router.get(
+    "/{thread_id}/messages",
+    operation_id="list_conversation_messages",
+    response_model=list[ConversationMessage],
+)
 async def get_conversation_messages(
     thread_id: str,
     request: Request,
@@ -123,7 +127,7 @@ async def get_conversation_messages(
     return out
 
 
-@router.patch("/{thread_id}", response_model=ConversationRead)
+@router.patch("/{thread_id}", operation_id="update_conversation", response_model=ConversationRead)
 async def patch_conversation(
     thread_id: str,
     payload: ConversationUpdate,
@@ -136,7 +140,9 @@ async def patch_conversation(
     return conv
 
 
-@router.delete("/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{thread_id}", operation_id="delete_conversation", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_conversation(
     thread_id: str,
     request: Request,
@@ -157,6 +163,7 @@ async def delete_conversation(
 
 @router.post(
     "/{thread_id}/notes",
+    operation_id="create_note",
     response_model=SavedNoteRead,
     status_code=status.HTTP_201_CREATED,
 )

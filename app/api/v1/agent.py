@@ -52,7 +52,12 @@ def _agent_failure(exc: BaseException) -> tuple[str, str]:
     return f"The agent failed: {failure_text(exc)}.", classify_error(exc)
 
 
-@router.post("/chat", response_model=AgentChatResponse, dependencies=[Depends(questions_limit)])
+@router.post(
+    "/chat",
+    operation_id="agent_chat",
+    response_model=AgentChatResponse,
+    dependencies=[Depends(questions_limit)],
+)
 async def agent_chat(
     payload: AgentChatRequest,
     request: Request,
@@ -188,7 +193,9 @@ def _sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
 
-@router.post("/chat/stream", dependencies=[Depends(questions_limit)])
+@router.post(
+    "/chat/stream", operation_id="agent_chat_stream", dependencies=[Depends(questions_limit)]
+)
 async def agent_chat_stream(
     payload: AgentChatRequest,
     request: Request,

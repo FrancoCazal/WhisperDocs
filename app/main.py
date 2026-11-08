@@ -31,6 +31,7 @@ from app.api.v1 import (
     metrics as metrics_route,
     notes,
     query,
+    retrieve,
 )
 from app.api.v1.webhooks import whatsapp as webhook_whatsapp
 
@@ -121,6 +122,7 @@ for router in (
     collections.router,
     documents.router,
     query.router,
+    retrieve.router,
     eval.router,
     agent.router,
     conversations.router,

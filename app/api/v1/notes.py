@@ -9,7 +9,7 @@ from app.schemas.note import SavedNoteRead
 router = APIRouter(prefix="/notes", tags=["notes"])
 
 
-@router.get("", response_model=list[SavedNoteRead])
+@router.get("", operation_id="list_notes", response_model=list[SavedNoteRead])
 async def list_notes(
     limit: int = Query(default=50, ge=1, le=200),
     collection_id: int | None = None,
@@ -34,7 +34,7 @@ async def list_notes(
     ]
 
 
-@router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{note_id}", operation_id="delete_note", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_note(
     note_id: int,
     db: AsyncSession = Depends(get_db),
