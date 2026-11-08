@@ -10,6 +10,8 @@ import {
   type IngestionStatus,
 } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
+import { LoadMore } from "@/components/ui-kit/LoadMore";
+import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import {
   EmptyState,
@@ -107,10 +109,14 @@ function DocumentsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const documents = useQuery({
-    queryKey: ["documents", filter ?? "all"],
-    queryFn: () => api.listDocuments(filter ?? undefined),
-  });
+  const documents = usePagedList(["documents", "pages", filter ?? "all"], (cursor) =>
+    api.listDocumentsPage({ collection_id: filter ?? undefined, limit: PAGE_SIZE, cursor }),
+  );
+  // Documents feed the collections' totals too.
+  const refreshDocuments = () => {
+    void qc.invalidateQueries({ queryKey: ["documents"] });
+    void qc.invalidateQueries({ queryKey: ["collections"] });
+  };
 
   const collectionName = (id: number) =>
     collections.data?.find((c) => c.id === id)?.name ?? `#${id}`;
@@ -180,7 +186,7 @@ function DocumentsPage() {
       u.active.add(ctrl);
       void ingestFile(next, ctrl.signal).finally(() => {
         u.active.delete(ctrl);
-        void qc.invalidateQueries({ queryKey: ["documents"] });
+        refreshDocuments();
         pump();
       });
     }
@@ -193,7 +199,7 @@ function DocumentsPage() {
 
   // Only rows on screen can be acted on: a selection made under another filter,
   // or of rows a refresh removed, is never sent.
-  const visible = documents.data ?? [];
+  const visible = documents.items;
   const selectedIds = visible.filter((d) => selected.has(d.id)).map((d) => d.id);
 
   function changeFilter(next: number | null) {
@@ -203,7 +209,7 @@ function DocumentsPage() {
 
   const del = useMutation({
     mutationFn: (id: number) => api.deleteDocument(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+    onSuccess: refreshDocuments,
   });
 
   const bulkDel = useMutation({
@@ -213,7 +219,7 @@ function DocumentsPage() {
       setBulkResult(result);
       setSelected(new Set());
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+    onSettled: refreshDocuments,
   });
 
   function toggleSel(id: number) {
@@ -255,7 +261,11 @@ function DocumentsPage() {
     <div>
       <PageHeader
         title="DOCUMENTS"
-        subtitle="INDEXED CORPUS"
+        subtitle={
+          documents.total === null
+            ? "INDEXED CORPUS"
+            : `INDEXED CORPUS · ${fmtNumber(documents.total)} DOCUMENTS`
+        }
         actions={
           <label className="flex items-center gap-2 label-sm text-text-secondary">
             FILTER:
@@ -397,7 +407,7 @@ function DocumentsPage() {
         )}
       </div>
 
-      {documents.error && <ErrorBanner message="failed to load documents" />}
+      {documents.query.error && <ErrorBanner message="failed to load documents" />}
       {del.error && <ErrorBanner message={`delete failed: ${del.error.message}`} />}
       {bulkDel.error && <ErrorBanner message={`bulk delete failed: ${bulkDel.error.message}`} />}
       {bulkResult && <BulkResultBanner result={bulkResult} onClose={() => setBulkResult(null)} />}
@@ -449,11 +459,11 @@ function DocumentsPage() {
       )}
 
       <div className="border border-border-subtle bg-surface-container overflow-x-auto">
-        {documents.isLoading ? (
+        {documents.query.isLoading ? (
           <div className="p-4">
             <LoadingLine />
           </div>
-        ) : !documents.data || documents.data.length === 0 ? (
+        ) : visible.length === 0 ? (
           filter !== null ? (
             <EmptyState label={`NO DOCUMENTS IN ${collectionName(filter).toUpperCase()}`}>
               <button type="button" onClick={() => changeFilter(null)} className={emptyActionCls}>
@@ -477,9 +487,7 @@ function DocumentsPage() {
                     type="checkbox"
                     checked={selectedIds.length > 0 && selectedIds.length === visible.length}
                     onChange={(e) =>
-                      setSelected(
-                        e.target.checked ? new Set(documents.data!.map((d) => d.id)) : new Set(),
-                      )
+                      setSelected(e.target.checked ? new Set(visible.map((d) => d.id)) : new Set())
                     }
                     aria-label="Select all"
                   />
@@ -494,7 +502,7 @@ function DocumentsPage() {
               </tr>
             </thead>
             <tbody>
-              {documents.data.map((d) => (
+              {visible.map((d) => (
                 <tr
                   key={d.id}
                   onClick={() => navigate({ to: "/documentos/$id", params: { id: String(d.id) } })}
@@ -535,6 +543,13 @@ function DocumentsPage() {
           </table>
         )}
       </div>
+      <LoadMore
+        shown={visible.length}
+        total={documents.total}
+        hasMore={documents.query.hasNextPage}
+        loading={documents.query.isFetchingNextPage}
+        onLoad={() => void documents.query.fetchNextPage()}
+      />
     </div>
   );
 }

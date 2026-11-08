@@ -15,3 +15,6 @@ T = TypeVar("T")
 class Page(BaseModel, Generic[T]):
     items: list[T]
     next_cursor: int | None = None
+    # Items matching the filters across every page, so a client never counts a
+    # page as the whole. Sent with the first page only (no cursor).
+    total: int | None = None

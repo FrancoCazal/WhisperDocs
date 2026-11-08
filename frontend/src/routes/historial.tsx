@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { api, fmtCost, fmtDate, fmtNumber, truncate } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
+import { LoadMore } from "@/components/ui-kit/LoadMore";
+import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import {
   EmptyState,
   ErrorBanner,
@@ -25,15 +27,14 @@ export const Route = createFileRoute("/historial")({
 
 function HistorialPage() {
   const [collFilter, setCollFilter] = useState<number | null>(null);
-  const [limit, setLimit] = useState(50);
   const [expanded, setExpanded] = useState<number | null>(null);
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const history = useQuery({ queryKey: ["history", limit], queryFn: () => api.history(limit) });
-
-  const rows = (history.data ?? []).filter(
-    (q) => collFilter === null || q.collection_id === collFilter,
+  // Filtered by the server: a filter over the loaded pages would miss older rows.
+  const history = usePagedList(["history", "pages", collFilter ?? "all"], (cursor) =>
+    api.historyPage({ collection_id: collFilter ?? undefined, limit: PAGE_SIZE, cursor }),
   );
+  const rows = history.items;
 
   const collectionName = (id: number | null) =>
     id === null ? "—" : (collections.data?.find((c) => c.id === id)?.name ?? `#${id}`);
@@ -60,33 +61,19 @@ function HistorialPage() {
                 ))}
               </select>
             </label>
-            <label className="flex items-center gap-2 label-sm text-text-secondary">
-              LIMIT:
-              <select
-                value={limit}
-                onChange={(e) => setLimit(Number(e.target.value))}
-                className="bg-surface-lowest border border-border-subtle px-2 h-9 text-text-primary body-sm focus:outline-none focus:border-border-focus"
-              >
-                {[20, 50, 100, 200].map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </label>
           </>
         }
       />
 
-      {history.error && <ErrorBanner message="failed to load query history" />}
+      {history.query.error && <ErrorBanner message="failed to load query history" />}
 
       <div className="border border-border-subtle bg-surface-container overflow-x-auto">
-        {history.isLoading ? (
+        {history.query.isLoading ? (
           <div className="p-4">
             <LoadingLine />
           </div>
         ) : rows.length === 0 ? (
-          collFilter !== null && (history.data?.length ?? 0) > 0 ? (
+          collFilter !== null ? (
             <EmptyState label={`NO QUERIES IN ${collectionName(collFilter).toUpperCase()}`}>
               <button type="button" onClick={() => setCollFilter(null)} className={emptyActionCls}>
                 SHOW ALL COLLECTIONS
@@ -183,6 +170,13 @@ function HistorialPage() {
           </table>
         )}
       </div>
+      <LoadMore
+        shown={rows.length}
+        total={history.total}
+        hasMore={history.query.hasNextPage}
+        loading={history.query.isFetchingNextPage}
+        onLoad={() => void history.query.fetchNextPage()}
+      />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, fmtDate, fmtNumber, LIMITS, type DocumentRead } from "@/lib/api";
+import { api, fmtDate, fmtNumber, LIMITS } from "@/lib/api";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { Btn } from "@/components/ui-kit/Button";
 import {
@@ -25,11 +25,8 @@ export const Route = createFileRoute("/colecciones")({
 function CollectionsPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  // Each collection carries its totals; the documents list is paged.
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const documents = useQuery({
-    queryKey: ["documents", "all"],
-    queryFn: () => api.listDocuments(),
-  });
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -50,11 +47,12 @@ function CollectionsPage() {
 
   const del = useMutation({
     mutationFn: (id: number) => api.deleteCollection(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["collections"] }),
+    // Its documents go with it.
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["collections"] });
+      void qc.invalidateQueries({ queryKey: ["documents"] });
+    },
   });
-
-  const docsByCollection = (id: number) =>
-    (documents.data ?? []).filter((d: DocumentRead) => d.collection_id === id);
 
   return (
     <div>
@@ -96,9 +94,6 @@ function CollectionsPage() {
             </thead>
             <tbody>
               {collections.data.map((c) => {
-                const docs = docsByCollection(c.id);
-                const chunks = docs.reduce((s, d) => s + (d.chunk_count ?? 0), 0);
-                const tokens = docs.reduce((s, d) => s + (d.total_tokens ?? 0), 0);
                 return (
                   <tr
                     key={c.id}
@@ -110,13 +105,13 @@ function CollectionsPage() {
                     <td className="pl-6 text-text-primary">{c.name}</td>
                     <td className="text-text-secondary">{c.description || "—"}</td>
                     <td className="text-right tabular-nums text-text-primary">
-                      {fmtNumber(docs.length)}
+                      {fmtNumber(c.document_count)}
                     </td>
                     <td className="text-right tabular-nums text-text-primary">
-                      {fmtNumber(chunks)}
+                      {fmtNumber(c.chunk_count)}
                     </td>
                     <td className="text-right tabular-nums text-text-secondary">
-                      {fmtNumber(tokens)}
+                      {fmtNumber(c.total_tokens)}
                     </td>
                     <td className="pl-6 text-text-secondary tabular-nums">
                       {fmtDate(c.created_at)}

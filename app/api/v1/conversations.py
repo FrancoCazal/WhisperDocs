@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.utils.messages import FAILED_TURN
@@ -31,22 +31,27 @@ async def list_conversations(
     channel: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> Page[ConversationRead]:
-    stmt = select(Conversation).order_by(Conversation.id.desc()).limit(limit + 1)
+    filters = []
+    if user_number is not None:
+        filters.append(Conversation.user_number == user_number)
+    if is_saved is not None:
+        filters.append(Conversation.is_saved == is_saved)
+    if channel is not None:
+        filters.append(Conversation.channel == channel)
+    stmt = select(Conversation).where(*filters).order_by(Conversation.id.desc()).limit(limit + 1)
     if cursor is not None:
         stmt = stmt.where(Conversation.id < cursor)
-    if user_number is not None:
-        stmt = stmt.where(Conversation.user_number == user_number)
-    if is_saved is not None:
-        stmt = stmt.where(Conversation.is_saved == is_saved)
-    if channel is not None:
-        stmt = stmt.where(Conversation.channel == channel)
     rows = list((await db.execute(stmt)).scalars().all())
     has_more = len(rows) > limit
     items = rows[:limit]
     next_cursor = items[-1].id if has_more and items else None
+    total = None
+    if cursor is None:
+        total = await db.scalar(select(func.count(Conversation.id)).where(*filters))
     return Page[ConversationRead](
         items=[ConversationRead.model_validate(c) for c in items],
         next_cursor=next_cursor,
+        total=total,
     )
 
 

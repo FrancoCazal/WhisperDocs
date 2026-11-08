@@ -15,7 +15,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import SessionLocal, get_db
@@ -259,18 +259,21 @@ async def list_documents(
     cursor: int | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> Page[DocumentRead]:
-    query = select(Document).order_by(Document.id.desc()).limit(limit + 1)
-    if collection_id is not None:
-        query = query.where(Document.collection_id == collection_id)
+    filters = [] if collection_id is None else [Document.collection_id == collection_id]
+    query = select(Document).where(*filters).order_by(Document.id.desc()).limit(limit + 1)
     if cursor is not None:
         query = query.where(Document.id < cursor)
     rows = list((await db.execute(query)).scalars().all())
     has_more = len(rows) > limit
     items = rows[:limit]
     next_cursor = items[-1].id if has_more and items else None
+    total = None
+    if cursor is None:
+        total = await db.scalar(select(func.count(Document.id)).where(*filters))
     return Page[DocumentRead](
         items=[DocumentRead.model_validate(d) for d in items],
         next_cursor=next_cursor,
+        total=total,
     )
 
 

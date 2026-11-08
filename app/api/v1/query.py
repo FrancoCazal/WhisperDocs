@@ -1,7 +1,7 @@
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -138,18 +138,26 @@ async def query_history(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: int | None = None,
     session_id: str | None = Query(default=None, max_length=50),
+    collection_id: int | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> Page[QueryLogRead]:
-    q = select(QueryLog).order_by(QueryLog.id.desc()).limit(limit + 1)
+    filters = []
+    if session_id:
+        filters.append(QueryLog.session_id == session_id)
+    if collection_id is not None:
+        filters.append(QueryLog.collection_id == collection_id)
+    q = select(QueryLog).where(*filters).order_by(QueryLog.id.desc()).limit(limit + 1)
     if cursor is not None:
         q = q.where(QueryLog.id < cursor)
-    if session_id:
-        q = q.where(QueryLog.session_id == session_id)
     rows = list((await db.execute(q)).scalars().all())
     has_more = len(rows) > limit
     items = rows[:limit]
     next_cursor = items[-1].id if has_more and items else None
+    total = None
+    if cursor is None:
+        total = await db.scalar(select(func.count(QueryLog.id)).where(*filters))
     return Page[QueryLogRead](
         items=[QueryLogRead.model_validate(r) for r in items],
         next_cursor=next_cursor,
+        total=total,
     )

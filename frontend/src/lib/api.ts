@@ -82,6 +82,10 @@ export type Collection = {
   name: string;
   description: string | null;
   created_at: string;
+  // Over every document in it, summed by the server.
+  document_count: number;
+  chunk_count: number;
+  total_tokens: number;
 };
 
 export type DocumentRead = {
@@ -270,6 +274,8 @@ export type IngestionStatus =
 export type Page<T> = {
   items: T[];
   next_cursor: number | null;
+  // Matching items across every page; sent with the first page only.
+  total?: number | null;
 };
 
 export type BulkOpResult = {
@@ -355,13 +361,6 @@ export const api = {
     request<Collection>("/collections", { method: "POST", body: JSON.stringify(body) }),
   deleteCollection: (id: number) => request<void>(`/collections/${id}`, { method: "DELETE" }),
 
-  listDocuments: async (collectionId?: number, limit = 50): Promise<DocumentRead[]> => {
-    const q = new URLSearchParams();
-    if (collectionId !== undefined) q.set("collection_id", String(collectionId));
-    q.set("limit", String(limit));
-    const page = await request<Page<DocumentRead>>(`/documents?${q.toString()}`);
-    return page.items;
-  },
   listDocumentsPage: (params: { collection_id?: number; limit?: number; cursor?: number }) => {
     const q = new URLSearchParams();
     if (params.collection_id !== undefined) q.set("collection_id", String(params.collection_id));
@@ -503,11 +502,17 @@ export const api = {
     const page = await request<Page<QueryLog>>(`/query/history?limit=${limit}`);
     return page.items;
   },
-  historyPage: (params: { limit?: number; cursor?: number; session_id?: string }) => {
+  historyPage: (params: {
+    limit?: number;
+    cursor?: number;
+    session_id?: string;
+    collection_id?: number;
+  }) => {
     const q = new URLSearchParams();
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.cursor !== undefined) q.set("cursor", String(params.cursor));
     if (params.session_id) q.set("session_id", params.session_id);
+    if (params.collection_id !== undefined) q.set("collection_id", String(params.collection_id));
     return request<Page<QueryLog>>(`/query/history?${q.toString()}`);
   },
 
@@ -607,21 +612,6 @@ export const api = {
     }
   },
 
-  listConversations: async (params?: {
-    limit?: number;
-    user_number?: string;
-    is_saved?: boolean;
-    channel?: string;
-  }): Promise<Conversation[]> => {
-    const q = new URLSearchParams();
-    if (params?.limit !== undefined) q.set("limit", String(params.limit));
-    if (params?.user_number) q.set("user_number", params.user_number);
-    if (params?.is_saved !== undefined) q.set("is_saved", String(params.is_saved));
-    if (params?.channel) q.set("channel", params.channel);
-    const qs = q.toString();
-    const page = await request<Page<Conversation>>(`/conversations${qs ? `?${qs}` : ""}`);
-    return page.items;
-  },
   listConversationsPage: (params: {
     limit?: number;
     cursor?: number;

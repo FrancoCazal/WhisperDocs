@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, fmtDate, type Collection, type Conversation } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadMore } from "@/components/ui-kit/LoadMore";
 
 export function ThreadSidebar({
   conversations,
@@ -10,6 +11,7 @@ export function ThreadSidebar({
   activeThreadId,
   onOpen,
   onNew,
+  more,
 }: {
   conversations: Conversation[] | undefined;
   loading: boolean;
@@ -17,6 +19,8 @@ export function ThreadSidebar({
   activeThreadId: string | null;
   onOpen: (c: Conversation) => void;
   onNew: () => void;
+  // The threads are paged: the next page, and the total.
+  more?: { total: number | null; hasMore: boolean; loading: boolean; onLoad: () => void };
 }) {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"threads" | "notes">("threads");
@@ -111,6 +115,7 @@ export function ThreadSidebar({
                 </button>
               );
             })}
+            {more && <LoadMore shown={conversations?.length ?? 0} {...more} className="" />}
           </>
         )}
 

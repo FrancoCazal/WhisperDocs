@@ -17,6 +17,7 @@ import { AssistantTurn, UserTurn } from "@/components/chat/Turns";
 import { SourcesSheet, type SourcesView } from "@/components/chat/SourcesSheet";
 import { StreamingTurn, type LiveTurn } from "@/components/chat/StreamingTurn";
 import { ThreadSidebar } from "@/components/chat/ThreadSidebar";
+import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import {
   IDLE_TIMEOUT_MS,
   type AssistantTurnData,
@@ -96,15 +97,19 @@ function ChatPage() {
   const streaming = live !== null;
 
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  // The limit is in the key: the dashboard lists 200 under the same prefix.
-  const conversations = useQuery({
-    queryKey: ["conversations", "list", 50],
-    queryFn: () => api.listConversations({ limit: 50 }),
-  });
-  const documents = useQuery({
-    queryKey: ["documents", "all"],
-    queryFn: () => api.listDocuments(),
-  });
+  const threadList = usePagedList(["conversations", "list", "pages"], (cursor) =>
+    api.listConversationsPage({ limit: PAGE_SIZE, cursor }),
+  );
+  const conversations = { data: threadList.items, isLoading: threadList.query.isLoading };
+  const threadsMore = {
+    total: threadList.total,
+    hasMore: threadList.query.hasNextPage,
+    loading: threadList.query.isFetchingNextPage,
+    onLoad: () => void threadList.query.fetchNextPage(),
+  };
+  // The examples need documents; the collections carry their counts.
+  const noDocuments =
+    collections.isSuccess && collections.data.every((c) => c.document_count === 0);
 
   const activeConv: Conversation | undefined = useMemo(
     () => conversations.data?.find((c) => c.thread_id === threadId),
@@ -450,6 +455,7 @@ function ChatPage() {
           <ThreadSidebar
             conversations={conversations.data}
             loading={conversations.isLoading}
+            more={threadsMore}
             collections={collections.data}
             activeThreadId={threadId}
             onOpen={openConversation}
@@ -483,6 +489,7 @@ function ChatPage() {
                   <ThreadSidebar
                     conversations={conversations.data}
                     loading={conversations.isLoading}
+                    more={threadsMore}
                     collections={collections.data}
                     activeThreadId={threadId}
                     onOpen={(c) => {
@@ -584,7 +591,7 @@ function ChatPage() {
                 <div className="body-sm text-text-secondary mt-3">
                   LangGraph · classifier → RAG / direct / clarify · persistent memory.
                 </div>
-                {documents.isSuccess && documents.data.length === 0 ? (
+                {noDocuments ? (
                   <div className="mt-10 w-full border border-dashed border-border-subtle px-4 py-6">
                     <div className="label-sm text-text-primary">NO DOCUMENTS INDEXED YET</div>
                     <div className="body-sm text-text-secondary mt-2">
@@ -595,7 +602,7 @@ function ChatPage() {
                     </Link>
                   </div>
                 ) : (
-                  documents.isSuccess && (
+                  collections.isSuccess && (
                     <div className="mt-10 w-full text-left space-y-2">
                       <div className="label-sm text-text-tertiary mb-3">EXAMPLE QUERIES</div>
                       {EXAMPLES.map((q) => (

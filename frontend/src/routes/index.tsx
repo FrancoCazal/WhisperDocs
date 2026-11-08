@@ -71,21 +71,20 @@ function TokenBar({
 function Dashboard() {
   const navigate = useNavigate();
   const collections = useQuery({ queryKey: ["collections"], queryFn: api.listCollections });
-  const documents = useQuery({
-    queryKey: ["documents", "all"],
-    queryFn: () => api.listDocuments(),
-  });
   const history = useQuery({ queryKey: ["history", 10], queryFn: () => api.history(10) });
   const evals = useQuery({ queryKey: ["eval-results", 5], queryFn: () => api.evalResults(5) });
-  // The limit is in the key: the chat lists 50 under the same prefix.
+  // One row for the server's total; under the list prefix, so a new thread
+  // refreshes it.
   const conversations = useQuery({
-    queryKey: ["conversations", "list", 200],
-    queryFn: () => api.listConversations({ limit: 200 }),
+    queryKey: ["conversations", "list", "total"],
+    queryFn: () => api.listConversationsPage({ limit: 1 }),
   });
+  const totalConversations = conversations.data?.total ?? 0;
 
+  // Totals come from the server: the documents list is paged.
   const totalCollections = collections.data?.length ?? 0;
-  const totalDocuments = documents.data?.length ?? 0;
-  const totalChunks = (documents.data ?? []).reduce((s, d) => s + (d.chunk_count ?? 0), 0);
+  const totalDocuments = (collections.data ?? []).reduce((s, c) => s + c.document_count, 0);
+  const totalChunks = (collections.data ?? []).reduce((s, c) => s + c.chunk_count, 0);
 
   const recentLogs = history.data ?? [];
 
@@ -104,17 +103,11 @@ function Dashboard() {
   const primaryModel = recentLogs[0]?.model_used ?? null;
   const lastAccuracy = evals.data?.[0]?.accuracy ?? null;
 
-  const anyError =
-    collections.error || documents.error || history.error || evals.error || conversations.error;
+  const anyError = collections.error || history.error || evals.error || conversations.error;
   // Only on real counts: zeros from a backend that is down are not a fresh install.
-  const countsLoaded =
-    collections.isSuccess && documents.isSuccess && history.isSuccess && conversations.isSuccess;
+  const countsLoaded = collections.isSuccess && history.isSuccess && conversations.isSuccess;
 
-  const collectionRows = (collections.data ?? []).map((c) => {
-    const docs = (documents.data ?? []).filter((d) => d.collection_id === c.id);
-    const chunks = docs.reduce((s, d) => s + (d.chunk_count ?? 0), 0);
-    return { ...c, docCount: docs.length, chunkCount: chunks };
-  });
+  const collectionRows = collections.data ?? [];
 
   return (
     <div>
@@ -140,7 +133,7 @@ function Dashboard() {
         <GettingStarted
           collections={totalCollections}
           documents={totalDocuments}
-          questions={recentLogs.length + (conversations.data?.length ?? 0)}
+          questions={recentLogs.length + totalConversations}
         />
       )}
 
@@ -156,11 +149,11 @@ function Dashboard() {
             />
             <StatCard
               label="DOCUMENTS"
-              value={documents.isLoading ? "—" : fmtNumber(totalDocuments)}
+              value={collections.isLoading ? "—" : fmtNumber(totalDocuments)}
             />
             <StatCard
               label="CHUNKS INDEXED"
-              value={documents.isLoading ? "—" : fmtNumber(totalChunks)}
+              value={collections.isLoading ? "—" : fmtNumber(totalChunks)}
             />
           </div>
 
@@ -239,7 +232,7 @@ function Dashboard() {
               <div>
                 <div className="label-xs text-text-tertiary mb-1">CONVERSATIONS</div>
                 <div className="title-sm text-text-primary">
-                  {conversations.isLoading ? "—" : fmtNumber(conversations.data?.length ?? 0)}
+                  {conversations.isLoading ? "—" : fmtNumber(totalConversations)}
                 </div>
               </div>
               <div>
@@ -392,7 +385,7 @@ function Dashboard() {
             </Link>
           </div>
           <div className="border border-border-subtle bg-surface-container overflow-x-auto">
-            {collections.isLoading || documents.isLoading ? (
+            {collections.isLoading ? (
               <div className="p-4">
                 <LoadingLine />
               </div>
@@ -422,10 +415,10 @@ function Dashboard() {
                         {c.name.toUpperCase()}
                       </td>
                       <td className="py-3 text-right tabular-nums text-text-primary">
-                        {fmtNumber(c.docCount)}
+                        {fmtNumber(c.document_count)}
                       </td>
                       <td className="py-3 text-right tabular-nums text-text-secondary">
-                        {fmtNumber(c.chunkCount)}
+                        {fmtNumber(c.chunk_count)}
                       </td>
                       <td className="py-3 pl-5 pr-5 text-text-tertiary">
                         {truncate(c.description ?? "—", 50)}
