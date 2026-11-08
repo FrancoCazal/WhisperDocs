@@ -571,7 +571,6 @@ export const api = {
 
   getIngestionJob: (jobId: number) => request<IngestionJob>(`/documents/jobs/${jobId}`),
 
-  // No page lists the jobs yet: U7 (recent jobs panel) is the one that will.
   listIngestionJobs: (collectionId?: number, limit = 50) => {
     const q = new URLSearchParams();
     if (collectionId !== undefined) q.set("collection_id", String(collectionId));

@@ -13,6 +13,8 @@ import { PageHeader } from "@/components/ui-kit/PageHeader";
 import { LoadMore } from "@/components/ui-kit/LoadMore";
 import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
+import { RecentJobs } from "@/components/documents/RecentJobs";
+import { ACCEPT_ATTR, rejectReason, stageText } from "@/components/documents/stages";
 import {
   EmptyState,
   ErrorBanner,
@@ -45,6 +47,10 @@ type UploadStatus = {
   status: "queued" | "uploading" | "running" | "success" | "error";
   progress: number;
   stage: IngestionStatus | null;
+  // The job's chunks, once it has counted them.
+  chunks?: { done: number; total: number };
+  // Set once indexed.
+  documentId?: number | null;
   error?: string;
 };
 
@@ -71,16 +77,8 @@ function wait(ms: number, signal: AbortSignal) {
   });
 }
 
-const STAGE_LABEL: Record<IngestionStatus, string> = {
-  // On the server, waiting for a worker; "QUEUED" is a file not sent yet.
-  pending: "PENDING",
-  extracting: "EXTRACTING",
-  chunking: "CHUNKING",
-  embedding: "EMBEDDING",
-  persisting: "PERSISTING",
-  complete: "INDEXED",
-  failed: "FAILED",
-};
+const chunksOf = (job: { processed_chunks: number; total_chunks: number }) =>
+  job.total_chunks > 0 ? { done: job.processed_chunks, total: job.total_chunks } : undefined;
 
 function DocumentsPage() {
   const navigate = useNavigate();
@@ -116,6 +114,7 @@ function DocumentsPage() {
   const refreshDocuments = () => {
     void qc.invalidateQueries({ queryKey: ["documents"] });
     void qc.invalidateQueries({ queryKey: ["collections"] });
+    void qc.invalidateQueries({ queryKey: ["ingestion-jobs"] });
   };
 
   const collectionName = (id: number) =>
@@ -129,7 +128,8 @@ function DocumentsPage() {
   }
 
   async function ingestFile({ id, file, collectionId }: QueuedUpload, signal: AbortSignal) {
-    const succeed = () => updateStatus(id, { status: "success", stage: "complete", progress: 100 });
+    const succeed = (documentId: number | null) =>
+      updateStatus(id, { status: "success", stage: "complete", progress: 100, documentId });
     const fail = (error: string) => updateStatus(id, { status: "error", stage: "failed", error });
     try {
       updateStatus(id, { status: "uploading" });
@@ -141,10 +141,15 @@ function DocumentsPage() {
           job_id,
           (e) => {
             if (e.type === "progress") {
-              updateStatus(id, { status: "running", stage: e.status, progress: e.progress });
+              updateStatus(id, {
+                status: "running",
+                stage: e.status,
+                progress: e.progress,
+                chunks: chunksOf(e),
+              });
             } else if (e.type === "complete") {
               ended = true;
-              succeed();
+              succeed(e.document_id);
             } else if (e.type === "error") {
               ended = true;
               fail(e.message);
@@ -163,9 +168,14 @@ function DocumentsPage() {
         try {
           const job = await api.getIngestionJob(job_id);
           misses = 0;
-          if (job.status === "complete") return succeed();
+          if (job.status === "complete") return succeed(job.document_id);
           if (job.status === "failed") return fail(job.error_message ?? "ingestion failed");
-          updateStatus(id, { status: "running", stage: job.status, progress: job.progress });
+          updateStatus(id, {
+            status: "running",
+            stage: job.status,
+            progress: job.progress,
+            chunks: chunksOf(job),
+          });
         } catch (err) {
           if (++misses >= POLL_MAX_MISSES) throw err;
         }
@@ -236,19 +246,30 @@ function DocumentsPage() {
     const collectionId = uploadTarget;
     if (files.length === 0 || collectionId === null) return;
     const u = uploads.current;
-    const batch = files.map((file) => ({ id: u.nextId++, file, collectionId }));
+    // A file the backend would reject is not sent: its row says why at once.
+    const rows = files.map((file) => ({
+      id: u.nextId++,
+      file,
+      collectionId,
+      error: rejectReason(file),
+    }));
     // A new batch joins the list; rows of earlier ones stay until cleared.
     setUploadStatuses((prev) => [
       ...prev,
-      ...batch.map((b) => ({
-        id: b.id,
-        filename: b.file.name,
-        status: "queued" as const,
-        progress: 0,
-        stage: null,
-      })),
+      ...rows.map((r): UploadStatus =>
+        r.error
+          ? {
+              id: r.id,
+              filename: r.file.name,
+              status: "error",
+              progress: 0,
+              stage: null,
+              error: r.error,
+            }
+          : { id: r.id, filename: r.file.name, status: "queued", progress: 0, stage: null },
+      ),
     ]);
-    u.queue.push(...batch);
+    u.queue.push(...rows.filter((r) => !r.error));
     pump();
   }
 
@@ -338,7 +359,7 @@ function DocumentsPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.md,.txt"
+              accept={ACCEPT_ATTR}
               multiple
               className="hidden"
               onChange={(e) => handleFiles(Array.from(e.target.files ?? []))}
@@ -382,14 +403,30 @@ function DocumentsPage() {
                     : u.status === "uploading"
                       ? "UPLOADING"
                       : u.stage
-                        ? STAGE_LABEL[u.stage]
+                        ? stageText(u.stage)
                         : "QUEUED";
               return (
                 <div key={u.id} className="px-4 py-2 border-b border-border-subtle/50">
-                  <div className="flex items-center justify-between body-sm">
-                    <span className="text-text-primary truncate">{u.filename}</span>
-                    <span className={`label-sm ${labelColor}`}>
-                      {stageLabel} {u.status === "running" ? `· ${u.progress}%` : ""}
+                  <div className="flex items-center justify-between gap-3 body-sm">
+                    <span className="text-text-primary truncate min-w-0">{u.filename}</span>
+                    <span className={`label-sm shrink-0 tabular-nums ${labelColor}`}>
+                      {stageLabel}
+                      {u.status === "running" && u.chunks && (
+                        <>
+                          {" "}
+                          · {fmtNumber(u.chunks.done)}/{fmtNumber(u.chunks.total)} CHUNKS
+                        </>
+                      )}
+                      {u.status === "running" && ` · ${u.progress}%`}
+                      {u.status === "success" && u.documentId != null && (
+                        <Link
+                          to="/documentos/$id"
+                          params={{ id: String(u.documentId) }}
+                          className="ml-3 text-text-secondary hover:text-primary-blue"
+                        >
+                          OPEN →
+                        </Link>
+                      )}
                     </span>
                   </div>
                   {u.status === "running" && (
@@ -405,6 +442,7 @@ function DocumentsPage() {
             })}
           </div>
         )}
+        <RecentJobs collectionId={filter} collections={collections.data} />
       </div>
 
       {documents.query.error && <ErrorBanner message="failed to load documents" />}
