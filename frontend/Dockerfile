@@ -1,6 +1,6 @@
 # Build: TanStack Start in SPA mode writes static files to dist/client, with
 # dist/client/_shell.html for every path that is not a file.
-FROM node:22-alpine AS build
+FROM node:25-alpine AS build
 
 WORKDIR /app
 
