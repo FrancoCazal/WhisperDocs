@@ -76,6 +76,19 @@ function logsToSession(sessionId: string, logs: QueryLog[]): Session {
   return { id: sessionId, turns, createdAt: sorted[0]?.created_at ?? new Date().toISOString() };
 }
 
+/** The logged sessions, newest first. */
+function sessionsFromLogs(logs: QueryLog[]): Session[] {
+  const grouped = new Map<string, QueryLog[]>();
+  for (const log of logs) {
+    if (!log.session_id) continue;
+    if (!grouped.has(log.session_id)) grouped.set(log.session_id, []);
+    grouped.get(log.session_id)!.push(log);
+  }
+  return [...grouped.entries()]
+    .map(([id, group]) => logsToSession(id, group))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 const EXAMPLES = [
   "What distance metrics does pgvector support?",
   "How does selectinload work in SQLAlchemy async?",
@@ -101,7 +114,19 @@ function ConsultaPage() {
     queryFn: () => api.history(200),
     staleTime: Infinity,
   });
-  const initialized = useRef(false);
+  // History's sessions join the list once, when it first loads. Set during
+  // render, as React suggests for state that follows other state.
+  const [historyMerged, setHistoryMerged] = useState(false);
+  if (!historyMerged && historyQuery.data) {
+    setHistoryMerged(true);
+    const fromHistory = sessionsFromLogs(historyQuery.data);
+    if (fromHistory.length > 0)
+      setSessions((prev) => {
+        const existingIds = new Set(prev.map((s) => s.id));
+        const fresh = fromHistory.filter((s) => !existingIds.has(s.id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+  }
 
   const active = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? sessions[0],
@@ -114,30 +139,9 @@ function ConsultaPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["history"] }),
   });
 
-  useEffect(() => {
-    if (initialized.current || !historyQuery.data) return;
-    initialized.current = true;
-    const grouped = new Map<string, QueryLog[]>();
-    for (const log of historyQuery.data) {
-      if (!log.session_id) continue;
-      if (!grouped.has(log.session_id)) grouped.set(log.session_id, []);
-      grouped.get(log.session_id)!.push(log);
-    }
-    const historySessions = [...grouped.entries()]
-      .map(([id, logs]) => logsToSession(id, logs))
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    if (historySessions.length === 0) return;
-    setSessions((prev) => {
-      const existingIds = new Set(prev.map((s) => s.id));
-      const fresh = historySessions.filter((s) => !existingIds.has(s.id));
-      return fresh.length > 0 ? [...prev, ...fresh] : prev;
-    });
-  }, [historyQuery.data]);
-
-  // Progressive status while generating
+  // Progressive status while generating; send() starts it at step 0.
   useEffect(() => {
     if (!queryMut.isPending) return;
-    setProgressIdx(0);
     const id = setInterval(() => setProgressIdx((i) => (i + 1) % PROGRESS_STEPS.length), 900);
     return () => clearInterval(id);
   }, [queryMut.isPending]);
@@ -157,6 +161,7 @@ function ConsultaPage() {
     const userTurn: Turn = { kind: "user", ts: fmtTimestamp(), text: question.trim() };
     patchActive((s) => ({ ...s, turns: [...s.turns, userTurn] }));
     setInput("");
+    setProgressIdx(0);
     try {
       const resp = await queryMut.mutateAsync(question.trim());
       const aTurn: Turn = {

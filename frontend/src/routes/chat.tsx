@@ -178,6 +178,9 @@ function ChatPage() {
     const view = viewRef.current;
     const run: StreamRun = { controller: new AbortController(), reason: null };
     runRef.current = run;
+    // send() runs from event handlers only (submit, an example, RETRY), never
+    // during render; the compiler's purity check cannot tell.
+    // eslint-disable-next-line react-hooks/purity
     const startedAt = performance.now();
     // What the stream has sent so far; the finished turn is built from it.
     const got: {
@@ -253,6 +256,7 @@ function ChatPage() {
       kind: "assistant" as const,
       ts: fmtTimestamp(),
       trace: got.trace.map((p) => (p.status === "running" ? { ...p, status: "cut" as const } : p)),
+      // eslint-disable-next-line react-hooks/purity -- an event handler, as above
       elapsedMs: performance.now() - startedAt,
     };
     const f = got.final;
@@ -377,8 +381,9 @@ function ChatPage() {
     if (id) void openFromUrl(id);
     else startNew("keep");
   });
-  // followUrl is an effect event, which eslint-plugin-react-hooks 5 does not know yet.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Following the URL means aborting a stream and loading a thread, which cannot
+  // happen during render, so this is an effect that sets state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => followUrl(urlThread), [urlThread]);
 
   function toggleSaved() {

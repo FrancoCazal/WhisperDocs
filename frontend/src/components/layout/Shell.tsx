@@ -1,6 +1,6 @@
 import { Link, useRouterState, Outlet } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { API_BASE_URL, api, fmtCost, fmtNumber, shortModel } from "@/lib/api";
 
 const NAV_ITEMS = [
@@ -98,17 +98,15 @@ function LastAnswer() {
 export function Shell() {
   const apiState = useApiState();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const [navOpen, setNavOpen] = useState(false);
+  // The drawer is open on one path: navigating closes it, with no effect to sync.
+  const [navOpenAt, setNavOpenAt] = useState<string | null>(null);
+  const navOpen = navOpenAt === pathname;
+  const setNavOpen = (open: boolean) => setNavOpenAt(open ? pathname : null);
   const breadcrumb =
     ROUTE_LABELS[pathname] ??
     (pathname.startsWith("/documentos/")
       ? "DOCUMENTS // DOCUMENT_DETAIL"
       : pathname.replace("/", "").toUpperCase() || "RESUMEN");
-
-  // Close mobile drawer when route changes.
-  useEffect(() => {
-    setNavOpen(false);
-  }, [pathname]);
 
   return (
     <div className="min-h-screen flex flex-col bg-surface text-text-primary">
@@ -128,7 +126,7 @@ export function Shell() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setNavOpen((v) => !v)}
+            onClick={() => setNavOpen(!navOpen)}
             aria-label={navOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={navOpen}
             aria-controls="primary-nav"
