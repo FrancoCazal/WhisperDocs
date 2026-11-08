@@ -27,6 +27,14 @@ retrieval_top_relevance = Histogram(
     buckets=(0.0, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
 )
 
+# Every model call, by its role (classifier, rag_generation, ..., embedding):
+# outcome is "ok" or the failure's kind (billing, auth, rate_limit, ...).
+model_calls_total = Counter(
+    "whisperdocs_model_calls_total",
+    "Model calls by role, model and outcome",
+    labelnames=("role", "model", "outcome"),
+)
+
 errors_total = Counter(
     "whisperdocs_errors_total",
     "Errors by type",

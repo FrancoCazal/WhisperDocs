@@ -9,6 +9,7 @@ from app.db import get_db
 from app.logging_config import get_logger
 from app.services.embedder import EmbeddingService
 from app.services.llm.errors import classify_error
+from app.services.model_status import model_status
 
 logger = get_logger(__name__)
 
@@ -27,7 +28,10 @@ async def health(
     Default: DB ping only (fast), without the API key: a probe needs none.
     deep=true: also verifies pgvector extension and embedder connectivity. It
     pays an embedding call, so it needs the key when API_KEY is set, and counts
-    against the questions rate limit (audit E12).
+    against the questions rate limit (audit E12). It adds `models`: each role's
+    last call, from the record real calls leave ("ok", "failing: <kind>",
+    "unknown" with no call yet), without calling them. A failing role makes the
+    status "degraded".
 
     A failed check reads "error: <kind>" (unavailable, billing, timeout, ...,
     from classify_error); the exception is in the logs, not in this open
@@ -65,5 +69,11 @@ async def health(
         logger.exception("health_embedder_failed")
         checks["embedder"] = f"error: {classify_error(exc)}"
 
-    status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
-    return {"status": status, "checks": checks}
+    models = {
+        role: f"failing: {s['last_failure_kind']}" if s["state"] == "failing" else s["state"]
+        for role, s in model_status.snapshot().items()
+    }
+    healthy = all(v == "ok" for v in checks.values()) and not any(
+        v.startswith("failing") for v in models.values()
+    )
+    return {"status": "ok" if healthy else "degraded", "checks": checks, "models": models}

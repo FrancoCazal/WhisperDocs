@@ -4,6 +4,8 @@ from app.services.llm.bedrock_provider import BedrockProvider
 from app.services.llm.gemini_provider import GeminiProvider
 from app.services.llm.model_policy import bedrock_converse_unsupported_reason
 from app.services.llm.pricing import has_pricing
+from app.services.llm.tracked import TrackedProvider
+from app.services.model_status import Role
 
 __all__ = [
     "LLMError",
@@ -49,8 +51,9 @@ def llm_provider_for_model(model: str) -> LLMProvider:
     return _bedrock_instance
 
 
-# Node name → agent settings field suffix
-_NODE_ALIAS = {
+# Node name → agent settings field suffix, which is also its role in
+# model_status.
+_NODE_ALIAS: dict[str, Role] = {
     "classifier": "classifier",
     "query_rewrite": "query_rewrite",
     "rag": "rag_generation",
@@ -68,13 +71,16 @@ def llm_service_for(node_name: str) -> tuple[LLMProvider, str, float]:
 
     Resolves model + temperature from AgentSettings env vars:
       AGENT_MODEL_<SUFFIX>  / AGENT_TEMP_<SUFFIX>
+
+    The provider records each call's outcome under the node's role
+    (app/services/model_status.py).
     """
     suffix = _NODE_ALIAS.get(node_name)
     if suffix is None:
         raise ValueError(f"Unknown agent node: {node_name!r}")
     model: str = getattr(settings.agent, f"model_{suffix}")
     temperature: float = getattr(settings.agent, f"temp_{suffix}")
-    return llm_provider_for_model(model), model, temperature
+    return TrackedProvider(llm_provider_for_model(model), suffix), model, temperature
 
 
 def validate_agent_models() -> tuple[list[str], list[str]]:

@@ -6,6 +6,7 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 from app.services.embeddings.base import EmbeddingError
+from app.services.model_status import model_status
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:
@@ -60,6 +61,7 @@ class OpenAIEmbeddingProvider:
                     input=batch,
                 )
             except Exception as exc:
+                model_status.failed("embedding", self._model, exc)
                 raise EmbeddingError(f"Failed to generate embeddings: {exc}") from exc
 
             for item in response.data:
@@ -68,4 +70,5 @@ class OpenAIEmbeddingProvider:
                     vec = _l2_normalize(vec)
                 all_vectors.append(vec)
 
+        model_status.ok("embedding", self._model)
         return all_vectors

@@ -79,3 +79,13 @@ def open_api(monkeypatch):
     limiter.reset()
     yield
     limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def fresh_model_status():
+    """Each test starts with no call recorded (app/services/model_status.py)."""
+    from app.services.model_status import model_status
+
+    model_status.reset()
+    yield
+    model_status.reset()

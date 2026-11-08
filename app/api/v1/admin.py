@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 
 from app.config import settings
+from app.schemas.model_status import ModelStatusRead
+from app.services.model_status import model_status
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -39,3 +41,12 @@ async def get_settings() -> dict:
             "dimension": settings.embedding_dimension,
         },
     }
+
+
+@router.get("/model-status", response_model=ModelStatusRead)
+async def get_model_status() -> dict:
+    """What the last calls of each role did: the classifier, the query rewrite,
+    ..., the embedder. Read from the record real calls leave; nothing is called
+    here, so it costs nothing to poll. A role with no call since the API
+    started is "unknown"."""
+    return {"since": model_status.since, "roles": model_status.snapshot()}
