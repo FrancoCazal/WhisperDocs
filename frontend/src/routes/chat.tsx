@@ -46,8 +46,14 @@ export const Route = createFileRoute("/chat")({
     ],
   }),
   // ?thread=<id>: the thread on screen, so a reload or a link reopens it.
-  validateSearch: (search: Record<string, unknown>): { thread?: string } =>
-    typeof search.thread === "string" && search.thread ? { thread: search.thread } : {},
+  // ?collection=<id>: a new chat in that collection (a document's ASK IN CHAT).
+  validateSearch: (search: Record<string, unknown>): { thread?: string; collection?: number } => {
+    const out: { thread?: string; collection?: number } = {};
+    if (typeof search.thread === "string" && search.thread) out.thread = search.thread;
+    const c = Number(search.collection);
+    if (search.collection !== undefined && Number.isInteger(c) && c > 0) out.collection = c;
+    return out;
+  },
   component: ChatPage,
 });
 
@@ -92,7 +98,7 @@ function ChatPage() {
   const qc = useQueryClient();
   const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
   const navigate = useNavigate({ from: "/chat" });
-  const { thread: urlThread = null } = Route.useSearch();
+  const { thread: urlThread = null, collection: urlCollection } = Route.useSearch();
 
   const [threadId, setThreadId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -477,6 +483,19 @@ function ChatPage() {
   // happen during render, so this is an effect that sets state.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => followUrl(urlThread), [urlThread]);
+
+  // ?collection=N starts a new chat scoped to it, then leaves the URL: the
+  // thread it becomes takes the URL over, and a reload keeps that thread.
+  const takeCollection = useEffectEvent((id: number) => {
+    if (urlThread) return;
+    startNew("keep");
+    setCollectionId(id);
+    void navigate({ search: {}, replace: true });
+  });
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (urlCollection !== undefined) takeCollection(urlCollection);
+  }, [urlCollection]);
 
   function toggleSaved() {
     if (!threadId || !activeConv) return;
