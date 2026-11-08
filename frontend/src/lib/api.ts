@@ -636,6 +636,12 @@ export function fmtPct(n: number | null | undefined, decimals = 1): string {
   return `${(n * 100).toFixed(decimals)}%`;
 }
 
+// "us.anthropic.claude-sonnet-4-5-20250929-v1:0" -> "claude-sonnet-4-5-20250929"
+export function shortModel(model: string | null | undefined): string {
+  if (!model) return "—";
+  return model.replace(/^(us|eu|apac|global)\.anthropic\./, "").replace(/-v\d+:\d+$/, "");
+}
+
 export function truncate(s: string, n = 60): string {
   if (!s) return "";
   return s.length > n ? s.slice(0, n - 1) + "…" : s;

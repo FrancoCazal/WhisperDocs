@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
@@ -81,6 +81,7 @@ const EXAMPLES = [
 const PROGRESS_STEPS = ["EMBEDDING QUERY...", "RETRIEVING CHUNKS...", "GENERATING RESPONSE..."];
 
 function ConsultaPage() {
+  const qc = useQueryClient();
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()]);
   const [activeId, setActiveId] = useState<string>(() => sessions[0].id);
   const [collectionId, setCollectionId] = useState<number | null>(null);
@@ -106,6 +107,7 @@ function ConsultaPage() {
   const queryMut = useMutation({
     mutationFn: (q: string) =>
       api.query({ question: q, collection_id: collectionId, top_k: topK, session_id: active.id }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["history"] }),
   });
 
   useEffect(() => {

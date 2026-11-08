@@ -218,6 +218,8 @@ function ChatPage() {
     setStreamProgress([]);
     setStreamingText("");
     qc.invalidateQueries({ queryKey: ["conversations", "list"] });
+    // The query log: history pages and the layout's last-answer bar.
+    qc.invalidateQueries({ queryKey: ["history"] });
   }
 
   function startNew() {

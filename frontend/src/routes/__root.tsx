@@ -61,7 +61,8 @@ function RootShell({ children }: { children: React.ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body>
+      {/* Extensions add attributes to <body> before hydration (e.g. cz-shortcut-listen). */}
+      <body suppressHydrationWarning>
         {children}
         <Scripts />
       </body>
