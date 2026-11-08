@@ -1,7 +1,17 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, API_BASE_URL, getApiKey, setApiKey } from "@/lib/api";
+import {
+  api,
+  API_BASE_URL,
+  fmtAgo,
+  fmtDate,
+  getApiKey,
+  setApiKey,
+  shortModel,
+  type ModelRoleState,
+} from "@/lib/api";
+import { errorKind, useModelStatus } from "@/lib/failures";
 import { Btn } from "@/components/ui-kit/Button";
 import { inputCls } from "@/components/ui-kit/Modal";
 import { PageHeader } from "@/components/ui-kit/PageHeader";
@@ -89,6 +99,8 @@ function SettingsPage() {
           ))}
       </Section>
 
+      <ModelStatusSection />
+
       {adminSettings.data && (
         <>
           <Section title="RETRIEVAL & COMPACTION">
@@ -130,6 +142,74 @@ function SettingsPage() {
   );
 }
 
+/** Each role's last calls, as the API recorded them: polling it calls no model. */
+function ModelStatusSection() {
+  const status = useModelStatus();
+  return (
+    <Section title="MODEL STATUS">
+      {status.isLoading && <LoadingLine />}
+      {status.error && <Row label="ERROR" value={status.error.message} />}
+      {status.data && (
+        <>
+          <Row
+            label="RECORDED SINCE"
+            value={
+              // Words whole: the row breaks anywhere, for URLs.
+              <span className="break-normal">
+                {fmtDate(status.data.since)}{" "}
+                <span className="text-text-tertiary">
+                  · FROM THE API&apos;S OWN CALLS; NONE IS MADE TO CHECK
+                </span>
+              </span>
+            }
+          />
+          {Object.entries(status.data.roles).map(([role, s]) => (
+            <Row key={role} label={role.toUpperCase()} value={<RoleState s={s} />} />
+          ))}
+        </>
+      )}
+    </Section>
+  );
+}
+
+// Inline parts with spaces between them, so the row reads as one line of
+// text, to a screen reader too. Words stay whole: the row breaks anywhere,
+// for URLs.
+function RoleState({ s }: { s: ModelRoleState }) {
+  const model = <span className="text-text-tertiary">· {shortModel(s.model)}</span>;
+  if (s.state === "unknown") {
+    return (
+      <span className="break-normal">
+        <span className="text-text-tertiary">NO CALLS YET</span> {model}
+      </span>
+    );
+  }
+  if (s.state === "ok") {
+    return (
+      <span className="break-normal">
+        <span className="inline-flex items-center gap-2 text-success">
+          <StatDot tone="success" /> OK
+        </span>{" "}
+        {s.last_ok_at && <span className="text-text-tertiary">· {fmtAgo(s.last_ok_at)}</span>}{" "}
+        {model}
+      </span>
+    );
+  }
+  const kind = errorKind(s.last_failure_kind);
+  return (
+    <span className="break-normal" title={kind.hint}>
+      <span className="inline-flex items-center gap-2 text-warning">
+        <StatDot tone="warning" /> FAILING · {kind.label}
+      </span>{" "}
+      <span className="text-text-tertiary">
+        · {s.failures_in_a_row} IN A ROW
+        {s.last_failure_at && ` · ${fmtAgo(s.last_failure_at)}`}
+      </span>{" "}
+      {model}
+    </span>
+  );
+}
+
 /** The key the API asks for when it runs with API_KEY set. It is never shown
  *  back: the field says whether one is set, and a new one replaces it. */
 function ApiKeyField() {
@@ -160,9 +240,8 @@ function ApiKeyField() {
         type="password"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        placeholder={
-          isSet ? "SET · TYPE A NEW ONE TO REPLACE IT" : "NOT SET · NEEDED WHEN THE API HAS ONE"
-        }
+        placeholder={isSet ? "SET · TYPE TO REPLACE" : "NOT SET"}
+        title="Needed when the API runs with API_KEY set. Kept in this browser."
         aria-label="API key"
         autoComplete="off"
         spellCheck={false}

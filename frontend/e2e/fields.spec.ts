@@ -18,6 +18,7 @@ async function playBackend(page: Page): Promise<string[]> {
       compaction: { token_threshold: 4000, count_threshold: 20, k_recent: 6 },
       embedding: { model: "fake-embedding", dimension: 1536 },
     },
+    "/admin/model-status": { since: NOW, roles: {} },
     "/collections": [
       {
         id: 1,

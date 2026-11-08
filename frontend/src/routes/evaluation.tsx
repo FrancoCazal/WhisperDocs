@@ -98,6 +98,7 @@ function EvaluationPage() {
     },
     onSettled: () => {
       setRunning(null);
+      void qc.invalidateQueries({ queryKey: ["model-status"] });
       setConfirming(false);
     },
   });

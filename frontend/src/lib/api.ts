@@ -128,7 +128,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // ============ Types ============
-export type Health = { status: string; database?: string; checks?: Record<string, string> };
+export type Health = {
+  status: string;
+  database?: string;
+  checks?: Record<string, string>;
+  // With ?deep=true only: each role's last call ("ok", "failing: <kind>", "unknown").
+  models?: Record<string, string>;
+};
+
+// GET /admin/model-status: what each role's last calls did, since the API
+// started. "unknown": no call yet.
+export type ModelRoleState = {
+  model: string;
+  state: "ok" | "failing" | "unknown";
+  calls: number;
+  failures_in_a_row: number;
+  last_ok_at: string | null;
+  last_failure_at: string | null;
+  last_failure_kind: string | null;
+};
+
+export type ModelStatus = { since: string; roles: Record<string, ModelRoleState> };
 
 export type Collection = {
   id: number;
@@ -610,6 +630,7 @@ export const api = {
       compaction: { token_threshold: number; count_threshold: number; k_recent: number };
       embedding: { model: string; dimension: number };
     }>("/admin/settings"),
+  modelStatus: () => request<ModelStatus>("/admin/model-status"),
 
   listCollections: () => request<Collection[]>("/collections"),
   createCollection: (body: { name: string; description?: string }) =>
@@ -836,6 +857,18 @@ export function fmtTurnTime(iso: string): string {
   const day = d.toISOString().slice(0, 10);
   const today = new Date().toISOString().slice(0, 10);
   return day === today ? fmtTimestamp(d) : `${day} ${fmtTimestamp(d)}`;
+}
+
+/** How long ago `iso` was, to the minute: "JUST NOW", "4 MIN AGO", "2 H AGO",
+ *  "3 D AGO". */
+export function fmtAgo(iso: string, now: number = Date.now()): string {
+  const seconds = Math.max(0, (now - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "JUST NOW";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} MIN AGO`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} H AGO`;
+  return `${Math.floor(hours / 24)} D AGO`;
 }
 
 export function fmtNumber(n: number | null | undefined): string {

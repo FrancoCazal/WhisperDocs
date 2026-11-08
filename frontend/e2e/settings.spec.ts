@@ -12,6 +12,7 @@ const ANSWERS: Record<string, unknown> = {
     compaction: { token_threshold: 4000, count_threshold: 20, k_recent: 6 },
     embedding: { model: "fake-embedding", dimension: 1536 },
   },
+  "/admin/model-status": { since: "2026-11-08T12:00:00Z", roles: {} },
   // The shell's last question.
   "/query/history": { items: [], next_cursor: null, total: 0 },
 };

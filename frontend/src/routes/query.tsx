@@ -196,6 +196,8 @@ function QueryPage() {
     mutationFn: (q: string) =>
       api.query({ question: q, collection_id: collectionId, top_k: topK, session_id: active.id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["history"] }),
+    // Worked or failed, the calls are on record: the failing-models notice.
+    onSettled: () => qc.invalidateQueries({ queryKey: ["model-status"] }),
   });
 
   // Progressive status while generating; send() starts it at step 0.

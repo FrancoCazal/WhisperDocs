@@ -428,6 +428,8 @@ function ChatPage() {
           : "Answer ready.",
     );
     qc.invalidateQueries({ queryKey: ["conversations", "list"] });
+    // What the turn's calls left on record: the failing-models notice.
+    qc.invalidateQueries({ queryKey: ["model-status"] });
     // The query log: history pages and the layout's last-answer bar.
     if (f && !f.failed) qc.invalidateQueries({ queryKey: ["history"] });
   }

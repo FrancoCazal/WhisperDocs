@@ -4,6 +4,7 @@ import { useState } from "react";
 import { API_BASE_URL, api, fmtCost, fmtNumber, shortModel } from "@/lib/api";
 import { btnCls } from "@/components/ui-kit/Button";
 import { useHydrated } from "@/lib/useHydrated";
+import { ModelNotice } from "./ModelNotice";
 
 const NAV_ITEMS = [
   { to: "/", label: "OVERVIEW", glyph: "▦" },
@@ -152,6 +153,8 @@ export function Shell() {
           <ApiStatus state={apiState} />
         </div>
       </header>
+
+      <ModelNotice />
 
       <div className="flex flex-1 min-h-0 relative">
         {/* SIDEBAR — desktop static, mobile drawer */}
