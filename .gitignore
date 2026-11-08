@@ -39,3 +39,6 @@ frontend/.nitro/
 frontend/.vite/
 frontend/.env
 frontend/.env.local
+
+# Dumps from a crashed MSYS shell (Git Bash on Windows)
+*.stackdump
