@@ -16,6 +16,7 @@ from app.eval import runner
 from app.eval import schemas as eval_schemas
 from app.eval.evaluator import RAGEvaluator
 from app.eval.judges import JUDGE_PROMPT_VERSION
+from app.eval.protocol import dataset_hash
 from app.eval.report import diff_failures, render_diff_markdown, render_markdown
 from app.eval.schemas import (
     AggregateMetrics,
@@ -94,8 +95,10 @@ def test_a_drop_or_a_rise_past_its_threshold_fails_with_both_named():
     failures = diff_failures(base, head, max_accuracy_drop=0.10, max_hallucination_rise=0.10)
 
     assert failures == [
-        "accuracy dropped 15.0 points, from 100.0% to 85.0%, more than 10.0",
-        "hallucination rate rose 15.0 points, from 0.0% to 15.0%, more than 10.0",
+        "accuracy dropped 15.0 points, from 100.0% to 85.0%, more than 10.0 "
+        "(3 items worse, 0 better, McNemar p = 0.250)",
+        "hallucination rate rose 15.0 points, from 0.0% to 15.0%, more than 10.0 "
+        "(3 items worse, 0 better, McNemar p = 0.250)",
     ]
 
 
@@ -184,6 +187,9 @@ def test_the_flags_override_the_settings(monkeypatch, tmp_path, capsys):
 
 
 class _Judge:
+    model = "fake-judge"
+    temperature = 0.0
+
     async def judge_correctness(self, _item, _answer) -> JudgeResult:
         return JudgeResult(passed=True, reasoning="ok")
 
@@ -230,3 +236,10 @@ async def test_a_run_reports_the_prompt_versions_it_answered_and_judged_with(mon
 
     assert report.prompt_version == PROMPT_VERSION
     assert report.judge_prompt_version == JUDGE_PROMPT_VERSION
+    # And the settings it ran with (audit E7).
+    assert report.config is not None
+    assert report.config.dataset_hash == dataset_hash([item])
+    assert (report.config.collection_id, report.config.top_k) == (1, evaluator.top_k)
+    assert report.config.concurrency == evaluator.concurrency
+    assert report.config.judge_model == "fake-judge"
+    assert report.config.rag_temperature == 0.0

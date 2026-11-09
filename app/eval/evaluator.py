@@ -11,6 +11,7 @@ from app.agent.utils.citation_validation import validate_citations_semantic
 from app.config import settings
 from app.eval.judges import JUDGE_PROMPT_VERSION, Judge
 from app.eval.metrics import compute_metrics
+from app.eval.protocol import run_config
 from app.eval.schemas import EvalReport, EvalResult, TestItem
 from app.logging_config import get_logger
 from app.services.embedder import EmbeddingService
@@ -73,6 +74,7 @@ class RAGEvaluator:
         self.judge = judge
         self.collection_id = collection_id
         self.top_k = top_k
+        self.concurrency = concurrency
         self.semaphore = asyncio.Semaphore(concurrency)
 
     async def run(self, dataset: list[TestItem]) -> EvalReport:
@@ -87,6 +89,16 @@ class RAGEvaluator:
             model=self.model,
             prompt_version=PROMPT_VERSION,
             judge_prompt_version=JUDGE_PROMPT_VERSION,
+            config=run_config(
+                items=dataset,
+                collection_id=self.collection_id,
+                top_k=self.top_k,
+                concurrency=self.concurrency,
+                rag_model=self.model,
+                rag_temperature=self.temperature,
+                judge_model=self.judge.model,
+                judge_temperature=self.judge.temperature,
+            ),
             metrics=metrics,
             results=results,
         )

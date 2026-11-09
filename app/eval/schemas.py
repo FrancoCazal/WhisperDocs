@@ -80,6 +80,38 @@ class AggregateMetrics(BaseModel):
         return getattr(self, name) if name in self.model_fields_set else None
 
 
+class RunConfig(BaseModel):
+    """What a run answered and judged with, beyond its model and prompt
+    versions (audit E7): two reports compare only as far as these match
+    (app/eval/protocol.py)."""
+
+    # The commit, and whether the tree had changes on top; None when unknown.
+    git_sha: str | None
+    git_dirty: bool | None
+    # 12 hex characters over the items the run read, in order.
+    dataset_hash: str
+    collection_id: int
+    top_k: int
+    concurrency: int
+    # The temperature sent; None when the model samples with its defaults
+    # (Claude 4.7+, Gemini 3+), which no setting changes.
+    rag_temperature: float | None
+    # The effort or thinking level sent, if any.
+    rag_reasoning: str | None
+    rag_structured_output: bool
+    rag_context_token_budget: int
+    judge_model: str
+    judge_temperature: float | None
+    judge_reasoning: str | None
+    embedding_model: str
+    embedding_dimension: int
+    # None when the step is off.
+    reranker_model: str | None
+    reranker_candidate_pool: int
+    reranker_score_threshold: float
+    mmr_lambda: float | None
+
+
 class EvalReport(BaseModel):
     run_id: str
     timestamp: datetime
@@ -89,5 +121,7 @@ class EvalReport(BaseModel):
     # app/eval/judges.py). Reports from before have neither.
     prompt_version: str | None = None
     judge_prompt_version: str | None = None
+    # Reports from before the snapshot have none.
+    config: RunConfig | None = None
     metrics: AggregateMetrics
     results: list[EvalResult]

@@ -1,8 +1,11 @@
 """Markdown rendering for EvalReport, and the thresholds a run must meet."""
 
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 
-from app.eval.schemas import AggregateMetrics, EvalReport
+from app.eval.protocol import mcnemar_exact, wilson_interval
+from app.eval.schemas import AggregateMetrics, EvalReport, EvalResult, JudgeResult, RunConfig
 
 # What an old report did not measure: never a 0, which would read as one.
 MISSING = "—"
@@ -49,22 +52,93 @@ def diff_failures(
             f"the runs answered different items ({len(prev.results)} and "
             f"{len(curr.results)}), so they are not compared"
         ]
+    if (hashes := _dataset_hashes(prev, curr)) is not None:
+        return [
+            f"the runs read different datasets ({hashes[0]} and {hashes[1]}): the same "
+            "questions with other expected answers or sources, so they are not compared"
+        ]
+    changes = item_changes(prev, curr)
     failures: list[str] = []
     # Rounded: 0.8 - 0.7 is a hair over 0.1 in floating point.
     drop = round(prev.metrics.accuracy - curr.metrics.accuracy, 9)
     if drop > max_accuracy_drop:
         failures.append(
             f"accuracy dropped {drop * 100:.1f} points, from {prev.metrics.accuracy:.1%} to "
-            f"{curr.metrics.accuracy:.1%}, more than {max_accuracy_drop * 100:.1f}"
+            f"{curr.metrics.accuracy:.1%}, more than {max_accuracy_drop * 100:.1f} "
+            f"({_flips_text(changes, 'correctness')})"
         )
     rise = round(curr.metrics.hallucination_rate - prev.metrics.hallucination_rate, 9)
     if rise > max_hallucination_rise:
         failures.append(
             f"hallucination rate rose {rise * 100:.1f} points, from "
             f"{prev.metrics.hallucination_rate:.1%} to {curr.metrics.hallucination_rate:.1%}, "
-            f"more than {max_hallucination_rise * 100:.1f}"
+            f"more than {max_hallucination_rise * 100:.1f} "
+            f"({_flips_text(changes, 'hallucination')})"
         )
     return failures
+
+
+def _dataset_hashes(prev: EvalReport, curr: EvalReport) -> tuple[str, str] | None:
+    """The two runs' dataset hashes when both have one and they differ."""
+    if prev.config is None or curr.config is None:
+        return None
+    pair = (prev.config.dataset_hash, curr.config.dataset_hash)
+    return pair if pair[0] != pair[1] else None
+
+
+# The two verdicts of an item; for hallucination, `passed` means grounded.
+CHECKS: dict[str, Callable[[EvalResult], JudgeResult]] = {
+    "correctness": lambda r: r.correctness,
+    "hallucination": lambda r: r.hallucination,
+}
+
+
+@dataclass(frozen=True)
+class ItemChange:
+    item_id: int
+    check: str
+    question: str
+    # The current run's reasoning: why the item passes or fails now.
+    reasoning: str
+    # True when it fails now and passed before.
+    regression: bool
+
+
+def item_changes(prev: EvalReport, curr: EvalReport) -> list[ItemChange]:
+    """The verdicts that flipped between the runs, over the items both
+    answered (same id, same question). A failed judge call is no verdict, so
+    it is no flip either."""
+    before = {r.item_id: r for r in prev.results}
+    changes: list[ItemChange] = []
+    for r in curr.results:
+        p = before.get(r.item_id)
+        if p is None or p.question != r.question:
+            continue
+        for check, verdict in CHECKS.items():
+            was, now = verdict(p), verdict(r)
+            if was.error or now.error or was.passed == now.passed:
+                continue
+            changes.append(ItemChange(r.item_id, check, r.question, now.reasoning, was.passed))
+    return changes
+
+
+def flips(changes: list[ItemChange], check: str) -> tuple[int, int]:
+    """Regressions and fixes of one check."""
+    worse = sum(1 for c in changes if c.check == check and c.regression)
+    better = sum(1 for c in changes if c.check == check and not c.regression)
+    return worse, better
+
+
+def _flips_text(changes: list[ItemChange], check: str) -> str:
+    worse, better = flips(changes, check)
+    return (
+        f"{worse} {'item' if worse == 1 else 'items'} worse, {better} better, "
+        f"McNemar p {_p(mcnemar_exact(worse, better))}"
+    )
+
+
+def _p(value: float) -> str:
+    return "< 0.001" if value < 0.001 else f"= {value:.3f}"
 
 
 def _items(report: EvalReport) -> dict[int, str]:
@@ -112,7 +186,11 @@ def render_markdown(report: EvalReport) -> str:
     lines.append("| Metric | Value |")
     lines.append("|--------|-------|")
     lines.append(f"| Accuracy | {m.accuracy:.2%} |")
+    lines.append(f"| Accuracy, 95% interval | {_interval(m.accuracy, m.total)} |")
     lines.append(f"| Hallucination rate | {m.hallucination_rate:.2%} |")
+    lines.append(
+        f"| Hallucination rate, 95% interval | {_interval(m.hallucination_rate, m.total)} |"
+    )
     lines.append(f"| Retrieval precision@k | {m.avg_retrieval_precision:.2%} |")
     lines.append(f"| Retrieval recall@k | {_pct(m.measured('avg_retrieval_recall'))} |")
     lines.append(f"| Latency avg | {m.avg_latency_ms:.0f} ms |")
@@ -128,6 +206,10 @@ def render_markdown(report: EvalReport) -> str:
     lines.append(
         f"| Items with a failed judge call | {MISSING if judge_errors is None else judge_errors} |"
     )
+    lines.append("")
+    lines.append("## Run config")
+    lines.append("")
+    lines.extend(_config_lines(report.config))
     lines.append("")
     lines.append("## By difficulty")
     lines.append("")
@@ -156,6 +238,29 @@ def render_markdown(report: EvalReport) -> str:
             )
     lines.append("")
     return "\n".join(lines)
+
+
+def _interval(share: float, n: int) -> str:
+    """The Wilson interval of a share of n items. The report saves the share
+    rounded, so the count is the nearest whole number."""
+    low, high = wilson_interval(round(share * n), n)
+    return f"{low:.1%} – {high:.1%}"
+
+
+def _config_lines(config: RunConfig | None) -> list[str]:
+    if config is None:
+        return ["_This report is older than the run config._"]
+    return [
+        "| Setting | Value |",
+        "|---------|-------|",
+        *(f"| {name} | {_setting(value)} |" for name, value in config.model_dump().items()),
+    ]
+
+
+def _setting(value: object) -> str:
+    # None: a setting that does not apply, such as a model's default sampling
+    # or a step that is off.
+    return MISSING if value is None else f"`{value}`"
 
 
 def _bucket_table(buckets: dict[str, dict]) -> list[str]:
@@ -213,35 +318,116 @@ def render_diff_markdown(prev: EvalReport, curr: EvalReport) -> str:
             f"prompts {_version(report.prompt_version)}, n={report.dataset_size})"
         )
     lines.append("")
-    judges = (prev.judge_prompt_version, curr.judge_prompt_version)
-    if None not in judges and judges[0] != judges[1]:
-        lines.append(
-            f"> The judge's prompts changed ({_version(judges[0])} → {_version(judges[1])}): "
-            "part of a metric's change can be the judge's."
-        )
+    warnings = comparability_warnings(prev, curr)
+    for warning in warnings:
+        lines.append(f"> {warning}")
+    if warnings:
         lines.append("")
+    lines.append("## What changed")
+    lines.append("")
+    lines.extend(_changed_lines(prev, curr))
+    lines.append("")
     lines.append("## Metric deltas")
     lines.append("")
     lines.append(diff_metrics(prev.metrics, curr.metrics))
     lines.append("")
-    lines.append("## Per-item regressions")
+    changes = item_changes(prev, curr)
+    lines.append("## Per-item changes")
     lines.append("")
-    prev_by_id = {r.item_id: r for r in prev.results}
-    regressions = []
-    for r in curr.results:
-        p = prev_by_id.get(r.item_id)
-        if p is None:
-            continue
-        if p.correctness.passed and not r.correctness.passed:
-            regressions.append((r.item_id, "correctness", r.question, r.correctness.reasoning))
-        if p.hallucination.passed and not r.hallucination.passed:
-            regressions.append((r.item_id, "hallucination", r.question, r.hallucination.reasoning))
-    if not regressions:
-        lines.append("_No regressions detected._")
-    else:
-        lines.append("| ID | Kind | Question | Reason |")
-        lines.append("|----|------|----------|--------|")
-        for item_id, kind, q, reason in regressions:
-            lines.append(f"| {item_id} | {kind} | {_truncate(q, 60)} | {_truncate(reason, 80)} |")
+    lines.append(
+        "Over the items both runs answered. McNemar's exact test reads only the items that "
+        "flipped: p < 0.05 says the flips lean one way more than chance would."
+    )
+    lines.append("")
+    lines.append("| Check | Worse | Better | McNemar p |")
+    lines.append("|-------|-------|--------|-----------|")
+    for check in CHECKS:
+        worse, better = flips(changes, check)
+        p_value = _p(mcnemar_exact(worse, better)).removeprefix("= ")
+        lines.append(f"| {check} | {worse} | {better} | {p_value} |")
+    lines.append("")
+    lines.append("### Regressions")
+    lines.append("")
+    lines.extend(_change_table([c for c in changes if c.regression], "_No regressions detected._"))
+    lines.append("")
+    lines.append("### Fixes")
+    lines.append("")
+    lines.extend(_change_table([c for c in changes if not c.regression], "_No fixes._"))
     lines.append("")
     return "\n".join(lines)
+
+
+def comparability_warnings(prev: EvalReport, curr: EvalReport) -> list[str]:
+    """What makes a difference between the runs hard to read, one line each."""
+    warnings: list[str] = []
+    if (hashes := _dataset_hashes(prev, curr)) is not None:
+        warnings.append(
+            f"The runs read different datasets ({hashes[0]} → {hashes[1]}): a difference can "
+            "be the dataset's."
+        )
+    judges = (prev.judge_prompt_version, curr.judge_prompt_version)
+    if None not in judges and judges[0] != judges[1]:
+        warnings.append(
+            f"The judge's prompts changed ({_version(judges[0])} → {_version(judges[1])}): "
+            "part of a metric's change can be the judge's."
+        )
+    if prev.config is not None and curr.config is not None:
+        judged = [
+            name
+            for name in ("judge_model", "judge_temperature", "judge_reasoning")
+            if getattr(prev.config, name) != getattr(curr.config, name)
+        ]
+        if judged:
+            warnings.append(
+                f"The judge changed ({', '.join(judged)}): part of a metric's change can be "
+                "the judge's."
+            )
+    for label, report in (("previous", prev), ("current", curr)):
+        if report.config is not None and report.config.git_dirty:
+            warnings.append(
+                f"The {label} run had uncommitted changes on top of "
+                f"{_short_sha(report.config.git_sha)}: no commit holds its code."
+            )
+    if prev.config is None or curr.config is None:
+        warnings.append(
+            "A report is older than the run config: past the model and the prompts, "
+            "what else changed is unknown."
+        )
+    return warnings
+
+
+def _short_sha(sha: str | None) -> str:
+    return MISSING if sha is None else f"`{sha[:12]}`"
+
+
+def _changed_lines(prev: EvalReport, curr: EvalReport) -> list[str]:
+    """Each recorded setting that differs between the runs, as a table."""
+    rows: list[tuple[str, object, object]] = [
+        (name, getattr(prev, name), getattr(curr, name))
+        for name in ("model", "prompt_version", "judge_prompt_version")
+    ]
+    if prev.config is not None and curr.config is not None:
+        before, after = prev.config.model_dump(), curr.config.model_dump()
+        rows.extend((name, before[name], after[name]) for name in before)
+    changed = [(name, a, b) for name, a, b in rows if a != b]
+    if not changed:
+        return ["_Nothing recorded differs._"]
+    return [
+        "| Setting | Previous | Current |",
+        "|---------|----------|---------|",
+        *(f"| {name} | {_setting(a)} | {_setting(b)} |" for name, a, b in changed),
+    ]
+
+
+def _change_table(changes: list[ItemChange], empty: str) -> list[str]:
+    if not changes:
+        return [empty]
+    return [
+        "| ID | Check | Question | Reason now |",
+        "|----|-------|----------|------------|",
+        *(
+            f"| {c.item_id} | {c.check} | {_truncate(c.question, 60)} "
+            f"| {_truncate(c.reasoning, 80)} |"
+            for c in changes
+        ),
+    ]
