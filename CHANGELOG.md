@@ -90,6 +90,15 @@ Fixes from the November 2026 audit, and a review of the frontend.
   (`AGENT_EVAL_MAX_ACCURACY_DROP`, `AGENT_EVAL_MAX_HALLUCINATION_RISE`). The
   `Prompt gate` workflow runs it on a pull request that changes a prompt,
   base against head, once the repository variable `PROMPT_GATE` is `on`.
+- The frontend shows what the backend records about a document, a run and
+  a turn:
+  - Documents: a document with flagged chunks is marked in the list, and
+    its page names each chunk's rules and can list only those.
+  - Evaluation: each run names its prompt and judge versions, and a
+    comparison warns when the judge's changed.
+  - History: each logged turn shows its `trace_id` and prompt version, now
+    on `GET /query/history`, with a link to the trace when the frontend is
+    built with `VITE_TRACE_URL`. A question with placeholders says why.
 
 ### Security
 

@@ -9,7 +9,15 @@ import {
   type EvalReport,
   type EvalRunSummary,
 } from "@/lib/api";
-import { diffRuns, trend, type ItemChange, type MetricDelta } from "@/lib/evalDiff";
+import {
+  diffRuns,
+  trend,
+  versionChanged,
+  type ItemChange,
+  type MetricDelta,
+  type VersionPair,
+} from "@/lib/evalDiff";
+import { PROMPTS_HINT, fmtVersion } from "@/lib/promptVersion";
 import { ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
 
 const short = (runId: string) => runId.slice(0, 8);
@@ -88,6 +96,18 @@ export function RunCompare({ report, runs }: { report: EvalReport; runs: EvalRun
                 </span>
               )}
           </div>
+          <div className="label-xs text-text-tertiary mb-3" title={PROMPTS_HINT}>
+            PROMPTS:{" "}
+            <span className={versionChanged(diff.prompts) ? "text-text-primary" : ""}>
+              <Versions v={diff.prompts} />
+            </span>
+          </div>
+          {versionChanged(diff.judgePrompts) && (
+            <div className="label-sm text-warning border border-warning/40 px-3 py-2 mb-3">
+              THE JUDGE'S PROMPTS CHANGED (<Versions v={diff.judgePrompts} />
+              ): PART OF A METRIC'S CHANGE CAN BE THE JUDGE'S.
+            </div>
+          )}
           <div className="border border-border-subtle bg-surface-container overflow-x-auto mb-4">
             <table className="w-full min-w-[480px]">
               <thead>
@@ -133,6 +153,19 @@ const TREND_TONE = {
   worse: "text-error",
   same: "text-text-tertiary",
 } as const;
+
+/** Two runs' versions. A version is lowercase hex, as the CLI and the logs
+ * print it, inside text the label styles upper-case. */
+function Versions({ v }: { v: VersionPair }) {
+  const version = (s: string | null) => <span className="normal-case">{fmtVersion(s)}</span>;
+  if (v.prev !== null && v.prev === v.curr) return <>{version(v.curr)} IN BOTH</>;
+  return (
+    <>
+      {version(v.prev)} → {version(v.curr)}
+      {(v.prev === null || v.curr === null) && " · A RUN FROM BEFORE THE VERSIONS"}
+    </>
+  );
+}
 
 function fmtValue(m: MetricDelta, v: number | null) {
   if (v === null) return "—";

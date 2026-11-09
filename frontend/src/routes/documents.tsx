@@ -15,6 +15,7 @@ import { LoadMore } from "@/components/ui-kit/LoadMore";
 import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import { RecentJobs } from "@/components/documents/RecentJobs";
+import { FlaggedCount } from "@/components/documents/Flags";
 import { ACCEPT_ATTR, rejectReason, stageText } from "@/components/documents/stages";
 import { Btn, btnCls } from "@/components/ui-kit/Button";
 import {
@@ -573,6 +574,11 @@ function DocumentsPage() {
                     >
                       {d.title}
                     </Link>
+                    {d.flagged_chunks ? (
+                      <span className="ml-2">
+                        <FlaggedCount count={d.flagged_chunks} />
+                      </span>
+                    ) : null}
                   </td>
                   <td className="label-sm text-text-secondary">{d.file_type.toUpperCase()}</td>
                   <td className="text-text-secondary">{collectionName(d.collection_id)}</td>

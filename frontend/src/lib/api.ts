@@ -169,6 +169,9 @@ export type DocumentRead = {
   file_type: "pdf" | "md" | "txt" | string;
   chunk_count: number;
   total_tokens: number;
+  // Chunks whose text reads as an instruction to the model
+  // (app/services/instruction_scan.py). Missing from a backend older than it.
+  flagged_chunks?: number;
   created_at: string;
 };
 
@@ -180,6 +183,8 @@ export type Chunk = {
   chunk_index: number;
   text: string;
   token_count: number;
+  // The rules the text matched (lib/instructionFlags.ts); empty when none.
+  instruction_flags?: string[];
 };
 
 export type Citation = {
@@ -224,6 +229,11 @@ export type QueryLog = {
   cost_usd: number;
   session_id: string | null;
   agent_action: string | null;
+  // The turn's OpenTelemetry trace (lib/traceUrl.ts) and the prompts that
+  // answered it. Null on rows from before each column; missing from a
+  // backend older than the fields.
+  trace_id?: string | null;
+  prompt_version?: string | null;
   created_at: string;
 };
 
@@ -268,7 +278,14 @@ export type EvalBucket = {
   avg_retrieval_recall?: number;
 };
 
-export type EvalReport = {
+// The prompts a run answered and judged with (app/agent/prompt_version.py,
+// app/eval/judges.py). Reports from before the versions have neither.
+export type PromptVersions = {
+  prompt_version?: string | null;
+  judge_prompt_version?: string | null;
+};
+
+export type EvalReport = PromptVersions & {
   run_id: string;
   timestamp: string;
   dataset_size: number;
@@ -299,7 +316,7 @@ export type EvalResult = {
   category: EvalItem["category"];
 };
 
-export type EvalRunSummary = {
+export type EvalRunSummary = PromptVersions & {
   run_id: string;
   timestamp: string;
   dataset_size: number;

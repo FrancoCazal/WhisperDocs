@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { ItemResults } from "./ItemResults";
 import { RunCompare } from "./RunCompare";
 import { GENERATION_COST_HINT } from "./costHint";
+import { PROMPTS_HINT, fmtVersion } from "@/lib/promptVersion";
 import { toneText } from "@/lib/metricTone";
 
 export function RunReport({ report, runs }: { report: EvalReport; runs: EvalRunSummary[] }) {
@@ -26,6 +27,16 @@ export function RunReport({ report, runs }: { report: EvalReport; runs: EvalRunS
         MODEL: <span className="text-text-primary">{report.model}</span>
         <span className="text-text-tertiary"> · </span>
         ITEMS: <span className="text-text-primary tabular-nums">{report.dataset_size}</span>
+        <span className="text-text-tertiary"> · </span>
+        <span title={PROMPTS_HINT}>
+          PROMPTS:{" "}
+          <span className="text-text-primary normal-case">{fmtVersion(report.prompt_version)}</span>
+        </span>
+        <span className="text-text-tertiary"> · </span>
+        JUDGE:{" "}
+        <span className="text-text-primary normal-case">
+          {fmtVersion(report.judge_prompt_version)}
+        </span>
         <span className="text-text-tertiary"> · </span>
         <span title={GENERATION_COST_HINT}>
           GENERATION COST:{" "}

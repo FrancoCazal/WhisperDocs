@@ -8,6 +8,8 @@ import { useDebounced } from "@/lib/useDebounced";
 import { toneText } from "@/lib/metricTone";
 import { LoadMore } from "@/components/ui-kit/LoadMore";
 import { PAGE_SIZE, usePagedList } from "@/lib/paged";
+import { traceUrl } from "@/lib/traceUrl";
+import { PROMPTS_HINT } from "@/lib/promptVersion";
 import {
   EmptyState,
   ErrorBanner,
@@ -30,6 +32,31 @@ export const Route = createFileRoute("/history")({
 
 const fieldCls =
   "bg-surface-lowest border border-border-subtle px-2 h-9 text-text-primary body-sm focus:outline-none focus:border-border-focus";
+
+// The placeholders the backend writes in place of personal data
+// (app/services/pii.py).
+const REDACTED = /\[(email|phone|card|cbu|cuit|dni)\]/;
+
+/** The turn's trace id, and a link to it when VITE_TRACE_URL is set. */
+function Trace({ id }: { id: string }) {
+  const url = traceUrl(id);
+  return (
+    <>
+      <div className="label-sm text-text-secondary mt-4 mb-2">TRACE</div>
+      <div className="body-sm text-text-primary break-all select-all">{id}</div>
+      {url && (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block mt-2 label-sm text-text-primary hover:text-primary-blue"
+        >
+          OPEN TRACE ↗
+        </a>
+      )}
+    </>
+  );
+}
 
 function HistoryPage() {
   const [collFilter, setCollFilter] = useState<number | null>(null);
@@ -202,6 +229,13 @@ function HistoryPage() {
                               <div className="body-sm text-text-primary whitespace-pre-wrap">
                                 {q.question}
                               </div>
+                              {(REDACTED.test(q.question) || REDACTED.test(q.answer)) && (
+                                <div className="label-xs text-text-tertiary mt-2">
+                                  THE LOG REPLACES EMAILS, PHONE NUMBERS AND ID NUMBERS WITH
+                                  PLACEHOLDERS, SUCH AS <span className="normal-case">[email]</span>
+                                  .
+                                </div>
+                              )}
                               <div className="label-sm text-text-secondary mt-4 mb-2">
                                 COLLECTION
                               </div>
@@ -223,6 +257,20 @@ function HistoryPage() {
                               <div className="body-sm text-text-primary tabular-nums">
                                 {q.chunks_retrieved}
                               </div>
+                              {q.prompt_version && (
+                                <>
+                                  <div
+                                    className="label-sm text-text-secondary mt-4 mb-2"
+                                    title={PROMPTS_HINT}
+                                  >
+                                    PROMPTS
+                                  </div>
+                                  <div className="body-sm text-text-primary">
+                                    {q.prompt_version}
+                                  </div>
+                                </>
+                              )}
+                              {q.trace_id && <Trace id={q.trace_id} />}
                             </div>
                             <div>
                               <div className="label-sm text-text-secondary mb-2">RESPONSE</div>

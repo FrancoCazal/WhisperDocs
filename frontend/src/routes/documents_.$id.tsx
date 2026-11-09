@@ -12,6 +12,8 @@ import { api, ApiError, fmtDate, fmtNumber } from "@/lib/api";
 import { LoadingLine, ErrorBanner } from "@/components/ui-kit/EmptyState";
 import { Btn, btnCls } from "@/components/ui-kit/Button";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
+import { ChunkFlags } from "@/components/documents/Flags";
+import { FLAGS_LEAD } from "@/lib/instructionFlags";
 
 // "documents_": the page renders on its own, not inside the list's layout,
 // which has no outlet for it.
@@ -85,6 +87,8 @@ function DocumentDetailPage() {
   // Filters the loaded chunks: a document's chunks all come in one response.
   const [chunkQ, setChunkQ] = useState("");
   const needle = chunkQ.trim();
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const filtering = needle !== "" || flaggedOnly;
 
   const collectionName = (cid: number) =>
     collections.data?.find((c) => c.id === cid)?.name ?? `#${cid}`;
@@ -131,9 +135,16 @@ function DocumentDetailPage() {
   });
 
   const allChunks = chunks.data ?? [];
-  const shownChunks = needle
-    ? allChunks.filter((c) => c.text.toLowerCase().includes(needle.toLowerCase()))
-    : allChunks;
+  const shownChunks = allChunks.filter(
+    (c) =>
+      (!flaggedOnly || (c.instruction_flags?.length ?? 0) > 0) &&
+      (!needle || c.text.toLowerCase().includes(needle.toLowerCase())),
+  );
+  const flagged = doc.data?.flagged_chunks ?? 0;
+  const clearFilters = () => {
+    setChunkQ("");
+    setFlaggedOnly(false);
+  };
 
   return (
     <div>
@@ -243,12 +254,28 @@ function DocumentDetailPage() {
             <Meta label="CREATED" value={fmtDate(doc.data.created_at)} />
           </div>
 
+          {flagged > 0 && (
+            <div className="border border-warning/40 bg-surface-container-low px-3 py-2 mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <div className="body-sm text-text-secondary">
+                <span className="label-sm text-warning">
+                  <span aria-hidden="true">⚠ </span>
+                  {flagged} {flagged === 1 ? "CHUNK READS" : "CHUNKS READ"} AS AN INSTRUCTION TO THE
+                  MODEL.
+                </span>{" "}
+                {FLAGS_LEAD}
+              </div>
+              <Btn variant="quiet" size="sm" onClick={() => setFlaggedOnly((v) => !v)}>
+                {flaggedOnly ? "SHOW ALL CHUNKS" : "SHOW FLAGGED ONLY"}
+              </Btn>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-4">
             <h2 className="title-sm text-text-primary">CHUNKS</h2>
             {allChunks.length > 0 && (
               <div className="flex flex-wrap items-center gap-3">
                 <span role="status" className="label-xs text-text-secondary tabular-nums">
-                  {needle
+                  {filtering
                     ? `${fmtNumber(shownChunks.length)} OF ${fmtNumber(allChunks.length)} MATCH`
                     : ""}
                 </span>
@@ -274,20 +301,28 @@ function DocumentDetailPage() {
                   index={c.chunk_index}
                   tokens={c.token_count}
                   text={c.text}
+                  flags={c.instruction_flags}
                   cited={c.chunk_index === cited}
                   query={needle}
                 />
               ))}
             </div>
-          ) : needle ? (
+          ) : filtering ? (
             <div className="label-sm text-text-tertiary">
-              NO CHUNK CONTAINS <span className="normal-case">"{needle}"</span>.{" "}
+              {needle ? (
+                <>
+                  NO {flaggedOnly ? "FLAGGED " : ""}CHUNK CONTAINS{" "}
+                  <span className="normal-case">"{needle}"</span>.
+                </>
+              ) : (
+                "NO FLAGGED CHUNKS."
+              )}{" "}
               <button
                 type="button"
-                onClick={() => setChunkQ("")}
+                onClick={clearFilters}
                 className="text-text-primary hover:text-primary-blue"
               >
-                CLEAR SEARCH
+                {needle && flaggedOnly ? "CLEAR FILTERS" : needle ? "CLEAR SEARCH" : "SHOW ALL"}
               </button>
             </div>
           ) : (
@@ -338,12 +373,14 @@ function ChunkBlock({
   index,
   tokens,
   text,
+  flags,
   cited,
   query,
 }: {
   index: number;
   tokens: number;
   text: string;
+  flags: string[] | undefined;
   cited: boolean;
   query: string;
 }) {
@@ -359,11 +396,12 @@ function ChunkBlock({
       aria-current={cited || undefined}
       className={`border-b border-border-subtle py-3 ${cited ? "border-l-2 border-l-primary-blue pl-3 scroll-mt-16" : ""}`}
     >
-      <div className="label-sm text-text-secondary mb-2 flex items-center gap-3">
+      <div className="label-sm text-text-secondary mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <span>[CHUNK_INDEX: {index}]</span>
         {cited && <span className="label-xs text-primary-blue">CITED</span>}
         <span className="text-text-tertiary">·</span>
         <span>TOKENS: {tokens}</span>
+        <ChunkFlags rules={flags} />
       </div>
       <pre className="body-sm text-text-primary whitespace-pre-wrap break-words bg-surface-lowest p-3 border border-border-subtle">
         {highlight(display, query)}

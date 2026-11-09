@@ -50,6 +50,8 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: http://localhost:8000
+        # From .env: where the History page opens a turn's trace.
+        VITE_TRACE_URL: ${VITE_TRACE_URL:-}
     depends_on:
       - api
     ports:

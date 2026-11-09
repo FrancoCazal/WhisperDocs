@@ -16,6 +16,7 @@ import { Modal, Field, textareaCls, inputCls } from "@/components/ui-kit/Modal";
 import { Elapsed } from "@/components/chat/Trace";
 import { RunReport } from "@/components/eval/RunReport";
 import { GENERATION_COST_HINT } from "@/components/eval/costHint";
+import { PROMPTS_HINT, fmtVersion } from "@/lib/promptVersion";
 import { toneText } from "@/lib/metricTone";
 
 export const Route = createFileRoute("/evaluation")({
@@ -176,11 +177,14 @@ function EvaluationPage() {
             </button>
           </EmptyState>
         ) : (
-          <table className="w-full min-w-[640px]">
+          <table className="w-full min-w-[720px]">
             <thead>
               <tr className="label-sm text-text-secondary border-b border-border-subtle">
                 <th className="text-left pl-6 py-3 font-normal">RUN_ID</th>
                 <th className="text-left py-3 font-normal">DATE</th>
+                <th className="text-left py-3 font-normal" title={PROMPTS_HINT}>
+                  PROMPTS
+                </th>
                 <th className="text-right py-3 font-normal">ITEMS</th>
                 <th className="text-right py-3 font-normal">ACCURACY</th>
                 <th className="text-right py-3 font-normal">HALLUCINATION</th>
@@ -207,6 +211,12 @@ function EvaluationPage() {
                       {r.run_id.slice(0, 8)}
                     </td>
                     <td className="text-text-secondary tabular-nums">{fmtDate(r.timestamp)}</td>
+                    <td
+                      className="text-text-secondary"
+                      title={`Judge: ${fmtVersion(r.judge_prompt_version)}`}
+                    >
+                      {fmtVersion(r.prompt_version)}
+                    </td>
                     <td className="text-right tabular-nums text-text-secondary">
                       {r.dataset_size}
                     </td>

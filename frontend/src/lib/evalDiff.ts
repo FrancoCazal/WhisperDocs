@@ -23,13 +23,24 @@ export type ItemChange = {
   reasoning: string;
 };
 
+// Each run's version of a set of prompts; null for a report from before them.
+export type VersionPair = { prev: string | null; curr: string | null };
+
 export type RunDiff = {
   metrics: MetricDelta[];
   // Items in both runs: same id and same question.
   common: number;
   regressions: ItemChange[];
   fixes: ItemChange[];
+  prompts: VersionPair;
+  judgePrompts: VersionPair;
 };
+
+/** Both runs name their version and the two differ. A missing version says
+ * nothing either way, as in the CLI's diff. */
+export function versionChanged(v: VersionPair): boolean {
+  return v.prev !== null && v.curr !== null && v.prev !== v.curr;
+}
 
 const METRICS: [string, keyof EvalMetrics, MetricKind, boolean][] = [
   ["ACCURACY", "accuracy", "pct", true],
@@ -78,7 +89,17 @@ export function diffRuns(prev: EvalReport, curr: EvalReport): RunDiff {
       (now.passed ? fixes : regressions).push(change);
     }
   }
-  return { metrics, common, regressions, fixes };
+  return {
+    metrics,
+    common,
+    regressions,
+    fixes,
+    prompts: { prev: prev.prompt_version ?? null, curr: curr.prompt_version ?? null },
+    judgePrompts: {
+      prev: prev.judge_prompt_version ?? null,
+      curr: curr.judge_prompt_version ?? null,
+    },
+  };
 }
 
 /** "better", "worse" or "same" for a metric's move. */

@@ -277,6 +277,15 @@ is their Basic auth. These are local-only credentials. Any other OTLP/HTTP
 backend works the same way: Phoenix, Jaeger, an OpenTelemetry Collector or
 Langfuse Cloud. Without an endpoint, no span leaves the process.
 
+The History page shows each logged turn's `trace_id` and prompt version. To
+open the trace from there, give the frontend the trace page's URL, with
+`{trace_id}` for the id, and rebuild it (`docker compose build frontend`; for
+`npm run dev`, set it in `frontend/.env`):
+
+```bash
+VITE_TRACE_URL=http://localhost:3000/project/whisperdocs/traces/{trace_id}
+```
+
 ### Dashboard and alerts
 
 `ops/` holds a Grafana dashboard and Prometheus alert rules over `/metrics`:
@@ -334,7 +343,8 @@ other machine, set `API_KEY`.
   instruction to the model, in English or Spanish: `instruction_flags` on
   `GET /documents/{id}/chunks`, `flagged_chunks` on the document, and an
   `instruction_like_text` warning in the logs. A flag is a lead, not a
-  verdict: a guide to prompting quotes injections. `python -m
+  verdict: a guide to prompting quotes injections. The Documents page marks
+  a flagged document, and its page names each chunk's rules. `python -m
   scripts.flag_instructions` sets the flags again on stored chunks, after a
   rule changes or for documents from before the flags. The adversarial set
   below measures what gets through.
@@ -417,7 +427,8 @@ version, from `app/eval/judges.py`.
 accuracy is more than 10 points below the previous one's, or its hallucination rate more than
 10 points above (`AGENT_EVAL_MAX_ACCURACY_DROP`, `AGENT_EVAL_MAX_HALLUCINATION_RISE`, or
 `--max-accuracy-drop` and `--max-hallucination-rise`). Five 50-item runs of one configuration
-spread 8 and 4 points. The diff names both prompt versions and warns when the judge's changed.
+spread 8 and 4 points. The diff names both prompt versions and warns when the judge's changed;
+so does COMPARE on the Evaluation page.
 
 The `Prompt gate` workflow does this on a pull request that changes `prompts.py`, the agent's
 schemas or `app/services/rag.py`: it answers the golden set with the base's code and with the

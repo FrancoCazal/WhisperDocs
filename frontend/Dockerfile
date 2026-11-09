@@ -16,6 +16,10 @@ COPY --chown=node:node . .
 # VITE_* values are inlined into the bundle, so they are build arguments.
 ARG VITE_API_BASE_URL=http://localhost:8000
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+# A turn's trace page, with {trace_id} for the id (src/lib/traceUrl.ts).
+# Empty: the History page shows the id without a link.
+ARG VITE_TRACE_URL=
+ENV VITE_TRACE_URL=$VITE_TRACE_URL
 
 RUN npm run build
 
