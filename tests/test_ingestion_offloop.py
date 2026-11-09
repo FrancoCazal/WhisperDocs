@@ -4,6 +4,8 @@ pdfplumber, the tiktoken chunker and langdetect are CPU-bound. Called inline
 in an `async def`, a large PDF froze every other request, chat SSE included,
 until it finished. A fake extractor that blocks for 0.3 s stands in for the
 parse; a ticker coroutine measures the longest gap the loop takes to run it.
+The scan for instruction-like text (audit M-5) is CPU-bound too, about a
+millisecond a chunk, and a fake scan stands in for it the same way.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import time
 
 import pytest
 
-from app.models import IngestionStatus
+from app.models import Document, IngestionStatus
 from app.services import ingestion
 
 BLOCK_S = 0.3
@@ -128,6 +130,22 @@ async def test_background_worker_does_not_block_the_loop(blocking_extractor, mon
     )
 
     assert statuses[-1] == IngestionStatus.COMPLETE
+    assert gap < BLOCK_S / 2
+
+
+async def test_the_instruction_scan_does_not_block_the_loop(monkeypatch):
+    def blocking_scan(_text: str) -> list[str]:
+        time.sleep(BLOCK_S)  # stands in for the rules over a large document
+        return []
+
+    monkeypatch.setattr(ingestion, "instruction_flags", blocking_scan)
+    document = Document(id=1, filename="doc.md", language="en")
+
+    gap, rows = await _max_loop_gap(
+        ingestion.chunk_rows(document, [(0, PARAGRAPH, 40, "h")], [[0.0]])
+    )
+
+    assert len(rows) == 1
     assert gap < BLOCK_S / 2
 
 

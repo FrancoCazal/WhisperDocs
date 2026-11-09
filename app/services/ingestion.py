@@ -78,13 +78,21 @@ async def chunk_text_in_thread(raw_text: str) -> tuple[list[TextChunk], str | No
 FreshChunk = tuple[int, str, int, str]
 
 
-def chunk_rows(
+def _scan(texts: list[str]) -> list[list[str]]:
+    return [instruction_flags(text) for text in texts]
+
+
+async def chunk_rows(
     document: Document, fresh: Sequence[FreshChunk], embeddings: Sequence[list[float]]
 ) -> list[Chunk]:
     """The document's chunk rows, each with the instruction-like text it
     holds (`instruction_flags`, audit M-5), and the document's count of them.
     Every way in builds them here: the background job, the synchronous upload
-    and the eval seed. A flagged document is logged with its chunks' rules."""
+    and the eval seed. A flagged document is logged with its chunks' rules.
+
+    The rules take about a millisecond a chunk, seconds for a large PDF, so
+    they run off the event loop, as parsing and chunking do."""
+    flags = await asyncio.to_thread(_scan, [text for _idx, text, _tokens, _hash in fresh])
     rows = [
         Chunk(
             document_id=document.id,
@@ -94,9 +102,11 @@ def chunk_rows(
             text_hash=text_hash,
             embedding=embedding,
             language=document.language,
-            instruction_flags=instruction_flags(text),
+            instruction_flags=chunk_flags,
         )
-        for (idx, text, tokens, text_hash), embedding in zip(fresh, embeddings, strict=True)
+        for (idx, text, tokens, text_hash), embedding, chunk_flags in zip(
+            fresh, embeddings, flags, strict=True
+        )
     ]
     flagged = {row.chunk_index: row.instruction_flags for row in rows if row.instruction_flags}
     document.flagged_chunks = len(flagged)
@@ -247,7 +257,7 @@ async def run_ingestion(
             )
             db.add(document)
             await db.flush()
-            db.add_all(chunk_rows(document, fresh, embeddings))
+            db.add_all(await chunk_rows(document, fresh, embeddings))
             await db.commit()
             await db.refresh(document)
             doc_id = document.id

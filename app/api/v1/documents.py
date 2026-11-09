@@ -181,7 +181,7 @@ async def _ingest_single(
     db.add(document)
     await db.flush()
 
-    db.add_all(chunk_rows(document, fresh, embeddings))
+    db.add_all(await chunk_rows(document, fresh, embeddings))
     await db.commit()
     await db.refresh(document)
     return document
