@@ -2,6 +2,8 @@ from typing import TYPE_CHECKING
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, Index, Integer, String, Text
+from sqlalchemy import text as sql_text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config import settings
@@ -26,6 +28,12 @@ class Chunk(Base):
     # generated `tsv` column (alembic 0013), which the ORM does not map.
     language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     embedding: Mapped[list[float]] = mapped_column(Vector(settings.embedding_dimension))
+    # The rules of app/services/instruction_scan.py the text matched when it was
+    # stored, or when scripts/flag_instructions.py last ran: text that reads as
+    # an instruction to the model. Empty for plain text.
+    instruction_flags: Mapped[list[str]] = mapped_column(
+        ARRAY(String(16)), nullable=False, default=list, server_default=sql_text("'{}'")
+    )
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
 

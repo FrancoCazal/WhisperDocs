@@ -1,9 +1,10 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.db import Base
+from app.services.pii import redact
 
 
 class QueryLog(Base):
@@ -33,3 +34,8 @@ class QueryLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    @validates("question", "answer")
+    def _redact(self, _key: str, value: str) -> str:
+        # No email, phone or ID number in the log, from any write (app/services/pii.py).
+        return redact(value)

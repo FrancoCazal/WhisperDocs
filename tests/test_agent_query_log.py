@@ -1,5 +1,6 @@
-"""`/agent/chat` logs no query for a failed turn (audit N4), and the API
-prices each answer with the backend's table (frontend review FR-2).
+"""`/agent/chat` logs no query for a failed turn (audit N4), logs no
+personal data (audit M-5), and the API prices each answer with the backend's
+table (frontend review FR-2).
 
 Runs the real app over ASGI, without its lifespan, with the database and the
 compiled graph replaced.
@@ -40,13 +41,15 @@ class _FakeDb:
 
 
 class _FakeAgent:
-    def __init__(self, metadata: dict, messages: list | None = None) -> None:
+    def __init__(self, metadata: dict, messages: list | None = None, answer: str = "a") -> None:
         self.metadata = metadata
         self.messages = messages or []
+        self.answer = answer
 
     async def ainvoke(self, _input, config):
+        self.input = _input
         return {
-            "messages": [HumanMessage(content="q"), AIMessage(content="a")],
+            "messages": [HumanMessage(content="q"), AIMessage(content=self.answer)],
             "pending_action": "search_docs",
             "retrieved_chunks": [],
             "metadata": self.metadata,
@@ -85,6 +88,24 @@ async def test_query_log_only_for_answers_and_the_failure_is_flagged(db, turn_fa
     assert r.json()["answer"] == "a"
     assert r.json()["failed"] is turn_failed
     assert sum(isinstance(o, QueryLog) for o in db.added) == logged
+
+
+async def test_the_query_log_keeps_no_personal_data(db):
+    """The agent reads the question as typed and the user gets the answer as
+    written; only the log is redacted."""
+    question = "I am ana@example.com, CUIT 20-12345678-6. What is my plan?"
+    agent = _FakeAgent({}, answer="Call HR at +54 9 11 5555-5555.")
+    app.state.agent = agent
+    try:
+        r = await _call("POST", "/agent/chat", json={"message": question})
+    finally:
+        del app.state.agent
+
+    assert agent.input["messages"][0].content == question
+    assert r.json()["answer"] == "Call HR at +54 9 11 5555-5555."
+    (log,) = [o for o in db.added if isinstance(o, QueryLog)]
+    assert log.question == "I am [email], CUIT [cuit]. What is my plan?"
+    assert log.answer == "Call HR at [phone]."
 
 
 async def _call(method: str, path: str, **kwargs) -> httpx.Response:

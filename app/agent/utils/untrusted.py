@@ -23,13 +23,19 @@ def escaped(tag: str, text: str) -> str:
     return re.sub(rf"<(?=\s*/?\s*{re.escape(tag)}\b)", "&lt;", text, flags=re.IGNORECASE)
 
 
+def elements(template: str) -> dict[str, str]:
+    """Each placeholder that sits alone in an element of `template`, with
+    the element's name: {"context": "documents"}."""
+    return {field: tag for tag, field in _ELEMENT.findall(template)}
+
+
 def fill(template: str, **values: str) -> str:
     """`template.format(**values)`, each value that sits alone in an element
     of the template escaped against that element's tag."""
-    elements = {field: tag for tag, field in _ELEMENT.findall(template)}
+    held = elements(template)
     return template.format(
         **{
-            name: escaped(elements[name], value) if name in elements else value
+            name: escaped(held[name], value) if name in held else value
             for name, value in values.items()
         }
     )

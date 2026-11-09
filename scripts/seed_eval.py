@@ -25,7 +25,7 @@ from app.db import SessionLocal
 from app.logging_config import get_logger
 from app.models import Chunk, Collection, Document
 from app.services.embedder import EmbeddingService
-from app.services.ingestion import chunk_text_in_thread, extract_text_in_thread
+from app.services.ingestion import chunk_rows, chunk_text_in_thread, extract_text_in_thread
 from app.services.text_extractor import detect_file_type
 
 logger = get_logger(__name__)
@@ -98,18 +98,7 @@ async def ingest_file(
     )
     db.add(document)
     await db.flush()
-    db.add_all(
-        Chunk(
-            document_id=document.id,
-            chunk_index=idx,
-            text=t,
-            token_count=tc,
-            text_hash=h,
-            embedding=embedding,
-            language=document.language,
-        )
-        for (idx, t, tc, h), embedding in zip(fresh, embeddings, strict=True)
-    )
+    db.add_all(chunk_rows(document, fresh, embeddings))
     await db.commit()
     await db.refresh(document)
     return document

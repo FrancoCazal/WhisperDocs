@@ -9,3 +9,5 @@ class ChunkRead(BaseModel):
     chunk_index: int
     text: str
     token_count: int
+    # The rules of app/services/instruction_scan.py the text matches.
+    instruction_flags: list[str] = []

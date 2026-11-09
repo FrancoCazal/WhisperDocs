@@ -328,6 +328,21 @@ other machine, set `API_KEY`.
   background, one message at a time per number, in the order they came. No
   log line carries a phone number: threads are a UUID5 of it, Twilio's error
   messages are left out, and database errors hide their statement's values.
+- **Prompt injection.** Documents, the summary of earlier turns and the
+  transcript the summarizer reads reach the models as data, each inside an
+  element it cannot close. Ingestion flags each chunk whose text reads as an
+  instruction to the model, in English or Spanish: `instruction_flags` on
+  `GET /documents/{id}/chunks`, `flagged_chunks` on the document, and an
+  `instruction_like_text` warning in the logs. A flag is a lead, not a
+  verdict: a guide to prompting quotes injections. `python -m
+  scripts.flag_instructions` sets the flags again on stored chunks, after a
+  rule changes or for documents from before the flags. The adversarial set
+  below measures what gets through.
+- **Personal data in the query log.** `query_logs` keeps each question and
+  answer with emails, phone numbers, card numbers (Luhn), CBUs, CUITs/CUILs
+  and DNIs replaced by a placeholder (`[email]`, `[phone]`, ...). The user
+  still gets the answer as written, and the thread keeps the words as typed,
+  since the agent reads them back.
 - **Not covered.** There are no user accounts or roles: whoever has the key
   can read and delete every document and thread. The API serves no TLS, so
   put a TLS proxy in front of it. Documents and questions go to the

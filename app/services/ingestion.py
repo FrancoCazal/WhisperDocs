@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Sequence
 from datetime import datetime, timezone
 
 from sqlalchemy import func, update
@@ -23,6 +24,7 @@ from app.models import Chunk, Document, IngestionJob, IngestionStatus
 from app.services.chunker import Chunk as TextChunk
 from app.services.chunker import TextChunker
 from app.services.embedder import EmbeddingError, EmbeddingService
+from app.services.instruction_scan import instruction_flags
 from app.services.lang import detect_language
 from app.services.llm.errors import failure_text
 from app.services.text_extractor import (
@@ -70,6 +72,42 @@ def _chunk_and_detect(raw_text: str) -> tuple[list[TextChunk], str | None]:
 async def chunk_text_in_thread(raw_text: str) -> tuple[list[TextChunk], str | None]:
     """Chunk the text and detect its language, off the event loop."""
     return await asyncio.to_thread(_chunk_and_detect, raw_text)
+
+
+# A chunk to store: (chunk_index, text, token_count, text_hash).
+FreshChunk = tuple[int, str, int, str]
+
+
+def chunk_rows(
+    document: Document, fresh: Sequence[FreshChunk], embeddings: Sequence[list[float]]
+) -> list[Chunk]:
+    """The document's chunk rows, each with the instruction-like text it
+    holds (`instruction_flags`, audit M-5), and the document's count of them.
+    Every way in builds them here: the background job, the synchronous upload
+    and the eval seed. A flagged document is logged with its chunks' rules."""
+    rows = [
+        Chunk(
+            document_id=document.id,
+            chunk_index=idx,
+            text=text,
+            token_count=tokens,
+            text_hash=text_hash,
+            embedding=embedding,
+            language=document.language,
+            instruction_flags=instruction_flags(text),
+        )
+        for (idx, text, tokens, text_hash), embedding in zip(fresh, embeddings, strict=True)
+    ]
+    flagged = {row.chunk_index: row.instruction_flags for row in rows if row.instruction_flags}
+    document.flagged_chunks = len(flagged)
+    if flagged:
+        logger.warning(
+            "instruction_like_text",
+            document_id=document.id,
+            filename=document.filename,
+            chunks=flagged,
+        )
+    return rows
 
 
 async def _set_status(
@@ -209,18 +247,7 @@ async def run_ingestion(
             )
             db.add(document)
             await db.flush()
-            db.add_all(
-                Chunk(
-                    document_id=document.id,
-                    chunk_index=idx,
-                    text=t,
-                    token_count=tc,
-                    text_hash=h,
-                    embedding=embedding,
-                    language=document.language,
-                )
-                for (idx, t, tc, h), embedding in zip(fresh, embeddings, strict=True)
-            )
+            db.add_all(chunk_rows(document, fresh, embeddings))
             await db.commit()
             await db.refresh(document)
             doc_id = document.id

@@ -244,6 +244,7 @@ erDiagram
     int chunk_count
     int total_tokens
     string language
+    int flagged_chunks "chunks with instruction_flags"
     timestamp created_at
   }
 
@@ -257,6 +258,7 @@ erDiagram
     vector embedding "pgvector(1536) HNSW"
     string language "copied from the document"
     tsvector tsv "full-text, generated per language"
+    string_array instruction_flags "rules its text matched"
   }
 
   IngestionJob {
@@ -289,8 +291,8 @@ erDiagram
 
   QueryLog {
     int id PK
-    text question
-    text answer
+    text question "personal data redacted"
+    text answer "personal data redacted"
     int collection_id FK
     int chunks_retrieved
     string model_used
@@ -381,6 +383,14 @@ A10). The system role holds a node's instructions only:
   element's name in the text that goes into it (`</documents>` becomes
   `&lt;/documents>`), so only the prompt closes it. The system prompts say
   what each element holds and that it is data.
+- Ingestion flags each chunk whose text reads as an instruction to the
+  model (`app/services/instruction_scan.py`, audit M-5): an override
+  ("ignore all previous instructions"), a role marker (`SYSTEM:`), a new
+  persona, a request for the system prompt, text addressed to the assistant,
+  or a tag of one of these elements. The chunk keeps the rules it matched
+  (`instruction_flags`), the document counts them (`flagged_chunks`), and
+  the API returns both. Retrieval does not read them: the elements above are
+  the defense, and a flag is a lead for whoever keeps the corpus.
 
 Per-request values that are not conversation state travel in the run config,
 not in `AgentState`: `config["configurable"]` carries `thread_id` and the

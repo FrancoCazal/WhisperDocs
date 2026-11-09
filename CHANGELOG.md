@@ -101,6 +101,17 @@ Fixes from the November 2026 audit, and a review of the frontend.
   `<transcript>`. A tag of the element's name inside the text is escaped,
   so a document cannot end its element and forge a question or an
   instruction.
+- Ingestion flags instruction-like text (audit M-5). Each chunk keeps the
+  rules its text matched (`chunks.instruction_flags`, migration 0018): an
+  override, a role marker, a new persona, a request for the system prompt,
+  text addressed to the assistant, or a tag of a prompt element. The
+  document counts its flagged chunks (`flagged_chunks`), the documents and
+  chunks endpoints return both, and a flagged document is logged.
+  `scripts/flag_instructions.py` scans stored chunks again.
+- No personal data in `query_logs` (audit M-5). Each question and answer is
+  stored with emails, phone numbers, card numbers, CBUs, CUITs/CUILs and
+  DNIs replaced by a placeholder. Cards, CBUs and CUITs are told apart by
+  their check digits.
 
 - An API key (`API_KEY`, sent as `X-API-Key`). With it set, every route
   needs it except `GET /health` and the WhatsApp webhook, which checks

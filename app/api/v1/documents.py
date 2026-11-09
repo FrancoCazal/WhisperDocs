@@ -38,6 +38,8 @@ from app.schemas.pagination import Page
 from app.services import catalog
 from app.services.embedder import EmbeddingError, EmbeddingService, get_embedder
 from app.services.ingestion import (
+    FreshChunk,
+    chunk_rows,
     chunk_text_in_thread,
     create_job,
     extract_text_in_thread,
@@ -147,7 +149,7 @@ async def _ingest_single(
     )
     existing_hashes = {row[0] for row in (await db.execute(existing_q)).all()}
 
-    fresh: list[tuple[int, str, int, str]] = [
+    fresh: list[FreshChunk] = [
         (cd.index, cd.text, cd.token_count, h)
         for cd, h in zip(chunks_data, hashes, strict=True)
         if h not in existing_hashes
@@ -179,18 +181,7 @@ async def _ingest_single(
     db.add(document)
     await db.flush()
 
-    db.add_all(
-        Chunk(
-            document_id=document.id,
-            chunk_index=idx,
-            text=t,
-            token_count=tc,
-            text_hash=h,
-            embedding=embedding,
-            language=document.language,
-        )
-        for (idx, t, tc, h), embedding in zip(fresh, embeddings, strict=True)
-    )
+    db.add_all(chunk_rows(document, fresh, embeddings))
     await db.commit()
     await db.refresh(document)
     return document

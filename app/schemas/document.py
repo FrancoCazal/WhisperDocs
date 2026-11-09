@@ -13,6 +13,9 @@ class DocumentRead(BaseModel):
     file_type: str
     chunk_count: int
     total_tokens: int
+    # Chunks holding text that reads as an instruction to the model
+    # (app/services/instruction_scan.py); each chunk lists its rules.
+    flagged_chunks: int = 0
     created_at: datetime
 
 
