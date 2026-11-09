@@ -53,4 +53,9 @@ class QueryLogRead(BaseModel):
     cost_usd: float
     session_id: str | None
     agent_action: str | None
+    # The turn's OpenTelemetry trace and the prompts that answered it
+    # (app/telemetry.py, app/agent/prompt_version.py); null on rows from
+    # before each column.
+    trace_id: str | None = None
+    prompt_version: str | None = None
     created_at: datetime

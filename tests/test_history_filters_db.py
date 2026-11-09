@@ -1,5 +1,6 @@
 """The query log's filters: which answers it holds (the chat's or /query's)
-and the text of their questions (frontend review U16).
+and the text of their questions (frontend review U16), and what a row names
+of its turn: the trace and the prompts (frontend review F-11).
 
 Needs Postgres, like test_thread_lists_db.py: point TEST_DATABASE_URL at a
 database migrated to head. Each test runs inside a transaction that is rolled
@@ -81,3 +82,22 @@ async def test_the_log_filters_by_source_and_question(api):
 async def test_an_unknown_source_is_rejected(api):
     client, _ = api
     assert (await client.get("/query/history", params={"source": "whatsapp"})).status_code == 422
+
+
+async def test_a_row_names_its_trace_and_prompts(api):
+    client, session = api
+    tag = uuid.uuid4().hex[:8]
+    traced = _log(f"{tag} traced", "search_docs")
+    traced.trace_id = "0af7651916cd43dd8448eb211c80319c"
+    traced.prompt_version = "1a2b3c4d5e6f"
+    session.add_all([traced, _log(f"{tag} older", None)])
+    await session.flush()
+
+    page = (await client.get("/query/history", params={"q": tag})).json()
+    rows = {r["question"]: r for r in page["items"]}
+
+    assert rows[f"{tag} traced"]["trace_id"] == "0af7651916cd43dd8448eb211c80319c"
+    assert rows[f"{tag} traced"]["prompt_version"] == "1a2b3c4d5e6f"
+    # A row from before the columns has neither.
+    assert rows[f"{tag} older"]["trace_id"] is None
+    assert rows[f"{tag} older"]["prompt_version"] is None
