@@ -98,7 +98,9 @@ class RAGEvaluator:
                 rag_temperature=self.temperature,
                 judge_model=self.judge.model,
                 judge_temperature=self.judge.temperature,
+                judge_cache=self.judge.cache is not None,
             ),
+            judge_cache_hits=self.judge.cache_hits if self.judge.cache is not None else None,
             metrics=metrics,
             results=results,
         )

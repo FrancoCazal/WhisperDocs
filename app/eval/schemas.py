@@ -103,6 +103,9 @@ class RunConfig(BaseModel):
     judge_model: str
     judge_temperature: float | None
     judge_reasoning: str | None
+    # Whether the judge reused the verdicts it gave before
+    # (app/eval/judge_cache.py).
+    judge_cache: bool
     embedding_model: str
     embedding_dimension: int
     # None when the step is off.
@@ -123,5 +126,7 @@ class EvalReport(BaseModel):
     judge_prompt_version: str | None = None
     # Reports from before the snapshot have none.
     config: RunConfig | None = None
+    # Verdicts the judge took from its cache; None when it had none.
+    judge_cache_hits: int | None = None
     metrics: AggregateMetrics
     results: list[EvalResult]

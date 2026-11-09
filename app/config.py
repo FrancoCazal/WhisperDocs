@@ -64,6 +64,18 @@ class AgentSettings(BaseSettings):
     eval_max_accuracy_drop: float = 0.10
     eval_max_hallucination_rise: float = 0.10
 
+    # The RAG model's temperature in an eval run, in place of
+    # temp_rag_generation (audit E7): at 0 a rerun of one config answers more
+    # alike, so a difference between two runs is more the change's and less
+    # the sampling's. Sent only to models that accept it (see above).
+    eval_rag_temperature: float = 0.0
+
+    # Where the judge keeps its verdicts, so the same answer to the same
+    # question is judged once (app/eval/judge_cache.py). Relative to the
+    # working directory; empty turns it off, as `runner run --no-judge-cache`
+    # does for one run.
+    eval_judge_cache: str = "eval/cache/judge.jsonl"
+
     # Max tokens consumed by retrieved-chunk context block in the RAG prompt.
     # Iteratively drops lowest-relevance chunks until under budget. Leaves
     # headroom for system prompt + history + answer in the model context window.

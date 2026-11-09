@@ -6,8 +6,10 @@ from pydantic import BaseModel, Field
 
 from app.api.errors import APIError
 from app.api.rate_limit import eval_limit
+from app.config import settings
 from app.db import SessionLocal
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
+from app.eval.judge_cache import judge_cache_from_settings
 from app.eval.judges import Judge
 from app.eval.schemas import EvalReport, TestItem
 from app.services.embedder import EmbeddingService, get_embedder
@@ -39,15 +41,16 @@ async def run_evaluation(
     if not payload.dataset:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dataset is empty")
 
-    rag_provider, rag_model, rag_temp = llm_service_for("rag")
+    # As the CLI's run: the eval's own temperature, and the judge's cache.
+    rag_provider, rag_model, _chat_temp = llm_service_for("rag")
     judge_provider, judge_model, judge_temp = llm_service_for("eval_judge")
-    judge = Judge(judge_provider, judge_model, judge_temp)
+    judge = Judge(judge_provider, judge_model, judge_temp, cache=judge_cache_from_settings())
     evaluator = RAGEvaluator(
         session_maker=SessionLocal,
         embedder=embedder,
         provider=rag_provider,
         model=rag_model,
-        temperature=rag_temp,
+        temperature=settings.agent.eval_rag_temperature,
         judge=judge,
         collection_id=payload.collection_id,
         top_k=payload.top_k,

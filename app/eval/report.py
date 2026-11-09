@@ -180,6 +180,8 @@ def render_markdown(report: EvalReport) -> str:
         f"(judge {_version(report.judge_prompt_version)})"
     )
     lines.append(f"- **Dataset size**: {report.dataset_size}")
+    if report.judge_cache_hits is not None:
+        lines.append(f"- **Judge verdicts from the cache**: {report.judge_cache_hits}")
     lines.append("")
     lines.append("## Aggregate metrics")
     lines.append("")

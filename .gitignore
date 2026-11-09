@@ -29,6 +29,7 @@ uploads/
 !tests/fixtures/*.pdf
 
 eval/results/
+eval/cache/
 
 graphify-out/
 whisperdocs.egg-info/

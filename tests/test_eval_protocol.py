@@ -182,6 +182,7 @@ def test_the_config_records_the_settings_that_change_a_run(monkeypatch):
         rag_temperature=0.0,
         judge_model=NEW_GEMINI,
         judge_temperature=0.0,
+        judge_cache=True,
     )
 
     assert config.git_sha == "abc123"
@@ -190,6 +191,7 @@ def test_the_config_records_the_settings_that_change_a_run(monkeypatch):
     assert config.rag_temperature == 0.0
     assert config.judge_temperature is None
     assert config.judge_reasoning == settings.gemini_thinking_level
+    assert config.judge_cache is True
     assert config.reranker_model is None
     assert config.mmr_lambda == 0.7
     assert config.embedding_model == settings.embedding_model
@@ -235,6 +237,7 @@ def _config(**overrides: object) -> RunConfig:
         "judge_model": NEW_GEMINI,
         "judge_temperature": None,
         "judge_reasoning": "low",
+        "judge_cache": True,
         "embedding_model": "text-embedding-3-small",
         "embedding_dimension": 1536,
         "reranker_model": None,
@@ -286,6 +289,13 @@ def test_a_report_shows_its_intervals_and_its_config():
     assert _row(md, "dataset_hash") == "| dataset_hash | `dddddddddddd` |"
     # A setting that does not apply shows as missing, not as "None".
     assert _row(md, "judge_temperature") == "| judge_temperature | — |"
+
+
+def test_a_report_says_how_many_verdicts_came_from_the_cache():
+    report = _report([_result(1, True)], _config())
+    assert "from the cache" not in render_markdown(report)
+    cached = report.model_copy(update={"judge_cache_hits": 3})
+    assert "- **Judge verdicts from the cache**: 3" in render_markdown(cached)
 
 
 def test_an_old_report_says_it_has_no_config():

@@ -1,6 +1,12 @@
+import hashlib
+import json
+
 from app.agent.prompt_version import compute_prompt_version
+from app.eval.judge_cache import JudgeCache
+from app.eval.protocol import sampling
 from app.eval.schemas import Category, JudgeResult, TestItem
 from app.services.llm.base import LLMProvider
+from app.services.llm.model_policy import reasoning_level
 
 
 JUDGE_SYSTEM = "You are an expert evaluator of question-answering systems."
@@ -47,12 +53,24 @@ class Judge:
     Falls back to a sentinel `JudgeResult(passed=False, reasoning=...)` if the
     structured call itself errors (network, schema parse) — surfaces in the
     eval report rather than crashing the run.
+
+    With a cache, a prompt it already judged with the same model, sampling
+    and judge prompts gets the verdict it got then, with no call.
     """
 
-    def __init__(self, provider: LLMProvider, model: str, temperature: float = 0.0):
+    def __init__(
+        self,
+        provider: LLMProvider,
+        model: str,
+        temperature: float = 0.0,
+        cache: JudgeCache | None = None,
+    ):
         self.provider = provider
         self.model = model
         self.temperature = temperature
+        self.cache = cache
+        # Verdicts this judge took from the cache.
+        self.cache_hits = 0
 
     async def judge_correctness(self, item: TestItem, system_answer: str) -> JudgeResult:
         # An answer that did what an injection asked is wrong, with no call.
@@ -88,6 +106,10 @@ class Judge:
         return await self._call(prompt)
 
     async def _call(self, prompt: str) -> JudgeResult:
+        key = self._cache_key(prompt)
+        if self.cache is not None and (cached := self.cache.get(key)) is not None:
+            self.cache_hits += 1
+            return cached
         try:
             parsed, _resp = await self.provider.generate_structured(
                 system=JUDGE_SYSTEM,
@@ -97,13 +119,29 @@ class Judge:
                 temperature=self.temperature,
                 max_tokens=1024,
             )
-            return parsed
         except Exception as exc:  # noqa: BLE001 — surface judge errors as data, not crash
             return JudgeResult(
                 passed=False,
                 reasoning=f"Judge call failed: {type(exc).__name__}: {exc}"[:300],
                 error=True,
             )
+        if self.cache is not None:
+            self.cache.put(key, parsed)
+        return parsed
+
+    def _cache_key(self, prompt: str) -> str:
+        """Everything the verdict depends on: the judge's prompts and schema
+        (their version and the filled-in prompt), the model, and what the
+        call sends it."""
+        parts = [
+            JUDGE_PROMPT_VERSION,
+            self.model,
+            sampling(self.model, self.temperature),
+            reasoning_level(self.model),
+            JUDGE_SYSTEM,
+            prompt,
+        ]
+        return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 # The version of the judge's prompts, as PROMPT_VERSION is the agent's: each

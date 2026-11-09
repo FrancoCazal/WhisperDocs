@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.db import SessionLocal
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
+from app.eval.judge_cache import judge_cache_from_settings
 from app.eval.judges import Judge
 from app.eval.report import (
     diff_failures,
@@ -73,6 +74,7 @@ async def run_eval(
     concurrency: int,
     write_markdown: bool = False,
     limit: int | None = None,
+    judge_cache: bool = True,
 ) -> EvalReport:
     dataset = load_dataset(dataset_path)
     if not dataset:
@@ -83,16 +85,18 @@ async def run_eval(
     resolved_collection_id = await _resolve_collection_id(collection_id, collection_name)
 
     embedder = EmbeddingService()
-    rag_provider, rag_model, rag_temp = llm_service_for("rag")
+    # The eval answers at its own temperature, not the chat's (audit E7).
+    rag_provider, rag_model, _chat_temp = llm_service_for("rag")
     judge_provider, judge_model, judge_temp = llm_service_for("eval_judge")
-    judge = Judge(judge_provider, judge_model, judge_temp)
+    cache = judge_cache_from_settings() if judge_cache else None
+    judge = Judge(judge_provider, judge_model, judge_temp, cache=cache)
 
     evaluator = RAGEvaluator(
         session_maker=SessionLocal,
         embedder=embedder,
         provider=rag_provider,
         model=rag_model,
-        temperature=rag_temp,
+        temperature=settings.agent.eval_rag_temperature,
         judge=judge,
         collection_id=resolved_collection_id,
         top_k=top_k,
@@ -124,6 +128,8 @@ def print_summary(report: EvalReport, output_path: Path) -> None:
     print(f"Timestamp: {report.timestamp.isoformat()}")
     print(f"Model: {report.model}")
     print(f"Dataset size: {report.dataset_size}")
+    if report.judge_cache_hits is not None:
+        print(f"Judge verdicts from the cache: {report.judge_cache_hits}")
     print()
     print(f"Accuracy:             {m.accuracy:.2%}")
     print(f"Hallucination rate:   {m.hallucination_rate:.2%}")
@@ -197,6 +203,12 @@ def main() -> None:
             help="Run only the first N dataset items (smoke runs).",
         )
         p.add_argument(
+            "--no-judge-cache",
+            action="store_true",
+            help="Judge every answer again instead of reusing the verdicts in "
+            "AGENT_EVAL_JUDGE_CACHE.",
+        )
+        p.add_argument(
             "--min-accuracy",
             type=_fraction,
             default=settings.agent.eval_min_accuracy,
@@ -249,6 +261,7 @@ def main() -> None:
                 concurrency=args.concurrency,
                 write_markdown=args.markdown,
                 limit=args.limit,
+                judge_cache=not args.no_judge_cache,
             )
         )
     except EvalAbortedError as exc:

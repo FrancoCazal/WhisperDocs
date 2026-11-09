@@ -98,6 +98,7 @@ def run_config(
     rag_temperature: float,
     judge_model: str,
     judge_temperature: float,
+    judge_cache: bool,
 ) -> RunConfig:
     sha, dirty = git_revision()
     return RunConfig(
@@ -114,6 +115,7 @@ def run_config(
         judge_model=judge_model,
         judge_temperature=sampling(judge_model, judge_temperature),
         judge_reasoning=reasoning_level(judge_model),
+        judge_cache=judge_cache,
         embedding_model=settings.embedding_model,
         embedding_dimension=settings.embedding_dimension,
         reranker_model=settings.reranker_model if settings.reranker_enabled else None,

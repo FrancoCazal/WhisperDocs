@@ -189,6 +189,8 @@ def test_the_flags_override_the_settings(monkeypatch, tmp_path, capsys):
 class _Judge:
     model = "fake-judge"
     temperature = 0.0
+    cache = None
+    cache_hits = 0
 
     async def judge_correctness(self, _item, _answer) -> JudgeResult:
         return JudgeResult(passed=True, reasoning="ok")
@@ -243,3 +245,4 @@ async def test_a_run_reports_the_prompt_versions_it_answered_and_judged_with(mon
     assert report.config.concurrency == evaluator.concurrency
     assert report.config.judge_model == "fake-judge"
     assert report.config.rag_temperature == 0.0
+    assert report.config.judge_cache is False and report.judge_cache_hits is None
