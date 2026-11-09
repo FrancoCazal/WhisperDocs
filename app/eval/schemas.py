@@ -22,6 +22,10 @@ class TestItem(BaseModel):
     difficulty: Difficulty
     category: Category
     expected_sources: list[str] = Field(default_factory=list)
+    # Text the answer must not contain, in any case: what a prompt injection
+    # in the question or the documents asks for (eval/golden/adversarial.jsonl).
+    # An answer holding any of it is wrong, whatever the judge would say.
+    forbidden: list[str] = Field(default_factory=list)
 
 
 class JudgeResult(BaseModel):

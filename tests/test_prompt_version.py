@@ -75,9 +75,8 @@ def _chunk(chunk_id: int, title: str, chunk_index: int, text: str) -> RetrievedC
     )
 
 
-def test_the_rag_prompt_is_the_one_sent_before_its_layout_moved_to_prompts():
-    """The layout moved from app/services/rag.py to prompts.py unchanged, so
-    the eval runs before the move still measure the prompt sent after it.
+def test_the_rag_prompt_as_it_is_sent():
+    """The documents inside their element (audit A10), the question after it.
     Braces in a question, a title or a chunk stay as they are."""
     chunks = [_chunk(1, 'a "{x}".md', 0, "uno {dos}"), _chunk(2, "b.md", 3, "tres")]
 
@@ -86,7 +85,7 @@ def test_the_rag_prompt_is_the_one_sent_before_its_layout_moved_to_prompts():
 
     assert included == chunks
     assert prompt == (
-        'Context:\n\n[1] (from "a "{x}".md", chunk 0)\nuno {dos}\n\n---\n\n'
-        '[2] (from "b.md", chunk 3)\ntres\n\n---\n\nQuestion: ¿Qué {es} esto?\n\nAnswer:'
+        '<documents>\n[1] (from "a "{x}".md", chunk 0)\nuno {dos}\n\n---\n\n'
+        '[2] (from "b.md", chunk 3)\ntres\n</documents>\n\nQuestion: ¿Qué {es} esto?\n\nAnswer:'
     )
-    assert empty == "Context:\n\n(no context available)\n\n---\n\nQuestion: q\n\nAnswer:"
+    assert empty == "<documents>\n(no context available)\n</documents>\n\nQuestion: q\n\nAnswer:"

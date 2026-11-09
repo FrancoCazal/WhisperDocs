@@ -6,6 +6,9 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from app.agent.prompts import CONVERSATION_SUMMARY
+from app.agent.utils.untrusted import fill
+
 # `additional_kwargs` key on an answer that reports a failure ("I had a
 # problem…"). The answer stays in state, so the thread shows what the user
 # saw, but no prompt, summary or query rewrite reads it (audit N4).
@@ -118,17 +121,35 @@ def drop_leading_assistant(formatted: list[dict]) -> list[dict]:
     return formatted[start:]
 
 
-def build_prompt_messages(state: Mapping[str, Any], *, exclude_last: bool = False) -> list[dict]:
+def with_summary(formatted: list[dict], summary: str | None) -> list[dict]:
+    """The summary of earlier turns, as data at the head of the first user
+    message, in a `<conversation_summary>` element it cannot close (audit
+    A10). As a system message it had the instructions' authority, though it
+    is written from documents and users' words. A message of its own would
+    put two user turns in a row, which Bedrock Converse rejects."""
+    if not summary:
+        return formatted
+    block = fill(CONVERSATION_SUMMARY, summary=summary)
+    out = [dict(m) for m in formatted]
+    for m in out:
+        if m["role"] == "user":
+            m["content"] = f"{block}\n\n{m['content']}"
+            return out
+    return [{"role": "user", "content": block}, *out]
+
+
+def build_prompt_messages(state: Mapping[str, Any], *, last_user: str | None = None) -> list[dict]:
     """Build the message list a generation/classifier node should send to its LLM.
 
     Compaction no longer mutates `messages` — old turns stay in state and the
     `summary_covered_count` index marks where the progressive summary takes
     over. This helper rebuilds the prompt by:
-      1. Prepending `state["summary"]` as a single system message (if set).
-      2. Formatting messages[summary_covered_count:] (the uncompacted tail).
+      1. Formatting messages[summary_covered_count:] (the uncompacted tail).
+      2. Putting `state["summary"]` (if set) at the head of its first user
+         message (`with_summary`).
 
-    `exclude_last=True` drops the most recent message from the tail (useful for
-    RAG where the user's latest turn is replaced by a context-augmented prompt).
+    `last_user` replaces the most recent message: `search_docs` sends the
+    user's question inside its RAG prompt.
     """
     messages: list[BaseMessage] = state.get("messages") or []
     covered = state.get("summary_covered_count") or 0
@@ -137,19 +158,10 @@ def build_prompt_messages(state: Mapping[str, Any], *, exclude_last: bool = Fals
     if covered > len(messages):
         covered = len(messages)
     tail = messages[covered:]
-    if exclude_last and tail:
+    if last_user is not None and tail:
         tail = tail[:-1]
 
     formatted = drop_leading_assistant(format_messages(tail))
-    summary = state.get("summary")
-    if summary:
-        formatted = [
-            {
-                "role": "system",
-                "content": (
-                    "Prior conversation summary (background context, do not "
-                    "repeat verbatim):\n" + summary
-                ),
-            }
-        ] + formatted
-    return formatted
+    if last_user is not None:
+        formatted.append({"role": "user", "content": last_user})
+    return with_summary(formatted, state.get("summary"))

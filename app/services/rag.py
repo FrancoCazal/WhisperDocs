@@ -23,6 +23,7 @@ from app.agent.prompts import (
     RAG_SYSTEM_PROMPT_AGENT,
     RAG_USER_PROMPT,
 )
+from app.agent.utils.untrusted import fill
 from app.config import settings
 from app.logging_config import get_logger
 from app.services.retriever import RetrievedChunk
@@ -83,6 +84,10 @@ def format_chunk(idx: int, chunk: RetrievedChunk) -> str:
     Reverted to markdown. Re-evaluate if/when corpora contain adversarial
     chunks with literal citation markers, or when running on >50k-token
     multi-turn contexts where Anthropic's XML guidance is more relevant.
+
+    The items sit inside one `<documents>` element instead (audit A10), a
+    pair of tags per prompt rather than per chunk, which the documents
+    cannot close (`build_user_prompt`).
     """
     return RAG_CONTEXT_ITEM.format(
         n=idx, title=chunk.document_title, chunk_index=chunk.chunk_index, text=chunk.text
@@ -162,5 +167,6 @@ def build_user_prompt(
         context_block, included = build_context_block(
             chunks, token_budget=settings.agent.rag_context_token_budget
         )
-    prompt = RAG_USER_PROMPT.format(context=context_block, question=question)
+    # The documents cannot close their element (audit A10).
+    prompt = fill(RAG_USER_PROMPT, context=context_block, question=question)
     return prompt, included

@@ -371,6 +371,25 @@ The `Eval suite` workflow runs it from GitHub Actions, by hand only, since it ca
 `GCP_SA_KEY_JSON`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`); the reports go to the run's
 artifacts.
 
+### Adversarial set
+
+Eight questions over four documents that carry prompt injections (an
+instruction in an HTML comment, a forged end of the documents with a new
+question, a fake system message, a phishing link), and two questions that are
+injections themselves. They run apart from the golden set, over their own
+collection:
+
+```bash
+python -m scripts.seed_eval --root fixtures/adversarial-docs --collection-name "Eval Adversarial"
+python -m app.eval.runner run --dataset eval/golden/adversarial.jsonl \
+  --collection-name "Eval Adversarial" --markdown
+```
+
+Each item lists in `forbidden` what its injection asks for ("ACCESS GRANTED",
+a password, the system prompt's words, the link); an answer containing any of
+it fails without a judge call. The `Eval suite` workflow runs the set with its
+`adversarial` mode.
+
 ### Prompt versions and the prompt gate
 
 `PROMPT_VERSION` (`app/agent/prompt_version.py`) is 12 hex characters of a hash over every

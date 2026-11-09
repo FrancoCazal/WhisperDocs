@@ -69,7 +69,9 @@ async def test_summarize_sends_the_window_as_one_user_message(fake_provider, moc
     sent = fake_provider.calls[-1]["kwargs"]["messages"]
     assert [m["role"] for m in sent] == ["user"]
     content = sent[0]["content"]
-    assert content.startswith("Previous summary (absorb into the new one):\ns0")
+    assert content.startswith(
+        "Previous summary (absorb into the new one):\n<previous_summary>\ns0\n</previous_summary>"
+    )
     assert "User: q0\n\nAssistant: a0" in content
     assert content.rstrip().endswith("required structure.")
 
@@ -80,8 +82,9 @@ async def test_prompt_after_compaction_starts_with_user():
 
     prompt = build_prompt_messages(state)
 
-    assert prompt[0]["role"] == "system"  # the summary
-    assert prompt[1]["role"] == "user"
+    # The summary heads the first user message, as data.
+    assert prompt[0]["role"] == "user"
+    assert prompt[0]["content"].startswith("<conversation_summary>\ns\n</conversation_summary>")
 
 
 def test_prompt_heals_threads_compacted_before_the_fix():
@@ -92,11 +95,11 @@ def test_prompt_heals_threads_compacted_before_the_fix():
     assert isinstance(messages[23], AIMessage)
 
     prompt = build_prompt_messages(state)
-    rag_history = build_prompt_messages(state, exclude_last=True)
+    rag_history = build_prompt_messages(state, last_user="rag prompt")
 
-    assert [m["role"] for m in prompt[:2]] == ["system", "user"]
-    assert [m["role"] for m in rag_history[:2]] == ["system", "user"]
-    assert rag_history[-1]["role"] == "assistant"  # search_docs appends the user prompt
+    assert prompt[0]["role"] == rag_history[0]["role"] == "user"
+    assert [m["role"] for m in rag_history[-2:]] == ["assistant", "user"]
+    assert rag_history[-1]["content"] == "rag prompt"
 
 
 def test_drop_leading_assistant_keeps_the_rest():
@@ -116,5 +119,6 @@ async def test_query_rewrite_history_starts_with_user(fake_provider, mock_llm_se
     await rewrite_query_for_retrieval(history=history, current="and that?", summary="s")
 
     sent = fake_provider.calls[-1]["kwargs"]["messages"]
-    assert sent[0]["role"] == "system"
-    assert sent[1]["role"] == "user"
+    assert sent[0]["role"] == "user"
+    assert sent[0]["content"].startswith("<conversation_summary>")
+    assert all(m["role"] != "system" for m in sent)

@@ -9,13 +9,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "smoke (10 items) or full (50 items)"
+        description: "smoke (10 items), full (50 items) or adversarial (the prompt-injection set)"
         required: true
         default: "smoke"
         type: choice
         options:
           - smoke
           - full
+          - adversarial
 
 # The run only reads the repository. Its reports, answers included, go to
 # the run's artifacts, not to a branch.
@@ -88,8 +89,17 @@ jobs:
       - name: Apply migrations
         run: alembic upgrade head
 
+      # The adversarial set has a corpus and a collection of its own, so its
+      # injected documents never reach a golden run (audit M-5).
       - name: Seed eval corpus
-        run: python -m scripts.seed_eval
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [ "$MODE" = "adversarial" ]; then
+            python -m scripts.seed_eval --root fixtures/adversarial-docs --collection-name "Eval Adversarial"
+          else
+            python -m scripts.seed_eval
+          fi
 
       # Exits 2 when the judge failed too often to score the run, and 3 when
       # the run is below the accuracy or above the hallucination rate; either
@@ -104,6 +114,9 @@ jobs:
         run: |
           args=(--collection-name "Eval Golden" --markdown)
           if [ "$MODE" = "smoke" ]; then args+=(--limit 10); fi
+          if [ "$MODE" = "adversarial" ]; then
+            args=(--collection-name "Eval Adversarial" --dataset eval/golden/adversarial.jsonl --markdown)
+          fi
           if [ -n "$MIN_ACCURACY" ]; then args+=(--min-accuracy "$MIN_ACCURACY"); fi
           if [ -n "$MAX_HALLUCINATION" ]; then args+=(--max-hallucination "$MAX_HALLUCINATION"); fi
           python -m app.eval.runner run "${args[@]}"

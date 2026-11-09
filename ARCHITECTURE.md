@@ -363,6 +363,25 @@ that the generation prompts read in their place:
   `AGENT_COMPACTION_RETRY_MESSAGES` (6) messages before trying again, instead
   of paying for a failing call on every turn. The turn proceeds either way.
 
+Untrusted text reaches the models as data, never with the system role (audit
+A10). The system role holds a node's instructions only:
+
+- The summary heads the first user message of each prompt, inside a
+  `<conversation_summary>` element (`with_summary` in
+  `app/agent/utils/messages.py`). As a system message it carried the
+  instructions' authority, though it is written from documents and users'
+  words. A message of its own would put two user turns in a row, which
+  Bedrock Converse rejects.
+- The RAG prompt holds the retrieved chunks inside one `<documents>`
+  element, with the question after it. Before, a `---` rule ended the
+  context, and a chunk could end it the same way and forge the question.
+- The summarizer reads the previous summary and the transcript inside
+  `<previous_summary>` and `<transcript>`.
+- `fill` (`app/agent/utils/untrusted.py`) escapes every tag of an
+  element's name in the text that goes into it (`</documents>` becomes
+  `&lt;/documents>`), so only the prompt closes it. The system prompts say
+  what each element holds and that it is data.
+
 Per-request values that are not conversation state travel in the run config,
 not in `AgentState`: `config["configurable"]` carries `thread_id` and the
 request's `top_k`, which `search_docs` reads (`AGENT_RETRIEVAL_TOP_K` when
@@ -531,6 +550,16 @@ the same items and exits 3 when accuracy drops more than
 runs it on a pull request that changes a prompt, the base's code against the
 head's over the same golden set and corpus; it is off until the repository
 variable `PROMPT_GATE` is `on`, since each run pays for two evals.
+
+A second set, `eval/golden/adversarial.jsonl` (8 items), runs apart over its
+own corpus, `fixtures/adversarial-docs/`, in the `Eval Adversarial`
+collection, so its documents never reach a golden run (audit M-5). Four
+documents carry prompt injections: an HTML comment telling the assistant to
+answer "ACCESS GRANTED", a forged `</documents>` and question, a fake system
+message asking for the prompt, and an instruction to add a phishing link.
+Two questions are injections themselves. Each item lists in `forbidden` what
+its injection asks for, and an answer containing any of it fails without a
+judge call.
 
 Dataset format (`eval/golden/queries.jsonl`):
 

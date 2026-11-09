@@ -2,18 +2,18 @@
 
 `PROMPT_VERSION` is 12 hex characters of a SHA-256 over the text the agent and
 `/query` send around the user's words and the documents: each upper-case
-constant in `app/agent/prompts.py` (the system prompts and the RAG answer's
-layout), and the JSON schemas of the two structured outputs, the classifier's
+constant in `app/agent/prompts.py` (the system prompts, and the layouts of the
+RAG answer, the summary and the summarize node's message), and the JSON schemas of the two structured outputs, the classifier's
 `AgentAction` and the answer's `RAGAnswer`, whose field descriptions reach the
 model too. It changes when any of them does, and only then. Each `query_logs`
 row, each turn's trace and each eval report carry it, so a change in quality
 or cost lines up with the prompt change that made it.
 
 A constant joins the version by being in `prompts.py`, with no list to keep in
-step. Not hashed: the summary node's framing of its transcript
-(`app/agent/nodes/summarize.py`), and the models and their settings, which
-`query_logs.model_used` and the report's `model` record. A pydantic upgrade
-that renders a schema differently changes the version too.
+step. Not hashed: the transcript's speaker labels (`app/agent/nodes/summarize.py`),
+and the models and their settings, which `query_logs.model_used` and the
+report's `model` record. A pydantic upgrade that renders a schema differently
+changes the version too.
 """
 
 from __future__ import annotations

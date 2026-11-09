@@ -10,7 +10,7 @@ from typing import NamedTuple
 from langchain_core.messages import BaseMessage
 
 from app.agent.prompts import QUERY_REWRITE_SYSTEM_PROMPT
-from app.agent.utils.messages import drop_leading_assistant, format_messages
+from app.agent.utils.messages import drop_leading_assistant, format_messages, with_summary
 from app.agent.utils.turn_errors import TurnError, turn_error
 from app.logging_config import get_logger
 from app.services.llm import llm_service_for
@@ -41,8 +41,9 @@ async def rewrite_query_for_retrieval(
     to skip (audit A17, N5).
 
     `history` should already be sliced to the uncompacted tail by the caller —
-    the optional `summary` carries everything older as a single system message
-    so coreference resolution can still reach pre-compaction topics.
+    the optional `summary` carries everything older, at the head of the first
+    user message (`with_summary`), so coreference resolution can still reach
+    pre-compaction topics.
     """
     earlier = drop_leading_assistant(format_messages(history[:-1]))
     if not summary and not earlier:
@@ -54,16 +55,7 @@ async def rewrite_query_for_retrieval(
         provider, model, temperature = llm_service_for("query_rewrite")
         # Prior turns as context for coreference resolution; current appended
         # explicitly so the LLM always rewrites the right message.
-        context: list[dict] = []
-        if summary:
-            context.append(
-                {
-                    "role": "system",
-                    "content": "Prior conversation summary (background):\n" + summary,
-                }
-            )
-        context.extend(earlier)
-        context.append({"role": "user", "content": current})
+        context = with_summary([*earlier, {"role": "user", "content": current}], summary)
         resp = await provider.generate(
             system=QUERY_REWRITE_SYSTEM_PROMPT,
             messages=context,

@@ -76,6 +76,12 @@ Fixes from the November 2026 audit, and a review of the frontend.
   and status. A Grafana dashboard and Prometheus alert rules in `ops/`
   (the API unreachable, 5xx, a failing model role, slow turns);
   `docker compose --profile metrics` runs both.
+- An adversarial eval set (audit M-5): 8 questions over documents that
+  carry prompt injections, and questions that are injections, run apart
+  from the golden set over their own collection (`eval/golden/adversarial.jsonl`,
+  `fixtures/adversarial-docs/`, the `adversarial` mode of the `Eval suite`
+  workflow). An answer that does what the injection asked fails without a
+  judge call.
 - Prompt versions: a hash of the prompts in `app/agent/prompts.py` and of
   the structured outputs' schemas goes on each `query_logs` row
   (`prompt_version`, migration 0017), each turn's trace and each eval
@@ -86,6 +92,15 @@ Fixes from the November 2026 audit, and a review of the frontend.
   base against head, once the repository variable `PROMPT_GATE` is `on`.
 
 ### Security
+
+- Untrusted text reaches the models as data (audit A10). The conversation
+  summary, written from documents and users' words, no longer goes in with
+  the system role: it heads the first user message, in a
+  `<conversation_summary>` element. The RAG prompt holds the chunks in one
+  `<documents>` element, and the summarizer reads its transcript in
+  `<transcript>`. A tag of the element's name inside the text is escaped,
+  so a document cannot end its element and forge a question or an
+  instruction.
 
 - An API key (`API_KEY`, sent as `X-API-Key`). With it set, every route
   needs it except `GET /health` and the WhatsApp webhook, which checks

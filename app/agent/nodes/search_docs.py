@@ -161,8 +161,7 @@ async def search_docs_node(state: AgentState, config: RunnableConfig | None = No
     rag_user_prompt, included_chunks = build_user_prompt(last_user_msg, chunks)
 
     provider, model, temperature = llm_service_for("rag")
-    history_for_llm = build_prompt_messages(state, exclude_last=True)
-    history_for_llm.append({"role": "user", "content": rag_user_prompt})
+    history_for_llm = build_prompt_messages(state, last_user=rag_user_prompt)
 
     structured_md: dict = {}
     generation_failed = False

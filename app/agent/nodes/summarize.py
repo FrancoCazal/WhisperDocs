@@ -8,10 +8,16 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.prompts import SUMMARIZE_SYSTEM_PROMPT, SUMMARY_SECTIONS
+from app.agent.prompts import (
+    SUMMARIZE_PREVIOUS_SUMMARY,
+    SUMMARIZE_SYSTEM_PROMPT,
+    SUMMARIZE_USER_PROMPT,
+    SUMMARY_SECTIONS,
+)
 from app.agent.state import AgentState
 from app.agent.utils.messages import SCOPE, format_messages_with_sources
 from app.agent.utils.turn_errors import errors_so_far, turn_error
+from app.agent.utils.untrusted import fill
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Collection, Document
@@ -154,9 +160,8 @@ async def summarize_node(state: AgentState) -> dict:
         return {"pending_action": None}
 
     prior_summary = state.get("summary") or ""
-    prior_section = (
-        f"Previous summary (absorb into the new one):\n{prior_summary}\n\n" if prior_summary else ""
-    )
+    # Neither the previous summary nor the transcript can close its element (audit A10).
+    prior_section = fill(SUMMARIZE_PREVIOUS_SUMMARY, summary=prior_summary) if prior_summary else ""
 
     transcript = _render_transcript(to_compact, await _scope_names(to_compact))
     if not transcript:
@@ -164,11 +169,7 @@ async def summarize_node(state: AgentState) -> dict:
     transcript_messages = [
         {
             "role": "user",
-            "content": (
-                f"{prior_section}Conversation to summarize:\n\n"
-                f"<transcript>\n{transcript}\n</transcript>\n\n"
-                "Summarize the conversation so far using the required structure."
-            ),
+            "content": fill(SUMMARIZE_USER_PROMPT, previous=prior_section, transcript=transcript),
         }
     ]
 
