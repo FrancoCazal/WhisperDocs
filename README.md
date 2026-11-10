@@ -435,6 +435,39 @@ schemas or `app/services/rag.py`: it answers the golden set with the base's code
 head's, then runs the diff. Each run calls the paid APIs twice, so it is off until the
 repository variable `PROMPT_GATE` is `on`; `PROMPT_GATE_ITEMS` answers fewer items for less.
 
+### Comparing runs
+
+One run is one draw: the same code and settings land a few points apart from run to run, and
+the judge can rule the other way on the same answer. So:
+
+- **Run config.** Each report records what it ran with: the commit (and whether the tree had
+  uncommitted changes), a hash of the dataset, the collection, `top_k`, the concurrency, what
+  the RAG model and the judge were sent (temperature, effort or thinking level), the embedding
+  model, the reranker and MMR. The Markdown report shows it, with the 95% Wilson interval of
+  the accuracy and the hallucination rate: 48 right out of 50 is 86.5% to 98.9%.
+- **Eval temperature.** A run answers at `AGENT_EVAL_RAG_TEMPERATURE` (0), not at the chat's
+  0.3. Claude 4.7+ and Gemini 3+ take no temperature, so for them it changes nothing.
+- **Judge cache.** The judge keeps its verdicts in `eval/cache/judge.jsonl`
+  (`AGENT_EVAL_JUDGE_CACHE`, gitignored). The same answer to the same question, with the same
+  judge model, settings and prompts, gets the verdict it got before, with no call.
+  `--no-judge-cache` judges everything again.
+- **Series.** `runner run --runs 5` runs the config five times and writes
+  `series_<time>.md`: the mean, minimum, maximum and 95% interval of the mean (Student's t),
+  each run, and the items whose verdict differed between runs. The thresholds apply to the
+  mean.
+- **Diff.** `runner diff` lists what differs between the two configs, and warns when the
+  judge or the dataset changed or a run had uncommitted code. It lists the items that got
+  worse and those that got better, with McNemar's exact p over them: 6 flips one way and none
+  back is p = 0.031, the fewest that reads as a change at 0.05. It does not compare two runs
+  over different datasets.
+- **Judge consistency.** `runner rejudge eval/results/<run>.json --times 3` judges a saved
+  run's answers three more times, with no cache, and writes `rejudge_<run>_<time>.md`: per
+  check, the items whose verdicts all agree, and the share of new verdicts that differ from
+  the run's. It reads the expected answers from the dataset the run read (`--dataset`,
+  checked against the run's hash), and the chunks the judge read from the database: a report
+  keeps their ids and a hash of their text, and an answer whose chunks are gone or changed is
+  left out of the grounding check. It calls the judge's paid API.
+
 Dataset: JSONL at `eval/golden/queries.jsonl`.
 
 ### Last full run
@@ -474,7 +507,7 @@ RERANKER_ENABLED=true  MMR_ENABLED=true   python -m app.eval.runner run --markdo
 python -m app.eval.runner diff <baseline>.json <reranked>.json -o eval/results/reranker-delta.md
 ```
 
-The diff report shows per-metric deltas and per-item regressions.
+The diff report shows per-metric deltas, the items that got worse and better, and McNemar's p.
 
 ### Retrieval only, without LLM calls
 

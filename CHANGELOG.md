@@ -99,6 +99,23 @@ Fixes from the November 2026 audit, and a review of the frontend.
   - History: each logged turn shows its `trace_id` and prompt version, now
     on `GET /query/history`, with a link to the trace when the frontend is
     built with `VITE_TRACE_URL`. A question with placeholders says why.
+- Comparing eval runs:
+  - Each report records its run config (commit, dataset hash, retrieval
+    settings, what the RAG model and the judge were sent) and shows the 95%
+    Wilson interval of its accuracy and hallucination rate.
+  - An eval run answers at `AGENT_EVAL_RAG_TEMPERATURE` (0), not the chat's
+    temperature.
+  - The judge reuses its verdicts for the same answer to the same question
+    (`AGENT_EVAL_JUDGE_CACHE`, `--no-judge-cache`).
+  - `runner run --runs N` writes a series summary (mean, range, t interval,
+    the items that flip) and gates on the mean.
+  - `runner diff` lists what changed between the configs, warns when the
+    judge, the dataset or uncommitted code differ, lists the items that got
+    worse and better with McNemar's exact p, and does not compare runs over
+    different datasets.
+  - `runner rejudge REPORT --times N` judges a saved run's answers again,
+    with no cache, and reports how often the verdicts agree. A report keeps
+    the ids of the chunks the judge read and a hash of their text.
 
 ### Security
 
