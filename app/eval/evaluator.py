@@ -11,7 +11,7 @@ from app.agent.utils.citation_validation import validate_citations_semantic
 from app.config import settings
 from app.eval.judges import JUDGE_PROMPT_VERSION, Judge
 from app.eval.metrics import compute_metrics
-from app.eval.protocol import run_config
+from app.eval.protocol import context_hash, run_config
 from app.eval.schemas import EvalReport, EvalResult, TestItem
 from app.logging_config import get_logger
 from app.services.embedder import EmbeddingService
@@ -213,6 +213,8 @@ class RAGEvaluator:
             hallucination=hallucination,
             retrieval_precision=precision,
             retrieval_recall=recall,
+            context_chunk_ids=[c.chunk_id for c in included],
+            context_hash=context_hash([c.text for c in included]),
             difficulty=item.difficulty,
             category=item.category,
         )

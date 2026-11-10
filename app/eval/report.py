@@ -10,6 +10,7 @@ from app.eval.schemas import (
     EvalReport,
     EvalResult,
     JudgeResult,
+    RejudgeSummary,
     RunConfig,
     SeriesSummary,
 )
@@ -517,3 +518,64 @@ def render_series_markdown(summary: SeriesSummary) -> str:
             )
     lines.append("")
     return "\n".join(lines)
+
+
+def render_rejudge_markdown(summary: RejudgeSummary) -> str:
+    lines = [f"# Judge Consistency — `{summary.run_id[:8]}`", ""]
+    lines.append(f"- **Timestamp**: {summary.timestamp.isoformat()}")
+    lines.append(
+        f"- **Judge**: `{summary.judge_model}`, prompts {_version(summary.judge_prompt_version)}"
+    )
+    lines.append(f"- **Each answer judged again**: {summary.times} times, with no cache")
+    run_judge = (summary.run_judge_model, summary.run_judge_prompt_version)
+    if run_judge != (summary.judge_model, summary.judge_prompt_version):
+        lines.append("")
+        lines.append(
+            f"> The run was judged by {_setting(run_judge[0])} with prompts "
+            f"{_version(run_judge[1])}: a verdict that differs from the run's can be the "
+            "judge's change, not its noise."
+        )
+    lines += ["", "## Agreement", ""]
+    lines.append(
+        "An item is unanimous when the run's verdict and every new one agree. A flip is a new "
+        "verdict that differs from the run's: the share of them is how often this judge, asked "
+        "again, rules the other way."
+    )
+    lines += ["", "| Check | Items | Unanimous | Flipped | Failed calls | Skipped |"]
+    lines.append("|-------|-------|-----------|---------|--------------|---------|")
+    for c in summary.checks:
+        unanimous = MISSING if not c.items else f"{c.unanimous} ({c.unanimous / c.items:.1%})"
+        flipped = (
+            MISSING
+            if not c.verdicts_compared
+            else f"{c.flipped} of {c.verdicts_compared} ({c.flipped / c.verdicts_compared:.1%})"
+        )
+        lines.append(
+            f"| {c.check} | {c.items} | {unanimous} | {flipped} | {c.judge_errors} | {c.skipped} |"
+        )
+    lines.append("")
+    lines.append(
+        "Skipped: no judge call to repeat. An answer that did what an injection asked fails by "
+        "rule, one with no context is grounded by rule, and one whose chunks are gone, or "
+        "from a report older than the chunk ids, cannot be judged for grounding."
+    )
+    lines += ["", "## Disagreements", ""]
+    if not summary.disagreements:
+        lines.append("_Every verdict agreed._")
+    else:
+        lines += [
+            "| ID | Check | Run | Again | Question |",
+            "|----|-------|-----|-------|----------|",
+        ]
+        for d in summary.disagreements:
+            again = ", ".join(_verdict(v) for v in d.again)
+            lines.append(
+                f"| {d.item_id} | {d.check} | {_verdict(d.original)} | {again} "
+                f"| {_truncate(d.question, 60)} |"
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _verdict(passed: bool | None) -> str:
+    return "error" if passed is None else ("pass" if passed else "fail")

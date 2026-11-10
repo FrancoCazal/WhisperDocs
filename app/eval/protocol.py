@@ -39,6 +39,13 @@ def dataset_hash(items: Sequence[TestItem]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
 
+def context_hash(texts: Sequence[str]) -> str:
+    """16 hex characters over the chunks a judge read, in order. `runner
+    rejudge` reads the chunks back by id; a database rebuilt since can hold
+    other text under the same ids, and this tells them apart."""
+    return hashlib.sha256("\x00".join(texts).encode("utf-8")).hexdigest()[:16]
+
+
 def git_revision() -> tuple[str | None, bool | None]:
     """The commit the code ran from, and whether the tree had changes on top.
 

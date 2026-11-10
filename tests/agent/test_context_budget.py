@@ -14,6 +14,7 @@ import pytest
 from app.config import settings
 from app.eval.evaluator import RAGEvaluator
 from app.eval import schemas as eval_schemas
+from app.eval.protocol import context_hash
 from app.eval.schemas import Category, Difficulty, JudgeResult
 from app.services import retrieval_pipeline
 from app.services.rag import build_user_prompt
@@ -224,6 +225,9 @@ async def test_eval_judges_the_chunks_the_model_saw(fake_provider, monkeypatch):
 
     _, included = build_user_prompt("q", chunks)
     assert len(judge.contexts) == len(included) < 20
+    # The report keeps which chunks the judge read, for `runner rejudge`.
+    assert result.context_chunk_ids == [c.chunk_id for c in included]
+    assert result.context_hash == context_hash(judge.contexts)
     # Retrieval metrics still score everything retrieval returned.
     assert len(result.citations) == 20
 
@@ -261,4 +265,5 @@ async def test_eval_scores_an_item_that_retrieved_nothing(monkeypatch):
 
     assert judge.contexts == []
     assert result.citations == []
+    assert result.context_chunk_ids == []
     assert result.tokens_input == result.tokens_output == 0

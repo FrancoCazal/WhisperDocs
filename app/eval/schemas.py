@@ -49,6 +49,11 @@ class EvalResult(BaseModel):
     hallucination: JudgeResult
     retrieval_precision: float
     retrieval_recall: float = 0.0
+    # The chunks the model was given and the hallucination judge read, in
+    # order; `runner rejudge` reads them back. None in reports from before.
+    context_chunk_ids: list[int] | None = None
+    # A hash of their texts (app/eval/protocol.py), to check them on the way back.
+    context_hash: str | None = None
     difficulty: Difficulty
     category: Category
 
@@ -158,6 +163,45 @@ class SeriesSummary(BaseModel):
     accuracy: Spread
     hallucination_rate: Spread
     flaky: list[FlakyItem]
+
+
+class CheckAgreement(BaseModel):
+    """How a check's verdicts held up when judged again (app/eval/rejudge.py)."""
+
+    check: str
+    # Items with at least one verdict, and those whose verdicts all agree,
+    # the run's included.
+    items: int
+    unanimous: int
+    # New verdicts set against the run's, and those that differ from it.
+    verdicts_compared: int
+    flipped: int
+    judge_errors: int
+    # Items with no judge call to repeat: an answer that did what an
+    # injection asked, one with no context, or one whose chunks are gone.
+    skipped: int
+
+
+class Disagreement(BaseModel):
+    item_id: int
+    question: str
+    check: str
+    # None for a failed judge call.
+    original: bool | None
+    again: list[bool | None]
+
+
+class RejudgeSummary(BaseModel):
+    run_id: str
+    timestamp: datetime
+    times: int
+    judge_model: str
+    judge_prompt_version: str
+    # The judge of the run; None when its report does not say.
+    run_judge_model: str | None
+    run_judge_prompt_version: str | None
+    checks: list[CheckAgreement]
+    disagreements: list[Disagreement]
 
 
 class EvalReport(BaseModel):

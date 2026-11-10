@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -12,18 +13,20 @@ from app.db import SessionLocal
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judge_cache import judge_cache_from_settings
 from app.eval.judges import Judge
+from app.eval.rejudge import DatasetMismatchError, items_for, rejudge
 from app.eval.report import (
     diff_failures,
     gate_failures,
     render_badge_json,
     render_diff_markdown,
     render_markdown,
+    render_rejudge_markdown,
     render_series_markdown,
     threshold_failures,
 )
-from app.eval.schemas import EvalReport, SeriesSummary, TestItem
+from app.eval.schemas import EvalReport, RejudgeSummary, SeriesSummary, TestItem
 from app.eval.series import summarize
-from app.models import Collection
+from app.models import Chunk, Collection
 from app.services.embedder import EmbeddingService
 from app.services.llm import llm_service_for
 
@@ -31,14 +34,17 @@ from app.services.llm import llm_service_for
 DEFAULT_DATASET = Path("eval/golden/queries.jsonl")
 DEFAULT_RESULTS_DIR = Path("eval/results")
 
-# Exit codes: 2 when the judge failed too often to score the run (argparse
-# also exits 2, on a bad flag), 3 when a run missed a threshold or a diff
-# found the current run worse than the previous one past a threshold.
+# Exit codes: 2 when the judge failed too often to score the run, or
+# `rejudge` got a dataset the run did not read (argparse also exits 2, on a
+# bad flag), 3 when a run missed a threshold or a diff found the current run
+# worse than the previous one past a threshold.
 EXIT_ABORTED = 2
 EXIT_BELOW_THRESHOLD = 3
 
-# Each run calls the RAG model once and the judge up to twice per item.
+# Each run calls the RAG model once and the judge up to twice per item; so
+# does each time `rejudge` judges a run again, without the RAG model.
 MAX_RUNS = 20
+MAX_REJUDGE_TIMES = 10
 
 
 def _fraction(value: str) -> float:
@@ -48,11 +54,14 @@ def _fraction(value: str) -> float:
     return number
 
 
-def _runs(value: str) -> int:
-    number = int(value)
-    if not 1 <= number <= MAX_RUNS:
-        raise argparse.ArgumentTypeError(f"{value} is not between 1 and {MAX_RUNS}")
-    return number
+def _up_to(maximum: int) -> Callable[[str], int]:
+    def count(value: str) -> int:
+        number = int(value)
+        if not 1 <= number <= maximum:
+            raise argparse.ArgumentTypeError(f"{value} is not between 1 and {maximum}")
+        return number
+
+    return count
 
 
 def load_dataset(path: Path) -> list[TestItem]:
@@ -233,6 +242,46 @@ def cmd_diff(args: argparse.Namespace) -> list[str]:
     )
 
 
+async def load_contexts(chunk_ids: set[int]) -> dict[int, str]:
+    """The texts of the chunks that still exist, by id."""
+    if not chunk_ids:
+        return {}
+    async with SessionLocal() as db:
+        rows = await db.execute(select(Chunk.id, Chunk.text).where(Chunk.id.in_(chunk_ids)))
+    return {chunk_id: text for chunk_id, text in rows.all()}
+
+
+async def run_rejudge(
+    report_path: Path,
+    dataset_path: Path,
+    times: int,
+    concurrency: int,
+    output: Path | None = None,
+) -> RejudgeSummary:
+    """Judge a saved run's answers `times` more times, with no cache, and
+    write how often the verdicts agree (app/eval/rejudge.py)."""
+    report = _load_report(report_path)
+    items = items_for(report, load_dataset(dataset_path))
+    contexts = await load_contexts({i for r in report.results for i in (r.context_chunk_ids or [])})
+    provider, model, temperature = llm_service_for("eval_judge")
+    # No cache: the point is to ask again.
+    judge = Judge(provider, model, temperature)
+    summary = await rejudge(report, items, contexts, judge, times=times, concurrency=concurrency)
+    stamp = summary.timestamp.strftime("%Y-%m-%dT%H-%M-%S")
+    md_path = output or report_path.parent / f"rejudge_{report.run_id[:8]}_{stamp}.md"
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text(render_rejudge_markdown(summary), encoding="utf-8")
+    md_path.with_suffix(".json").write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    print(f"\n=== Judge consistency, {times} more times ===")
+    for c in summary.checks:
+        print(
+            f"{c.check:<14}: {c.unanimous} of {c.items} items unanimous, "
+            f"{c.flipped} of {c.verdicts_compared} new verdicts flipped, {c.skipped} skipped"
+        )
+    print(f"Written to: {md_path}")
+    return summary
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run RAG evaluation against the test dataset.")
     sub = parser.add_subparsers(dest="command")
@@ -254,7 +303,7 @@ def main() -> None:
         )
         p.add_argument(
             "--runs",
-            type=_runs,
+            type=_up_to(MAX_RUNS),
             default=1,
             help=f"Run the config this many times (1 to {MAX_RUNS}) and write a series "
             "summary: the mean, range and interval, and the items that flip. The "
@@ -302,10 +351,46 @@ def main() -> None:
         "(default: AGENT_EVAL_MAX_HALLUCINATION_RISE, %(default)s).",
     )
 
+    rejudge_parser = sub.add_parser(
+        "rejudge",
+        help="Judge a saved run's answers again, with no cache, to measure how often the "
+        "judge agrees with itself. Calls the judge's paid API.",
+    )
+    rejudge_parser.add_argument("report", type=Path)
+    rejudge_parser.add_argument(
+        "--times",
+        type=_up_to(MAX_REJUDGE_TIMES),
+        default=3,
+        help=f"How many more times to judge each answer (1 to {MAX_REJUDGE_TIMES}).",
+    )
+    rejudge_parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=DEFAULT_DATASET,
+        help="The dataset the run read: the judge reads its expected answers.",
+    )
+    rejudge_parser.add_argument("--concurrency", type=int, default=4)
+    rejudge_parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="Where to write the Markdown; the JSON goes next to it. Default: beside the report.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "diff":
         _exit_on(cmd_diff(args), "Worse than the previous run:")
+        return
+    if args.command == "rejudge":
+        try:
+            asyncio.run(
+                run_rejudge(args.report, args.dataset, args.times, args.concurrency, args.output)
+            )
+        except DatasetMismatchError as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            sys.exit(EXIT_ABORTED)
         return
 
     run_args: dict[str, Any] = {
