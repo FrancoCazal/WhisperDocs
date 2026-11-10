@@ -173,6 +173,12 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Changed
 
+- The backend's `Dockerfile` builds in stages. The default image, `runtime`, has no
+  compilers and no dev tools, and is 925 MB instead of 2.17 GB. Compose builds `dev`,
+  which adds pytest, ruff and mypy. Both images:
+  - run as a non-root user;
+  - have a `HEALTHCHECK`;
+  - include the seed corpora, which `.dockerignore` used to leave out.
 - `GET /health` answers 503 when degraded, with the same body, so a load
   balancer or a monitor reads it without parsing; the frontend still shows
   DEGRADED. `?deep=true` keeps the embedder's result 5 minutes (30 seconds

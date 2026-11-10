@@ -104,6 +104,17 @@ cd frontend && npm install && npm run dev
 Dependencies are locked in `uv.lock`; CI and the Docker image install it with
 `uv sync --frozen`. After changing `pyproject.toml`, run `uv lock` and commit both files.
 
+The `Dockerfile` has two images, both running as a non-root user (`app`, uid 1000) with a
+`HEALTHCHECK` on `/api/v1/health`:
+
+- **`runtime`**, the default (`docker build .`): the dependencies and the code, with no
+  compilers and no dev tools. It is about 0.9 GB. The reranker's extra:
+  `--build-arg EXTRAS="--extra rerank"`.
+- **`dev`**, which compose builds: `runtime` plus pytest, ruff and mypy, so the tests run in the
+  container.
+
+Both carry `fixtures/`, so `python -m scripts.seed_eval` works without compose's bind mounts.
+
 ---
 
 ## Environment
