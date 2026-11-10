@@ -2,7 +2,6 @@ from dataclasses import dataclass, replace
 
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models import Chunk, Document
 from app.services.fulltext import or_tsquery_sql
@@ -110,15 +109,15 @@ class VectorRetriever:
             )
 
         chunks: list[RetrievedChunk] = []
-        for chunk, document, dist in rows:
-            cosine = round(1.0 - float(dist), 4)
+        for row in rows:
+            cosine = round(1.0 - float(row.distance), 4)
             chunks.append(
                 RetrievedChunk(
-                    chunk_id=chunk.id,
-                    document_id=document.id,
-                    document_title=document.title,
-                    chunk_index=chunk.chunk_index,
-                    text=chunk.text,
+                    chunk_id=row.chunk_id,
+                    document_id=row.document_id,
+                    document_title=row.document_title,
+                    chunk_index=row.chunk_index,
+                    text=row.text,
                     relevance=cosine,
                     cosine=cosine,
                 )
@@ -134,7 +133,10 @@ class VectorRetriever:
         exact: bool,
         document_id: int | None = None,
     ) -> list:
-        """(Chunk, Document, distance) rows, nearest first.
+        """Rows of the columns a `RetrievedChunk` needs, nearest first.
+
+        Only those columns (audit R10): selecting the models would bring each
+        chunk's embedding and each document's whole text, for every candidate.
 
         `exact` orders by `distance + 0`: the planner only uses the HNSW index
         for an ORDER BY on the bare operator, so this computes the distance of
@@ -142,9 +144,15 @@ class VectorRetriever:
         """
         distance = Chunk.embedding.cosine_distance(query_embedding)
         query = (
-            select(Chunk, Document, distance.label("distance"))
+            select(
+                Chunk.id.label("chunk_id"),
+                Chunk.document_id,
+                Document.title.label("document_title"),
+                Chunk.chunk_index,
+                Chunk.text,
+                distance.label("distance"),
+            )
             .join(Document, Chunk.document_id == Document.id)
-            .options(selectinload(Chunk.document))
             .order_by(distance + 0 if exact else distance)
             .limit(top_k)
         )
@@ -154,7 +162,7 @@ class VectorRetriever:
             query = query.where(Document.collection_id == collection_id)
 
         result = await self.db.execute(query)
-        return sorted(result.all(), key=lambda row: row[2])
+        return sorted(result.all(), key=lambda row: row.distance)
 
     async def lexical_retrieve(
         self,

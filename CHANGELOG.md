@@ -242,6 +242,11 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Fixed
 
+- Retrieval no longer reads each candidate's whole document. It selected the
+  `Chunk` and `Document` rows, so each of its 20 candidates brought its
+  embedding and its document's full text, and a second query read the
+  documents again. It now selects the columns a result shows. The document list
+  and a document's chunk list no longer read the text either.
 - A failed summary is no longer retried on every turn: compaction waits
   `AGENT_COMPACTION_RETRY_MESSAGES` (6) messages first. A summary cut at
   `max_tokens`, or empty, is not kept; before, a cut one replaced the

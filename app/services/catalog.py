@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.models import Collection, Document
 from app.schemas.collection import CollectionRead
@@ -60,9 +61,18 @@ async def get_collection(db: AsyncSession, collection_id: int) -> CollectionRead
 async def list_documents(
     db: AsyncSession, *, collection_id: int | None, limit: int, cursor: int | None
 ) -> Page[DocumentRead]:
-    """A page of documents, newest first. See `app/schemas/pagination.py`."""
+    """A page of documents, newest first. See `app/schemas/pagination.py`.
+
+    Without their text, which a `DocumentRead` does not carry (audit R10).
+    """
     filters = [] if collection_id is None else [Document.collection_id == collection_id]
-    query = select(Document).where(*filters).order_by(Document.id.desc()).limit(limit + 1)
+    query = (
+        select(Document)
+        .options(defer(Document.raw_text))
+        .where(*filters)
+        .order_by(Document.id.desc())
+        .limit(limit + 1)
+    )
     if cursor is not None:
         query = query.where(Document.id < cursor)
     rows = list((await db.execute(query)).scalars().all())

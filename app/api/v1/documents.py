@@ -301,8 +301,9 @@ async def list_document_chunks(
     document_id: int,
     db: AsyncSession = Depends(get_db),
 ) -> list[Chunk]:
-    document = await db.get(Document, document_id)
-    if document is None:
+    # Whether it exists, without reading its text (audit R10).
+    found = await db.scalar(select(Document.id).where(Document.id == document_id))
+    if found is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     result = await db.execute(
         select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.chunk_index)
