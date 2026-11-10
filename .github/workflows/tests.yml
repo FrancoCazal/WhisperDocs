@@ -142,5 +142,10 @@ jobs:
       - name: Apply migrations
         run: uv run --frozen alembic upgrade head
 
+      # The models say what the migrations built: a model change without its
+      # revision, or a revision the models do not follow, fails here.
+      - name: Models match the migrations
+        run: uv run --frozen alembic check
+
       - name: pytest
         run: uv run --frozen pytest -q

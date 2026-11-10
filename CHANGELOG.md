@@ -173,6 +173,14 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Changed
 
+- The models declare what the migrations built: `chunks.tsv`, the generated
+  column of the full-text leg, and its GIN index; the names of the
+  conversation, query log and saved note indexes; the vector's size.
+  `alembic --autogenerate` used to propose dropping `tsv`. CI now runs
+  `alembic check` after the migrations, which leaves LangGraph's checkpoint
+  tables alone. `tsv` is never read by the ORM, nor fetched on insert.
+- `EMBEDDING_DIMENSION` must match `chunks.embedding` (1536): another value
+  stops the API at startup instead of failing the first upload.
 - The backend's `Dockerfile` builds in stages. The default image, `runtime`, has no
   compilers and no dev tools, and is 925 MB instead of 2.17 GB. Compose builds `dev`,
   which adds pytest, ruff and mypy. Both images:

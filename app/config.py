@@ -1,7 +1,11 @@
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The size of `chunks.embedding`, which alembic 0002 created. Another size
+# takes a migration and a re-embedding of every chunk (audit R17).
+EMBEDDING_COLUMN_DIMENSION = 1536
 
 
 class AgentSettings(BaseSettings):
@@ -124,7 +128,8 @@ class Settings(BaseSettings):
 
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    # The vectors the embedder asks for: `chunks.embedding`'s size.
+    embedding_dimension: int = EMBEDDING_COLUMN_DIMENSION
     # L2-normalize embeddings before storage and at query time. Required for
     # pgvector cosine_distance to produce true cosine similarity (OpenAI does
     # not return unit vectors). Existing deployments must re-ingest after
@@ -206,6 +211,18 @@ class Settings(BaseSettings):
     otel_exporter_otlp_headers: SecretStr | None = None
 
     agent: AgentSettings = AgentSettings()
+
+    @field_validator("embedding_dimension")
+    @classmethod
+    def _fits_the_column(cls, value: int) -> int:
+        # Caught at startup, not at the first upload's insert.
+        if value != EMBEDDING_COLUMN_DIMENSION:
+            raise ValueError(
+                f"EMBEDDING_DIMENSION is {value}, but chunks.embedding holds "
+                f"{EMBEDDING_COLUMN_DIMENSION}-dimension vectors; another size takes a "
+                "migration and a re-embedding of every chunk"
+            )
+        return value
 
     @property
     def psycopg_database_url(self) -> str:

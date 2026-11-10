@@ -562,6 +562,7 @@ CI (`.github/workflows/tests.yml`) runs, on every push to `main` and every pull 
 - gitleaks over the full history;
 - pip-audit over every locked package;
 - mypy (`app/agent`, `app/eval`, `app/mcp` and what they import);
+- `alembic check`, after the migrations: the models match the schema they build;
 - the full suite against a pgvector Postgres service, database tests included.
 
 Dependabot proposes weekly updates for Python, npm, GitHub Actions and Docker images.

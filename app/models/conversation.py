@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -10,7 +19,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    thread_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    thread_id: Mapped[str] = mapped_column(String(100), nullable=False)
     user_number: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     channel: Mapped[str] = mapped_column(
         String(20), default="web", server_default="web", nullable=False, index=True
@@ -40,4 +49,10 @@ class Conversation(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Named as alembic 0005 created them.
+    __table_args__ = (
+        UniqueConstraint("thread_id", name="uq_conversations_thread_id"),
+        Index("ix_conversations_last_active", "last_active_at"),
     )

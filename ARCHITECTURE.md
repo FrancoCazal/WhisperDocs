@@ -763,7 +763,8 @@ Postgres (the compose database)
 - **Database** — `test_retrieval_db.py` and one test in `test_ingestion_jobs.py`
   run against a real Postgres when `TEST_DATABASE_URL` is set: full-text,
   HNSW, collection filters, job cleanup. CI sets it, against a
-  `pgvector/pgvector` service migrated with `alembic upgrade head`.
+  `pgvector/pgvector` service migrated with `alembic upgrade head`; then
+  `alembic check` fails if the models and the migrations disagree.
 - **E2E** — Eval suite acts as integration: ingest fixture corpus, query, judge.
 
 `tests/agent/conftest.py::mock_retriever` patches both

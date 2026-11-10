@@ -13,7 +13,8 @@ from the "wrong" configuration rarely matches anything.
 from __future__ import annotations
 
 # Every configuration a chunk's tsv can be built with. Keep in sync with the
-# CASE expression in alembic/versions/0013_fulltext_per_language.py.
+# CASE expression in alembic/versions/0013_fulltext_per_language.py, which
+# app/models/chunk.py's TSV_EXPRESSION repeats.
 TS_CONFIGS: tuple[str, ...] = ("wd_english", "wd_spanish", "wd_simple")
 
 

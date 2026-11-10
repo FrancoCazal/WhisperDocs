@@ -23,6 +23,19 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# The checkpointer's tables: LangGraph creates and migrates them
+# (app/agent/checkpointer.py), so autogenerate and `alembic check` leave them
+# alone.
+LANGGRAPH_TABLES = frozenset(
+    {"checkpoints", "checkpoint_blobs", "checkpoint_writes", "checkpoint_migrations"}
+)
+
+
+def include_name(name, type_, parent_names) -> bool:
+    if type_ == "table":
+        return name not in LANGGRAPH_TABLES
+    return parent_names.get("table_name") not in LANGGRAPH_TABLES
+
 
 def run_migrations_offline() -> None:
     context.configure(
@@ -42,7 +55,9 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection, target_metadata=target_metadata, include_name=include_name
+        )
         with context.begin_transaction():
             context.run_migrations()
 
