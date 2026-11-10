@@ -24,6 +24,7 @@ from app.api.http_metrics import HTTPMetricsMiddleware
 from app.agent.graph import build_agent_graph
 from app.config import settings
 from app.logging_config import configure_logging, get_logger
+from app.mcp.http import MCP_PATH, McpOverHttp
 from app.services.ingestion import fail_interrupted_jobs, stop_ingestions
 from app.services.llm import validate_agent_models
 from app.services.whatsapp.inbound import stop_replies
@@ -47,6 +48,9 @@ from app.api.v1.webhooks import whatsapp as webhook_whatsapp
 configure_logging()
 configure_tracing()
 logger = get_logger(__name__)
+
+# The MCP server over Streamable HTTP (audit M-1, M-2): see app/mcp/http.py.
+mcp_http = McpOverHttp()
 
 
 def _check_agent_models() -> None:
@@ -82,7 +86,8 @@ async def lifespan(app: FastAPI):
     gc.collect()
     gc.freeze()
     try:
-        yield
+        async with mcp_http.running():
+            yield
     finally:
         gc.unfreeze()
         # Together: each waits up to 5 s, and Docker kills the process at 10.
@@ -157,3 +162,6 @@ for router in (
     notes.router,
 ):
     app.include_router(router, prefix=API_PREFIX, dependencies=[Depends(require_api_key)])
+
+# Its own key check (app/mcp/access.py): an MCP key reaches some collections.
+app.add_route(MCP_PATH, mcp_http, include_in_schema=False)

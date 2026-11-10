@@ -31,7 +31,8 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 - **WhatsApp integration** — full agent pipeline over Twilio webhooks, answered in the background so Twilio's 15 s timeout never cuts a turn.
 - **MCP server** — the knowledge base for Claude Code, Claude Desktop and Cursor:
   search, answers with citations, the lists and a resource per document, over
-  stdio. Each tool calls the same service as its REST route.
+  stdio or over HTTP at `/mcp`, where each key reaches only its collections.
+  Each tool calls the same service as its REST route.
 
 ---
 
@@ -198,7 +199,9 @@ so a client generated from the schema, or an agent's tool list, keeps its names;
 
 WhisperDocs is also an MCP server, so Claude Code, Claude Desktop, Cursor or
 any other MCP client can use the knowledge base. It runs over stdio, against
-the compose Postgres, and no tool changes the knowledge base.
+the compose Postgres, or over Streamable HTTP at `/mcp`, inside the API,
+where each key reaches only its collections. No tool changes the knowledge
+base.
 
 | Tool | What it returns |
 |------|-----------------|
@@ -247,11 +250,60 @@ Without Docker, `uv run python -m app.mcp` starts it from a checkout whose
 defaults).
 
 - **No auth over stdio.** The client starts the process on your machine, and
-  the process has the database and keys the API has. Serving MCP over HTTP
-  waits for scoped keys.
+  the process has the database and keys the API has, and every collection.
 - **Its own process.** The API's rate limits and its model status do not see
-  the MCP server's calls; the server logs to stderr, which the client keeps
+  the stdio server's calls; the server logs to stderr, which the client keeps
   as its MCP log.
+
+### Over HTTP, with a key per client
+
+The API serves the same server at `http://localhost:8000/mcp` (Streamable
+HTTP, stateless). Give each client its own key, for the collections it
+should see ([ADR 0007](docs/adr/0007-mcp-over-http-scoped-keys.md)):
+
+```bash
+docker compose exec api python -m app.mcp.keys create claude-code --collection 3
+# wdk_...   shown once: only its SHA-256 is stored
+docker compose exec api python -m app.mcp.keys create cursor --collection 3 --collection 5
+docker compose exec api python -m app.mcp.keys create admin --all
+docker compose exec api python -m app.mcp.keys list
+docker compose exec api python -m app.mcp.keys revoke cursor
+```
+
+**Claude Code**
+
+```bash
+claude mcp add --transport http whisperdocs http://localhost:8000/mcp \
+  --header "Authorization: Bearer wdk_..."
+```
+
+**Cursor** (`mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "whisperdocs": {
+      "url": "http://localhost:8000/mcp",
+      "headers": { "Authorization": "Bearer wdk_..." }
+    }
+  }
+}
+```
+
+- **A key reaches its collections.** A collection or document out of its
+  reach gets the error a missing one gets. The lists, `resources/list` and
+  the document resource show only what it reaches. A search without
+  `collection_id` takes the key's collection when it has one. `--all`
+  reaches every collection, today's and later ones.
+- **The API's key.** `API_KEY` also works at `/mcp`, and reaches every
+  collection. Unset, `/mcp` is open, as the API is: a client with no key
+  reaches everything. Set, a request without a valid key is a 401. A key
+  goes in `Authorization: Bearer` or `X-API-Key`.
+- **Shared limits.** `search_documents` and `ask_documents` count against
+  the API's questions limit, per key.
+- **localhost only.** `/mcp` answers the Host headers in
+  `MCP_ALLOWED_HOSTS` (localhost by default), the SDK's guard against DNS
+  rebinding. Add the API's name to reach it by that name.
 
 ---
 
@@ -327,6 +379,10 @@ other machine, set `API_KEY`.
   makes an embedding call, so it does need the key. The frontend asks for the
   key in SETTINGS and keeps it in the browser's local storage. It is one
   shared key: it controls access, but it is not per-user authentication.
+- **MCP keys.** `/mcp` also takes keys of its own, each scoped to some
+  collections and revocable alone (`python -m app.mcp.keys`; see
+  [Over HTTP](#over-http-with-a-key-per-client)). Only their SHA-256 is
+  stored.
 - **Rate limits.** Each client gets a limit per minute: 30 questions
   (`/query`, `/retrieve`, `/agent/chat*`, `/health?deep=true`), 60 uploads and 2 eval
   runs. The client is the key when auth is on, the IP otherwise. Past a
@@ -555,7 +611,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test
 # 159 passed
 ```
 
-Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), MCP (`tests/test_mcp.py`: an in-memory MCP client, and the stdio process), database (`tests/test_retrieval_db.py`, `test_mcp_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`). No test reaches a model or embedding API, even with credentials in `.env`: `tests/conftest.py` fails any test that resolves a host other than this machine or the test database.
+Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), MCP (`tests/test_mcp.py`: an in-memory MCP client, and the stdio process; `test_mcp_http.py`: the key check in front of `/mcp`), database (`tests/test_retrieval_db.py`, `test_mcp_db.py`, `test_mcp_http_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`). No test reaches a model or embedding API, even with credentials in `.env`: `tests/conftest.py` fails any test that resolves a host other than this machine or the test database.
 
 CI (`.github/workflows/tests.yml`) runs, on every push to `main` and every pull request:
 - `pre-commit run --all-files`: ruff, ruff format and file hygiene;
@@ -577,7 +633,8 @@ app/
   api/v1/         FastAPI routers — agent, query, retrieve, documents,
                   conversations, notes, collections, eval, admin, webhooks,
                   health, metrics
-  mcp/            MCP server (stdio): tools and document resources
+  mcp/            MCP server (stdio, and /mcp over HTTP): tools, document
+                  resources, scoped keys
   services/       llm/ (providers + pricing), retriever, embedder, chunker,
                   reranker, mmr, retrieval_pipeline, ingestion, text_extractor,
                   rag, lang, whatsapp/, twilio_client; search, answering and

@@ -57,6 +57,13 @@ Fixes from the November 2026 audit, and a review of the frontend.
   official `mcp` SDK 2.3, speaks the 2026-07-28 spec and the older
   handshake, and each tool calls the service its REST route calls. The
   README has the configuration for each client; ADR 0005 has the design.
+- The MCP server over Streamable HTTP, at the API's `/mcp` (audit M-1,
+  M-2): stateless, with keys of its own, each scoped to some collections
+  (`api_keys`, migration 0019; `python -m app.mcp.keys create | list |
+  revoke`). A collection or document out of a key's reach gets the error
+  a missing one gets, and the lists and resources show only what it
+  reaches. Over HTTP, `search_documents` and `ask_documents` count
+  against the questions limit, per key. ADR 0007 has the design.
 - History: filters by origin and by question text
   (`GET /query/history?source=&q=`), and pagination.
 - Frontend tests: vitest for the API client's stream parser, and a
@@ -143,7 +150,9 @@ Fixes from the November 2026 audit, and a review of the frontend.
   needs it except `GET /health` and the WhatsApp webhook, which checks
   Twilio's signature. `/health?deep=true` makes an embedding call and needs
   it too. Unset, the API stays open, as the local demo is. The frontend
-  takes the key in SETTINGS.
+  takes the key in SETTINGS. `/mcp` takes it too, or a key of its own
+  that reaches only its collections; only a key's SHA-256 is stored, and
+  `/mcp` answers only the hosts in `MCP_ALLOWED_HOSTS` (localhost).
 - Rate limits per client and minute: questions (30), uploads (60) and eval
   runs (2), set by `RATE_LIMIT_*`. Past a limit the API answers 429 with
   `Retry-After`. An eval run takes at most 200 items.

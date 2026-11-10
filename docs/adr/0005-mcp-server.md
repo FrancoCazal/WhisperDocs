@@ -1,6 +1,7 @@
 # ADR 0005 — An MCP server over the same services as the API
 
-**Status:** accepted
+**Status:** accepted; HTTP added by
+[ADR 0007](0007-mcp-over-http-scoped-keys.md)
 **Date:** 2026-11
 
 ## Context

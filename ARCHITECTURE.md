@@ -13,6 +13,7 @@ graph TB
   subgraph Client
     UI[React + TanStack Router]
     WApp[WhatsApp]
+    MCPClient[MCP client]
   end
 
   subgraph API[FastAPI]
@@ -23,6 +24,7 @@ graph TB
     Webhook["/api/v1/webhook/whatsapp"]
     Health["/api/v1/health"]
     Metrics["/api/v1/metrics"]
+    MCP["/mcp"]
   end
 
   subgraph AgentCore[LangGraph Agent]
@@ -57,6 +59,8 @@ graph TB
 
   UI -->|HTTP / SSE| API
   WApp -->|webhook| Webhook
+  MCPClient -->|Streamable HTTP + key| MCP
+  MCP --> Retrieval
   Agent --> Graph
   Webhook --> Graph
   Graph --> Compaction --> Summarize
@@ -329,7 +333,22 @@ erDiagram
     text user_note
     timestamp created_at
   }
+
+  ApiKey {
+    int id PK
+    string name UK
+    string key_hash UK
+    string prefix
+    int[] collection_ids
+    timestamp created_at
+    timestamp revoked_at
+  }
 ```
+
+`api_keys` holds the MCP server's keys over HTTP: the SHA-256 of each, and
+the collections it reaches (null for every one). `collection_ids` is an
+array, not a foreign key: a deleted collection leaves an id that reaches
+nothing.
 
 LangGraph checkpointer state lives in dedicated tables managed by
 `langgraph-checkpoint-postgres` (not modeled here).
@@ -649,16 +668,22 @@ From the outside in: CORS, then `RequestContextMiddleware`
 
 ## MCP server
 
-`app/mcp/server.py` builds an `MCPServer` (official `mcp` SDK 2.3) and
-`python -m app.mcp` serves it over stdio. Clients start it with
-`docker compose exec -T api python -m app.mcp`. See
-[ADR 0005](docs/adr/0005-mcp-server.md).
+`app/mcp/server.py` builds an `MCPServer` (official `mcp` SDK 2.3).
+`python -m app.mcp` serves it over stdio, and clients start it with
+`docker compose exec -T api python -m app.mcp`. The API also serves it over
+Streamable HTTP at `/mcp` (`app/mcp/http.py`), behind keys scoped to
+collections. See [ADR 0005](docs/adr/0005-mcp-server.md) and
+[ADR 0007](docs/adr/0007-mcp-over-http-scoped-keys.md).
 
 ```
 MCP client (Claude Code, Claude Desktop, Cursor)
   │ stdio: JSON-RPC, 2026-07-28 or the older initialize handshake
+  │ or HTTP POST /mcp, stateless, with a key
   ▼
-app/mcp/server.py
+app/mcp/http.py      KeyAuth: key ──► Access (its collections) in the request
+  │                  then the SDK: Host check, Streamable HTTP
+  ▼
+app/mcp/server.py    each tool reads its caller's Access
   search_documents ──► services/search.py    ──► retrieval_pipeline
   ask_documents    ──► services/answering.py ──► retrieval_pipeline + rag model
   list_collections, list_documents ──► services/catalog.py
@@ -676,14 +701,34 @@ Postgres (the compose database)
   a failed provider call gives its kind, not the provider's text.
 - **Resources.** `resources/list` names the newest 200 documents, with
   their size; the template `whisperdocs://documents/{id}` reads any.
-- **Its own process.** The API's rate limits and model status are per
-  process and do not see these calls. stdout is the protocol's: the SDK
-  points the process's stdout at stderr while it serves, and the logs go
-  to stderr.
+- **stdio is its own process.** The API's rate limits and model status are
+  per process and do not see these calls. stdout is the protocol's: the
+  SDK points the process's stdout at stderr while it serves, and the logs
+  go to stderr. Over stdio there is no request, and the caller reaches
+  every collection.
+- **HTTP is the API's.** The SDK's session manager runs in the API's
+  lifespan (a new one each time: it runs once per instance); outside it,
+  `/mcp` is a 503. The SDK hands each tool the HTTP request its message
+  came in, and `KeyAuth` left the caller's `Access` in that request's
+  state (`access_of`). A key is a stored one (`api_keys`, its
+  collections), the API's `API_KEY` (every collection), or none, which
+  reaches everything only while `API_KEY` is unset.
+- **Scope.** Out of reach reads as missing, word for word, so a key
+  cannot probe other collections' ids. `list_collections`,
+  `list_documents` (`catalog.list_documents(collection_ids=...)`) and
+  `resources/list` (the SDK's handler is overridden: it does not pass the
+  request) show only what the key reaches. A search without a collection
+  takes the key's one, or asks for `collection_id`.
+- **Limits.** Over HTTP, `search_documents` and `ask_documents` take from
+  the `questions` bucket, per key, before any embedding.
 - **Tests.** `tests/test_mcp.py` runs an in-memory client against fakes,
   compares each tool with its route, covers both protocol eras, and starts
   the stdio process to check that it writes only JSON-RPC to stdout.
   `tests/test_mcp_db.py` runs the tools and resources against Postgres.
+  `tests/test_mcp_http_db.py` goes through the SDK's own HTTP client and
+  transport, against Postgres: a key that does not see another
+  collection, the 401s, the host check, the limit per key and both eras.
+  `tests/test_mcp_http.py` checks the keys without a database.
 
 ---
 
@@ -803,3 +848,4 @@ See [`docs/adr/`](docs/adr/) for short rationale notes:
 - [0004 — Dual LLM provider routing](docs/adr/0004-dual-llm-provider-routing.md)
 - [0005 — An MCP server over the same services as the API](docs/adr/0005-mcp-server.md)
 - [0006 — OpenTelemetry traces with the GenAI conventions](docs/adr/0006-opentelemetry-traces.md)
+- [0007 — MCP over HTTP, with keys scoped to collections](docs/adr/0007-mcp-over-http-scoped-keys.md)

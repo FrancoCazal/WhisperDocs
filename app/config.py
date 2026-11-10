@@ -177,10 +177,23 @@ class Settings(BaseSettings):
     # reached from anywhere else. /health without `deep` and the WhatsApp
     # webhook, which checks Twilio's signature, never need it.
     api_key: SecretStr | None = None
+    # The Host headers the MCP server at /mcp answers, the MCP SDK's check
+    # against DNS rebinding: localhost, on any port (`:*`) or none. Add the
+    # API's own name to reach it by that name.
+    # Env: MCP_ALLOWED_HOSTS='["localhost:*", "docs.example.com"]'
+    mcp_allowed_hosts: list[str] = [
+        "localhost",
+        "localhost:*",
+        "127.0.0.1",
+        "127.0.0.1:*",
+        "[::1]",
+        "[::1]:*",
+    ]
     # Requests a minute per client (its API key, or its IP without one) on the
     # routes that spend (audit R9, app/api/rate_limit.py); 0 turns a limit
     # off. Questions: /query, /retrieve, /agent/chat*, /health?deep=true,
-    # and each WhatsApp number's messages.
+    # search_documents and ask_documents over /mcp (per MCP key), and each
+    # WhatsApp number's messages.
     rate_limit_per_minute: int = 30
     # Uploads, one request per file: the frontend sends a folder three at a
     # time.

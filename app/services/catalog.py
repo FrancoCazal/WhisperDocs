@@ -6,6 +6,8 @@ Behind the collection and document lists of the API and the MCP server's
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -59,13 +61,21 @@ async def get_collection(db: AsyncSession, collection_id: int) -> CollectionRead
 
 
 async def list_documents(
-    db: AsyncSession, *, collection_id: int | None, limit: int, cursor: int | None
+    db: AsyncSession,
+    *,
+    collection_id: int | None,
+    limit: int,
+    cursor: int | None,
+    collection_ids: Iterable[int] | None = None,
 ) -> Page[DocumentRead]:
     """A page of documents, newest first. See `app/schemas/pagination.py`.
 
     Without their text, which a `DocumentRead` does not carry (audit R10).
+    `collection_ids` keeps the page within those collections (an MCP key's).
     """
     filters = [] if collection_id is None else [Document.collection_id == collection_id]
+    if collection_ids is not None:
+        filters.append(Document.collection_id.in_(list(collection_ids)))
     query = (
         select(Document)
         .options(defer(Document.raw_text))
