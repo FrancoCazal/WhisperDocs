@@ -20,6 +20,8 @@ class Collection(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+    # passive_deletes: the foreign keys' ON DELETE CASCADE removes the
+    # documents and their chunks, without loading them first (audit R11).
     documents: Mapped[list["Document"]] = relationship(
-        back_populates="collection", cascade="all, delete-orphan"
+        back_populates="collection", cascade="all, delete-orphan", passive_deletes=True
     )

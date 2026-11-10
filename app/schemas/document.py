@@ -50,4 +50,6 @@ class BulkOpResult(BaseModel):
     succeeded: int
     failed: int
     not_found: list[int] = []
+    # Always empty: a bulk operation is one statement, which succeeds or fails
+    # as a whole (audit R11). Kept so the clients that read it still parse.
     errors: dict[int, str] = {}

@@ -247,6 +247,12 @@ Fixes from the November 2026 audit, and a review of the frontend.
   embedding and its document's full text, and a second query read the
   documents again. It now selects the columns a result shows. The document list
   and a document's chunk list no longer read the text either.
+- Deleting a collection no longer loads its documents and their chunks,
+  embeddings included, to delete them one by one: the foreign keys' `ON DELETE
+  CASCADE` does it. Deleting a document, and the bulk delete and move, are one
+  statement each. The per-document `try/except` in the bulk operations never
+  caught anything, since an error only came at the commit; it is gone, and
+  `errors` in their result is always empty.
 - A failed summary is no longer retried on every turn: compaction waits
   `AGENT_COMPACTION_RETRY_MESSAGES` (6) messages first. A summary cut at
   `max_tokens`, or empty, is not kept; before, a cut one replaced the

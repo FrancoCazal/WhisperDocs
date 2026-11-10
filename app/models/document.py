@@ -32,6 +32,9 @@ class Document(Base):
     )
 
     collection: Mapped["Collection"] = relationship(back_populates="documents")
+    # passive_deletes: the foreign key's ON DELETE CASCADE removes the chunks.
+    # Without it, deleting a document would first load every chunk, embedding
+    # included, to delete each one (audit R11).
     chunks: Mapped[list["Chunk"]] = relationship(
-        back_populates="document", cascade="all, delete-orphan"
+        back_populates="document", cascade="all, delete-orphan", passive_deletes=True
     )

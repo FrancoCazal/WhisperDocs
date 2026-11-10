@@ -15,7 +15,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import upstream_error
@@ -318,10 +318,12 @@ async def delete_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    document = await db.get(Document, document_id)
-    if document is None:
+    # One statement; the foreign key removes the chunks (audit R11).
+    deleted = await db.scalar(
+        delete(Document).where(Document.id == document_id).returning(Document.id)
+    )
+    if deleted is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    await db.delete(document)
     await db.commit()
 
 
@@ -333,36 +335,20 @@ async def bulk_delete_documents(
     payload: BulkDocumentIds,
     db: AsyncSession = Depends(get_db),
 ) -> BulkOpResult:
-    """Delete N documents in one round-trip. Cascades to chunks via FK."""
+    """Delete N documents in one statement. The foreign key removes their chunks.
+
+    The statement succeeds or fails as a whole: a database error is a 500 and
+    deletes nothing (audit R11).
+    """
     if not payload.document_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_ids is empty")
 
-    rows = (
-        (await db.execute(select(Document).where(Document.id.in_(payload.document_ids))))
-        .scalars()
-        .all()
+    deleted = await db.scalars(
+        delete(Document).where(Document.id.in_(payload.document_ids)).returning(Document.id)
     )
-    found_ids = {d.id for d in rows}
-    not_found = [i for i in payload.document_ids if i not in found_ids]
-
-    succeeded = 0
-    errors: dict[int, str] = {}
-    for doc in rows:
-        try:
-            await db.delete(doc)
-            succeeded += 1
-        except Exception:
-            logger.exception("bulk_delete_item_failed", document_id=doc.id)
-            errors[doc.id] = "The document could not be deleted."
+    found_ids = set(deleted.all())
     await db.commit()
-
-    return BulkOpResult(
-        requested=len(payload.document_ids),
-        succeeded=succeeded,
-        failed=len(not_found) + len(errors),
-        not_found=not_found,
-        errors=errors,
-    )
+    return _bulk_result(payload.document_ids, found_ids)
 
 
 @router.post("/bulk-move", operation_id="bulk_move_documents", response_model=BulkOpResult)
@@ -370,7 +356,8 @@ async def bulk_move_documents(
     payload: BulkMoveRequest,
     db: AsyncSession = Depends(get_db),
 ) -> BulkOpResult:
-    """Reassign N documents to another collection."""
+    """Reassign N documents to another collection, in one statement (see
+    `bulk_delete_documents`)."""
     if not payload.document_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_ids is empty")
 
@@ -381,31 +368,24 @@ async def bulk_move_documents(
             detail=f"Target collection {payload.target_collection_id} not found",
         )
 
-    rows = (
-        (await db.execute(select(Document).where(Document.id.in_(payload.document_ids))))
-        .scalars()
-        .all()
+    moved = await db.scalars(
+        update(Document)
+        .where(Document.id.in_(payload.document_ids))
+        .values(collection_id=payload.target_collection_id)
+        .returning(Document.id)
     )
-    found_ids = {d.id for d in rows}
-    not_found = [i for i in payload.document_ids if i not in found_ids]
-
-    succeeded = 0
-    errors: dict[int, str] = {}
-    for doc in rows:
-        try:
-            doc.collection_id = payload.target_collection_id
-            succeeded += 1
-        except Exception:
-            logger.exception("bulk_move_item_failed", document_id=doc.id)
-            errors[doc.id] = "The document could not be moved."
+    found_ids = set(moved.all())
     await db.commit()
+    return _bulk_result(payload.document_ids, found_ids)
 
+
+def _bulk_result(requested: list[int], found_ids: set[int]) -> BulkOpResult:
+    not_found = [i for i in requested if i not in found_ids]
     return BulkOpResult(
-        requested=len(payload.document_ids),
-        succeeded=succeeded,
-        failed=len(not_found) + len(errors),
+        requested=len(requested),
+        succeeded=len(found_ids),
+        failed=len(not_found),
         not_found=not_found,
-        errors=errors,
     )
 
 
