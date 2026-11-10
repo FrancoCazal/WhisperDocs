@@ -2,23 +2,32 @@
 
 pdfplumber, the tiktoken chunker and langdetect are CPU-bound. Called inline
 in an `async def`, a large PDF froze every other request, chat SSE included,
-until it finished. A fake extractor that blocks for 0.3 s stands in for the
-parse; a ticker coroutine measures the longest gap the loop takes to run it.
-The scan for instruction-like text (audit M-5) is CPU-bound too, about a
-millisecond a chunk, and a fake scan stands in for it the same way.
+until it finished. The scan for instruction-like text (audit M-5) is
+CPU-bound too, about a millisecond a chunk.
+
+Each test wraps such a step in `OffTheLoop`: the step runs only once the
+event loop has run a callback the step scheduled. In a worker thread, the
+loop runs it at once. On the loop, the loop is the thread that waits, so the
+callback cannot run and the step fails. No clock is read: these tests once
+measured the loop's longest gap against 150 ms, and a collection of the
+GC's oldest generation in the full suite (up to 1.2 s) failed them about
+one run in four, with the steps off the loop all along (BE-26).
 """
 
 from __future__ import annotations
 
 import asyncio
-import time
+import threading
+from collections.abc import Callable
 
 import pytest
 
 from app.models import Document, IngestionStatus
 from app.services import ingestion
 
-BLOCK_S = 0.3
+# How long a step waits for the loop before it fails. Off the loop the
+# callback runs within milliseconds; this is spent only when a step is on it.
+WAIT_S = 5.0
 PARAGRAPH = (
     "The support team answers customer tickets within one business day. "
     "Every new hire shadows a senior engineer during the first week, "
@@ -27,31 +36,25 @@ PARAGRAPH = (
 TEXT = "# Onboarding guide\n\n" + PARAGRAPH * 30
 
 
-def _blocking_extract(_file_bytes: bytes, _file_type: str) -> str:
-    time.sleep(BLOCK_S)  # stands in for pdfplumber holding the thread
+class OffTheLoop:
+    """A CPU-bound step that runs only if the event loop runs meanwhile."""
+
+    def __init__(self, step: Callable) -> None:
+        self.step = step
+        self.loop = asyncio.get_running_loop()
+        self.calls = 0
+
+    def __call__(self, *args):
+        answered = threading.Event()
+        self.loop.call_soon_threadsafe(answered.set)
+        if not answered.wait(WAIT_S):
+            raise AssertionError(f"{self.step.__name__} ran on the event loop")
+        self.calls += 1
+        return self.step(*args)
+
+
+def _extract(_file_bytes: bytes, _file_type: str) -> str:
     return TEXT
-
-
-async def _max_loop_gap(coro) -> tuple[float, object]:
-    """Longest time the loop went without running a 10 ms ticker while `coro` ran."""
-    gaps: list[float] = []
-    last = [time.perf_counter()]
-
-    async def ticker() -> None:
-        while True:
-            await asyncio.sleep(0.01)
-            now = time.perf_counter()
-            gaps.append(now - last[0])
-            last[0] = now
-
-    task = asyncio.create_task(ticker())
-    await asyncio.sleep(0)  # let the ticker start before the work does
-    try:
-        result = await coro
-    finally:
-        gaps.append(time.perf_counter() - last[0])  # the stretch since the last tick
-        task.cancel()
-    return max(gaps), result
 
 
 class _Result:
@@ -95,24 +98,21 @@ class _FakeEmbedder:
         return [[0.0] * 1536 for _ in texts]
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _warm_tokenizer_and_langdetect():
-    # The first call in a process builds tiktoken's BPE table and loads the
-    # langdetect profiles, which holds the GIL for about 0.1 s. That happens
-    # once per process; the tests measure the steady state.
-    from app.services.chunker import TextChunker
-    from app.services.lang import detect_language
-
-    TextChunker()
-    detect_language(TEXT)
-
-
 @pytest.fixture
-def blocking_extractor(monkeypatch):
-    monkeypatch.setattr(ingestion, "extract_text", _blocking_extract)
+async def steps(monkeypatch) -> dict[str, OffTheLoop]:
+    """Parsing, chunking and the scan, each checked to run off the loop."""
+    wrapped = {
+        "extract": OffTheLoop(_extract),
+        "chunk": OffTheLoop(ingestion._chunk_and_detect),
+        "scan": OffTheLoop(ingestion._scan),
+    }
+    monkeypatch.setattr(ingestion, "extract_text", wrapped["extract"])
+    monkeypatch.setattr(ingestion, "_chunk_and_detect", wrapped["chunk"])
+    monkeypatch.setattr(ingestion, "_scan", wrapped["scan"])
+    return wrapped
 
 
-async def test_background_worker_does_not_block_the_loop(blocking_extractor, monkeypatch):
+async def test_the_background_worker_parses_off_the_loop(steps, monkeypatch):
     statuses: list[IngestionStatus] = []
 
     async def record_status(_job_id, **kwargs):
@@ -123,33 +123,28 @@ async def test_background_worker_does_not_block_the_loop(blocking_extractor, mon
     monkeypatch.setattr(ingestion, "SessionLocal", _FakeSession)
     monkeypatch.setattr(ingestion, "EmbeddingService", _FakeEmbedder)
 
-    gap, _ = await _max_loop_gap(
-        ingestion.run_ingestion(
-            job_id=1, file_bytes=b"%PDF", filename="doc.md", title=None, collection_id=1
-        )
+    await ingestion.run_ingestion(
+        job_id=1, file_bytes=b"%PDF", filename="doc.md", title=None, collection_id=1
     )
 
     assert statuses[-1] == IngestionStatus.COMPLETE
-    assert gap < BLOCK_S / 2
+    assert {name: step.calls for name, step in steps.items()} == {
+        "extract": 1,
+        "chunk": 1,
+        "scan": 1,
+    }
 
 
-async def test_the_instruction_scan_does_not_block_the_loop(monkeypatch):
-    def blocking_scan(_text: str) -> list[str]:
-        time.sleep(BLOCK_S)  # stands in for the rules over a large document
-        return []
-
-    monkeypatch.setattr(ingestion, "instruction_flags", blocking_scan)
+async def test_the_instruction_scan_runs_off_the_loop(steps):
     document = Document(id=1, filename="doc.md", language="en")
 
-    gap, rows = await _max_loop_gap(
-        ingestion.chunk_rows(document, [(0, PARAGRAPH, 40, "h")], [[0.0]])
-    )
+    rows = await ingestion.chunk_rows(document, [(0, PARAGRAPH, 40, "h")], [[0.0]])
 
     assert len(rows) == 1
-    assert gap < BLOCK_S / 2
+    assert steps["scan"].calls == 1
 
 
-async def test_sync_upload_does_not_block_the_loop(blocking_extractor):
+async def test_a_sync_upload_parses_off_the_loop(steps):
     from app.api.v1.documents import _ingest_single
 
     class _Upload:
@@ -158,10 +153,24 @@ async def test_sync_upload_does_not_block_the_loop(blocking_extractor):
         async def read(self, _size: int = -1) -> bytes:
             return b"# Title"
 
-    gap, document = await _max_loop_gap(
-        _ingest_single(_Upload(), 1, None, _FakeSession(), _FakeEmbedder())
-    )
+    document = await _ingest_single(_Upload(), 1, None, _FakeSession(), _FakeEmbedder())
 
     assert document.chunk_count > 0
     assert document.language == "en"
-    assert gap < BLOCK_S / 2
+    assert {name: step.calls for name, step in steps.items()} == {
+        "extract": 1,
+        "chunk": 1,
+        "scan": 1,
+    }
+
+
+async def test_a_step_on_the_loop_fails(monkeypatch):
+    """The check itself: a step called inline cannot pass."""
+    monkeypatch.setitem(globals(), "WAIT_S", 0.2)
+    step = OffTheLoop(_extract)
+
+    with pytest.raises(AssertionError, match="_extract ran on the event loop"):
+        step(b"", "md")
+    await asyncio.to_thread(step, b"", "md")
+
+    assert step.calls == 1

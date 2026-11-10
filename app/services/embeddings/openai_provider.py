@@ -32,7 +32,7 @@ class OpenAIEmbeddingProvider:
         key = api_key or settings.openai_api_key
         if not key:
             raise EmbeddingError("OPENAI_API_KEY not configured")
-        self.client = AsyncOpenAI(api_key=key)
+        self.client = AsyncOpenAI(api_key=key, timeout=settings.embedding_timeout_seconds)
         self._model = model or settings.embedding_model
         self._dimension = dimension if dimension is not None else settings.embedding_dimension
         self.normalize = settings.embedding_l2_normalize if normalize is None else normalize

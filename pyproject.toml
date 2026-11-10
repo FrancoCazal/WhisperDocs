@@ -83,3 +83,6 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Only tests/: scripts/ holds runnable scripts that a bare `pytest` would import.
 testpaths = ["tests"]
+# A test still running after 5 min dumps every thread's stack to stderr, so a
+# hang says where it waits (BE-26). The slowest test takes about 35 s.
+faulthandler_timeout = 300

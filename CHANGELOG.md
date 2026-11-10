@@ -259,6 +259,10 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Fixed
 
+- An embedding request has a time limit, `EMBEDDING_TIMEOUT_SECONDS` (30 s),
+  as the model calls have. The OpenAI client had none: an endpoint that
+  took the connection and never answered held a chat turn, an upload or an
+  MCP call for 600 s a try, three tries.
 - Edge cases of the agent's stream. `out_of_scope` sent no `node_start` or
   `node_end`: the stream now reports every node of the graph. A `final` that
   replaced the tokens already shown (a generation that failed partway,
@@ -332,6 +336,13 @@ Fixes from the November 2026 audit, and a review of the frontend.
 - No test can reach a model or embedding API, even with credentials in
   `.env`: a test that resolves a host other than this machine or the test
   database fails.
+- The tests that check that ingestion parses off the event loop read no
+  clock. They compared the loop's longest gap with 150 ms, and a
+  collection of the GC's oldest generation in the full suite (up to 1.2 s)
+  failed them about one run in four. Now each CPU-bound step waits for the
+  loop to run a callback it scheduled, which only a step off the loop
+  sees; chunking is checked too. A test still running after 5 minutes
+  dumps every thread's stack (`faulthandler_timeout`).
 
 ## [1.0] - 2026-05-19
 

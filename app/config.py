@@ -136,6 +136,9 @@ class Settings(BaseSettings):
     # enabling — query embeddings normalized vs stored non-normalized degrades
     # ranking. Default True for new installs.
     embedding_l2_normalize: bool = True
+    # Each embedding request's limit; the OpenAI SDK retries twice. Without
+    # one, the SDK waits 600 s for an answer, three times over (BE-26).
+    embedding_timeout_seconds: int = 30
 
     gcp_project: str = ""
     # gemini-3.8-flash is served from the `global` endpoint and the `us` / `eu`
