@@ -5,7 +5,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.eval.protocol import mcnemar_exact, wilson_interval
-from app.eval.schemas import AggregateMetrics, EvalReport, EvalResult, JudgeResult, RunConfig
+from app.eval.schemas import (
+    AggregateMetrics,
+    EvalReport,
+    EvalResult,
+    JudgeResult,
+    RunConfig,
+    SeriesSummary,
+)
 
 # What an old report did not measure: never a 0, which would read as one.
 MISSING = "—"
@@ -25,12 +32,29 @@ def gate_failures(
     """The thresholds a run missed, one line each; none when it met them.
     The eval workflow fails a run on any (audit E17). A minimum of 0 and a
     maximum of 1 can never be missed."""
+    return threshold_failures(
+        metrics.accuracy,
+        metrics.hallucination_rate,
+        min_accuracy=min_accuracy,
+        max_hallucination=max_hallucination,
+    )
+
+
+def threshold_failures(
+    accuracy: float,
+    hallucination_rate: float,
+    *,
+    min_accuracy: float,
+    max_hallucination: float,
+    of: str = "",
+) -> list[str]:
+    """`gate_failures` on two shares; `of` names them ("mean ")."""
     failures: list[str] = []
-    if metrics.accuracy < min_accuracy:
-        failures.append(f"accuracy {metrics.accuracy:.1%} is below {min_accuracy:.1%}")
-    if metrics.hallucination_rate > max_hallucination:
+    if accuracy < min_accuracy:
+        failures.append(f"{of}accuracy {accuracy:.1%} is below {min_accuracy:.1%}")
+    if hallucination_rate > max_hallucination:
         failures.append(
-            f"hallucination rate {metrics.hallucination_rate:.1%} is above {max_hallucination:.1%}"
+            f"{of}hallucination rate {hallucination_rate:.1%} is above {max_hallucination:.1%}"
         )
     return failures
 
@@ -433,3 +457,63 @@ def _change_table(changes: list[ItemChange], empty: str) -> list[str]:
             for c in changes
         ),
     ]
+
+
+def render_series_markdown(summary: SeriesSummary) -> str:
+    n = len(summary.runs)
+    lines = [f"# Eval Series — {n} {'run' if n == 1 else 'runs'}", ""]
+    lines.append(f"- **Timestamp**: {summary.timestamp.isoformat()}")
+    lines.append(f"- **Model**: `{summary.model}`")
+    lines.append(
+        f"- **Prompts**: {_version(summary.prompt_version)} "
+        f"(judge {_version(summary.judge_prompt_version)})"
+    )
+    lines.append(f"- **Dataset size**: {summary.dataset_size}")
+    if summary.config is not None:
+        lines.append(
+            f"- **Commit**: {_setting(summary.config.git_sha)}"
+            f"{' (uncommitted changes)' if summary.config.git_dirty else ''}, "
+            f"dataset {_setting(summary.config.dataset_hash)}"
+        )
+    lines += ["", "## Spread", ""]
+    lines.append(
+        "The 95% interval is the t interval of the mean over the runs: how far the mean of "
+        "this many runs of the config can be from the mean of many. It measures the noise "
+        "between runs, not the sampling of the items, which each report's Wilson interval "
+        "covers."
+    )
+    lines += ["", "| Metric | Mean | Min | Max | 95% interval of the mean |"]
+    lines.append("|--------|------|-----|-----|--------------------------|")
+    for label, spread in (
+        ("Accuracy", summary.accuracy),
+        ("Hallucination rate", summary.hallucination_rate),
+    ):
+        interval = (
+            MISSING
+            if spread.low is None or spread.high is None
+            else f"{spread.low:.1%} – {spread.high:.1%}"
+        )
+        lines.append(
+            f"| {label} | {spread.mean:.1%} | {spread.min:.1%} | {spread.max:.1%} | {interval} |"
+        )
+    lines += ["", "## Runs", ""]
+    lines.append("| Run | Accuracy | Hallucination rate | Items with a failed judge call |")
+    lines.append("|-----|----------|--------------------|--------------------------------|")
+    for run in summary.runs:
+        lines.append(
+            f"| `{run.run_id[:8]}` | {run.accuracy:.1%} | {run.hallucination_rate:.1%} "
+            f"| {run.judge_errors} |"
+        )
+    lines += ["", "## Flaky items", ""]
+    if not summary.flaky:
+        lines.append("_Every item got the same verdicts in every run._")
+    else:
+        lines.append("Items whose verdict on a check differed between runs.")
+        lines += ["", "| ID | Check | Passed | Question |", "|----|-------|--------|----------|"]
+        for item in summary.flaky:
+            lines.append(
+                f"| {item.item_id} | {item.check} | {item.passed} of {item.judged} "
+                f"| {_truncate(item.question, 60)} |"
+            )
+    lines.append("")
+    return "\n".join(lines)

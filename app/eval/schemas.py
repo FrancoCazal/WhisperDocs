@@ -115,6 +115,51 @@ class RunConfig(BaseModel):
     mmr_lambda: float | None
 
 
+class Spread(BaseModel):
+    """A metric over the runs of a series."""
+
+    mean: float
+    min: float
+    max: float
+    # The 95 % t interval of the mean; None with a single run.
+    low: float | None
+    high: float | None
+
+
+class SeriesRun(BaseModel):
+    run_id: str
+    accuracy: float
+    hallucination_rate: float
+    judge_errors: int
+
+
+class FlakyItem(BaseModel):
+    """An item whose verdict on one check differed between the runs."""
+
+    item_id: int
+    question: str
+    check: str
+    # Runs where the check passed, out of those where the judge gave a verdict.
+    passed: int
+    judged: int
+
+
+class SeriesSummary(BaseModel):
+    """Several runs of one config (audit E7): how far apart they land, and
+    which items do not land the same way twice (app/eval/series.py)."""
+
+    timestamp: datetime
+    model: str
+    prompt_version: str | None
+    judge_prompt_version: str | None
+    dataset_size: int
+    config: RunConfig | None
+    runs: list[SeriesRun]
+    accuracy: Spread
+    hallucination_rate: Spread
+    flaky: list[FlakyItem]
+
+
 class EvalReport(BaseModel):
     run_id: str
     timestamp: datetime

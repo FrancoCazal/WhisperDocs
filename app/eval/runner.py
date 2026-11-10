@@ -3,6 +3,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 
@@ -17,8 +18,11 @@ from app.eval.report import (
     render_badge_json,
     render_diff_markdown,
     render_markdown,
+    render_series_markdown,
+    threshold_failures,
 )
-from app.eval.schemas import EvalReport, TestItem
+from app.eval.schemas import EvalReport, SeriesSummary, TestItem
+from app.eval.series import summarize
 from app.models import Collection
 from app.services.embedder import EmbeddingService
 from app.services.llm import llm_service_for
@@ -33,11 +37,21 @@ DEFAULT_RESULTS_DIR = Path("eval/results")
 EXIT_ABORTED = 2
 EXIT_BELOW_THRESHOLD = 3
 
+# Each run calls the RAG model once and the judge up to twice per item.
+MAX_RUNS = 20
+
 
 def _fraction(value: str) -> float:
     number = float(value)
     if not 0.0 <= number <= 1.0:
         raise argparse.ArgumentTypeError(f"{value} is not between 0 and 1")
+    return number
+
+
+def _runs(value: str) -> int:
+    number = int(value)
+    if not 1 <= number <= MAX_RUNS:
+        raise argparse.ArgumentTypeError(f"{value} is not between 1 and {MAX_RUNS}")
     return number
 
 
@@ -119,6 +133,42 @@ async def run_eval(
 
     print_summary(report, output_path)
     return report
+
+
+async def run_series(
+    runs: int, results_dir: Path, write_markdown: bool = False, **run_args: Any
+) -> SeriesSummary:
+    """`runs` runs of one config, one after another, each saved as a report,
+    then read together (app/eval/series.py). The judge's cache carries over
+    between them, so the spread is the answers' and not the judge's."""
+    reports: list[EvalReport] = []
+    for i in range(runs):
+        print(f"\n--- Run {i + 1} of {runs} ---")
+        reports.append(
+            await run_eval(results_dir=results_dir, write_markdown=write_markdown, **run_args)
+        )
+    summary = summarize(reports)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"series_{summary.timestamp.strftime('%Y-%m-%dT%H-%M-%S')}"
+    (results_dir / f"{stem}.json").write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    md_path = results_dir / f"{stem}.md"
+    md_path.write_text(render_series_markdown(summary), encoding="utf-8")
+    print(f"\n=== Series of {runs} runs ===")
+    for label, spread in (
+        ("Accuracy:          ", summary.accuracy),
+        ("Hallucination rate:", summary.hallucination_rate),
+    ):
+        interval = (
+            ""
+            if spread.low is None or spread.high is None
+            else f", 95% interval {spread.low:.1%} - {spread.high:.1%}"
+        )
+        print(
+            f"{label} mean {spread.mean:.1%} (min {spread.min:.1%}, max {spread.max:.1%}{interval})"
+        )
+    print(f"Flaky items:        {len(summary.flaky)}")
+    print(f"Series written to: {md_path}")
+    return summary
 
 
 def print_summary(report: EvalReport, output_path: Path) -> None:
@@ -203,6 +253,14 @@ def main() -> None:
             help="Run only the first N dataset items (smoke runs).",
         )
         p.add_argument(
+            "--runs",
+            type=_runs,
+            default=1,
+            help=f"Run the config this many times (1 to {MAX_RUNS}) and write a series "
+            "summary: the mean, range and interval, and the items that flip. The "
+            "thresholds then apply to the mean.",
+        )
+        p.add_argument(
             "--no-judge-cache",
             action="store_true",
             help="Judge every answer again instead of reusing the verdicts in "
@@ -250,24 +308,36 @@ def main() -> None:
         _exit_on(cmd_diff(args), "Worse than the previous run:")
         return
 
+    run_args: dict[str, Any] = {
+        "dataset_path": args.dataset,
+        "results_dir": args.results_dir,
+        "collection_id": args.collection_id,
+        "collection_name": args.collection_name,
+        "top_k": args.top_k,
+        "concurrency": args.concurrency,
+        "write_markdown": args.markdown,
+        "limit": args.limit,
+        "judge_cache": not args.no_judge_cache,
+    }
     try:
-        report = asyncio.run(
-            run_eval(
-                dataset_path=args.dataset,
-                results_dir=args.results_dir,
-                collection_id=args.collection_id,
-                collection_name=args.collection_name,
-                top_k=args.top_k,
-                concurrency=args.concurrency,
-                write_markdown=args.markdown,
-                limit=args.limit,
-                judge_cache=not args.no_judge_cache,
-            )
-        )
+        if args.runs > 1:
+            summary = asyncio.run(run_series(args.runs, **run_args))
+        else:
+            report = asyncio.run(run_eval(**run_args))
     except EvalAbortedError as exc:
         print(f"\n{exc}\nFirst judge error: {exc.first_error}", file=sys.stderr)
         sys.exit(EXIT_ABORTED)
 
+    if args.runs > 1:
+        failures = threshold_failures(
+            summary.accuracy.mean,
+            summary.hallucination_rate.mean,
+            min_accuracy=args.min_accuracy,
+            max_hallucination=args.max_hallucination,
+            of="mean ",
+        )
+        _exit_on(failures, f"Below the thresholds, over {args.runs} runs:")
+        return
     failures = gate_failures(
         report.metrics,
         min_accuracy=args.min_accuracy,

@@ -4,6 +4,9 @@
   report, so a diff can tell which of them changed.
 - `wilson_interval`: how far a share measured on n items can be from the
   true one, at 95 %. 48 right out of 50 is [86.5 %, 98.9 %].
+- `mean_interval`: how far the mean of a few runs of one config can be
+  from the mean of many, at 95 % (Student's t). It measures the noise
+  between runs, not the sampling of the items.
 - `mcnemar_exact`: whether the items that flipped between two runs over the
   same questions flipped more one way than chance would. It reads only the
   flips: on 50 items, 6 regressions and no fix give p = 0.031, and 3 and 3
@@ -135,6 +138,27 @@ def wilson_interval(successes: int, n: int, z: float = 1.959964) -> tuple[float,
     centre = (p + z * z / (2 * n)) / denominator
     half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denominator
     return max(0.0, centre - half), min(1.0, centre + half)
+
+
+# Student's t at 0.975 for 1 to 30 degrees of freedom; past 30, the normal's.
+_T_975 = (
+    12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+    2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+    2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042,
+)  # fmt: skip
+
+
+def mean_interval(values: Sequence[float]) -> tuple[float, float] | None:
+    """The 95 % t interval of the mean of `values`, clipped to [0, 1] since
+    they are shares; None for fewer than two."""
+    n = len(values)
+    if n < 2:
+        return None
+    mean = sum(values) / n
+    sd = math.sqrt(sum((v - mean) ** 2 for v in values) / (n - 1))
+    t = _T_975[n - 2] if n - 1 <= len(_T_975) else 1.959964
+    half = t * sd / math.sqrt(n)
+    return max(0.0, mean - half), min(1.0, mean + half)
 
 
 def mcnemar_exact(worse: int, better: int) -> float:
