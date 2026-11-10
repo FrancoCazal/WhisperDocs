@@ -250,6 +250,14 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Fixed
 
+- Edge cases of the agent's stream. `out_of_scope` sent no `node_start` or
+  `node_end`: the stream now reports every node of the graph. A `final` that
+  replaced the tokens already shown (a generation that failed partway,
+  citations taken out) came without warning; a `reset` event now comes first,
+  and before an `error` that follows tokens. A client that closes the stream
+  leaves a log line and a span marked `cancelled`, and the thread counts as
+  active. Two turns on one thread, from `/agent/chat`, the stream or
+  WhatsApp, run one after the other.
 - Retrieval no longer reads each candidate's whole document. It selected the
   `Chunk` and `Document` rows, so each of its 20 candidates brought its
   embedding and its document's full text, and a second query read the

@@ -139,6 +139,21 @@ describe("the agent's event stream", () => {
     ]);
   });
 
+  it("reads a reset, which drops the tokens shown so far", async () => {
+    const events = await agentEvents(
+      sse([
+        'event: token\ndata: {"node": "search_docs", "delta": "Half an ans"}\n\n',
+        'event: reset\ndata: {"node": "search_docs"}\n\n',
+        "event: reset\ndata: {}\n\n",
+      ]),
+    );
+    expect(events).toEqual([
+      { type: "token", node: "search_docs", delta: "Half an ans" },
+      { type: "reset", node: "search_docs" },
+      { type: "reset", node: null },
+    ]);
+  });
+
   it("drops a message the end of the stream cut off", async () => {
     const events = await agentEvents(
       sse(['event: token\ndata: {"delta": "a"}\n\n', 'event: token\ndata: {"delta": "b"}']),

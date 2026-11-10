@@ -108,6 +108,7 @@ sequenceDiagram
   participant DB as Postgres + pgvector
 
   U->>API: POST /agent/chat/stream
+  Note over API: waits for a turn running on the same thread
   API->>DB: load checkpoint (thread_id)
   API->>G: astream_events(message)
   G->>G: check_compaction
@@ -144,8 +145,21 @@ sequenceDiagram
   end
   G->>DB: persist checkpoint + QueryLog (search_docs, unless it failed)
   G-->>API: final state
+  opt the answer is not what was streamed
+    API-->>U: SSE event: reset
+  end
   API-->>U: SSE event: final { answer, citations, metadata }
 ```
+
+Every node of the graph sends `node_start` and `node_end`. A `reset` tells
+the client to drop the tokens it has shown: the `final` or `error` after it
+replaces them, when a generation failed partway or citations were taken out.
+Turns on one thread run one at a time (`app/agent/thread_lock.py`, shared
+with WhatsApp): two at once would start from the same checkpoint, and the
+last to save would be the thread's history. A client that closes the
+stream cancels the turn; it is logged (`agent_stream_cancelled`) and its
+span has `error.type` `cancelled`. Its question stays checkpointed without
+an answer, which the next prompts leave out.
 
 ---
 

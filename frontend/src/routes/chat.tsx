@@ -359,6 +359,9 @@ function ChatPage() {
           } else if (e.type === "token") {
             got.text += e.delta;
             showSoon();
+          } else if (e.type === "reset") {
+            got.text = "";
+            showSoon();
           } else if (e.type === "final") {
             got.final = e.payload;
           } else if (e.type === "error") {

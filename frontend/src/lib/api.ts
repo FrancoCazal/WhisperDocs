@@ -374,6 +374,9 @@ export type AgentStreamEvent =
   | { type: "node_start"; node: string }
   | { type: "node_end"; node: string; summary: { action?: string; chunks?: number } }
   | { type: "token"; node: string | null; delta: string }
+  // Drop the tokens shown so far: the final answer or the error that follows
+  // replaces them (a generation that failed partway, citations taken out).
+  | { type: "reset"; node: string | null }
   | { type: "final"; payload: AgentChatResponse }
   | { type: "error"; message: string };
 
@@ -618,6 +621,8 @@ function agentEvent({ event, data }: SseMessage): AgentStreamEvent | null {
     }
     case "token":
       return { type: "token", node: str(data.node), delta: str(data.delta) ?? "" };
+    case "reset":
+      return { type: "reset", node: str(data.node) };
     case "final": {
       const threadId = str(data.thread_id);
       if (!threadId) return null;

@@ -10,9 +10,8 @@ this process keeps until it ends.
   timeout or a 5xx (`#rp=`) or name a fallback URL. Each message has its
   `MessageSid`, and `SeenMessages` drops a second delivery.
 - **One number's messages are answered one at a time,** in the order the
-  webhook took them: two turns on a thread at once would each read its
-  memory before the other wrote it, and a `/coleccion` sent before a
-  question must apply to it.
+  webhook took them (app/agent/thread_lock.py): a `/coleccion` sent before
+  a question must apply to it.
 - **This process's memory,** like the rate limits: the API runs as one
   uvicorn process. A restart forgets the ids it saw, and `stop_replies`
   cancels the turns still running after a grace period.
@@ -25,9 +24,9 @@ import asyncio
 import difflib
 import logging
 import time
-from collections import Counter, OrderedDict
-from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections import OrderedDict
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -35,6 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.thread_id import normalize_phone, thread_title, whatsapp_thread_id
+from app.agent.thread_lock import one_turn_at_a_time
 from app.agent.utils.messages import asked
 from app.agent.utils.turn_errors import failure_kind
 from app.config import settings
@@ -91,25 +91,7 @@ class SeenMessages:
 
 seen_messages = SeenMessages()
 
-# A lock per thread with a turn running or waiting, dropped with the last one.
-# asyncio.Lock wakes its waiters in the order they came.
-_thread_locks: dict[str, asyncio.Lock] = {}
-_thread_turns: Counter[str] = Counter()
 _running: set[asyncio.Task[None]] = set()
-
-
-@asynccontextmanager
-async def _one_at_a_time(thread_id: str) -> AsyncIterator[None]:
-    lock = _thread_locks.setdefault(thread_id, asyncio.Lock())
-    _thread_turns[thread_id] += 1
-    try:
-        async with lock:
-            yield
-    finally:
-        _thread_turns[thread_id] -= 1
-        if not _thread_turns[thread_id]:
-            del _thread_turns[thread_id]
-            del _thread_locks[thread_id]
 
 
 def spawn_reply(
@@ -142,7 +124,7 @@ async def reply(agent: Any, *, sender: str, body: str, sessions: Sessions = Sess
     """Answer one message: a slash command, or a turn of the agent."""
     thread_id = whatsapp_thread_id(sender)
     try:
-        async with _one_at_a_time(thread_id), sessions() as db:
+        async with one_turn_at_a_time(thread_id), sessions() as db:
             await _answer(agent, db, sender=sender, body=body, thread_id=thread_id)
     except Exception:
         # The engine hides statement parameters (app/db.py), so the

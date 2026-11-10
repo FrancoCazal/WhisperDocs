@@ -18,6 +18,7 @@ import pytest
 from twilio.base.exceptions import TwilioRestException
 
 from app.agent.thread_id import whatsapp_thread_id
+from app.agent.thread_lock import threads_with_turns
 from app.api.v1.webhooks import whatsapp as webhook
 from app.config import settings
 from app.main import app
@@ -154,7 +155,7 @@ async def test_one_numbers_messages_are_answered_one_at_a_time_in_order(monkeypa
     ]
     # Another number does not wait for this one.
     assert events.index("start b") < events.index("end /coleccion contratos")
-    assert inbound._thread_locks == {}
+    assert threads_with_turns() == set()
 
 
 async def test_shutdown_cancels_the_turns_still_running(monkeypatch):

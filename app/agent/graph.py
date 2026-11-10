@@ -23,6 +23,9 @@ _NODES = {
     "out_of_scope": out_of_scope_node,
 }
 
+# The nodes a stream reports as they start and end (/agent/chat/stream).
+NODE_NAMES = frozenset(_NODES)
+
 
 def build_agent_graph() -> StateGraph:
     """Factory that returns an *uncompiled* StateGraph.
