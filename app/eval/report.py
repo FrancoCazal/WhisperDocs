@@ -7,12 +7,17 @@ from dataclasses import dataclass
 from app.eval.protocol import mcnemar_exact, wilson_interval
 from app.eval.schemas import (
     AggregateMetrics,
+    CheckFlips,
     EvalReport,
     EvalResult,
+    ItemFlip,
     JudgeResult,
+    MetricChange,
     RejudgeSummary,
     RunConfig,
+    RunDiff,
     SeriesSummary,
+    SettingChange,
 )
 
 # What an old report did not measure: never a 0, which would read as one.
@@ -312,22 +317,25 @@ def _truncate(text: str, max_chars: int) -> str:
     return text if len(text) <= max_chars else text[: max_chars - 1] + "…"
 
 
+# The metrics a diff compares: (label, AggregateMetrics field, kind).
+DIFF_METRICS: list[tuple[str, str, str]] = [
+    ("Accuracy", "accuracy", "pct"),
+    ("Hallucination rate", "hallucination_rate", "pct"),
+    ("Precision@k", "avg_retrieval_precision", "pct"),
+    ("Recall@k", "avg_retrieval_recall", "pct"),
+    ("Latency avg (ms)", "avg_latency_ms", "num"),
+    ("Latency p50 (ms)", "latency_p50_ms", "num"),
+    ("Latency p95 (ms)", "latency_p95_ms", "num"),
+    ("Cost (USD)", "estimated_cost_usd", "cost"),
+]
+
+
 def diff_metrics(prev: AggregateMetrics, curr: AggregateMetrics) -> str:
     lines = ["| Metric | Previous | Current | Delta |", "|--------|----------|---------|-------|"]
-    rows = [
-        ("Accuracy", "accuracy", "pct"),
-        ("Hallucination rate", "hallucination_rate", "pct"),
-        ("Precision@k", "avg_retrieval_precision", "pct"),
-        ("Recall@k", "avg_retrieval_recall", "pct"),
-        ("Latency avg (ms)", "avg_latency_ms", "num"),
-        ("Latency p50 (ms)", "latency_p50_ms", "num"),
-        ("Latency p95 (ms)", "latency_p95_ms", "num"),
-        ("Cost (USD)", "estimated_cost_usd", "cost"),
-    ]
     # A metric one of the two reports did not measure has no delta.
     value_fmt = {"pct": "{:.2%}", "cost": "${:.4f}", "num": "{:.0f}"}
     delta_fmt = {"pct": "{:+.2%}", "cost": "{:+.4f}", "num": "{:+.0f}"}
-    for name, field, kind in rows:
+    for name, field, kind in DIFF_METRICS:
         p, c = prev.measured(field), curr.measured(field)
         shown = [MISSING if v is None else value_fmt[kind].format(v) for v in (p, c)]
         delta = MISSING if p is None or c is None else delta_fmt[kind].format(c - p)
@@ -384,6 +392,52 @@ def render_diff_markdown(prev: EvalReport, curr: EvalReport) -> str:
     return "\n".join(lines)
 
 
+def run_diff(prev: EvalReport, curr: EvalReport) -> RunDiff:
+    """What `render_diff_markdown` writes, as data: for the API's
+    `GET /eval/diff` and the frontend's COMPARE."""
+    changes = item_changes(prev, curr)
+    before = _items(prev)
+    common = sum(1 for r in curr.results if before.get(r.item_id) == r.question)
+    checks = []
+    for check in CHECKS:
+        worse, better = flips(changes, check)
+        checks.append(
+            CheckFlips(
+                check=check, worse=worse, better=better, p_value=mcnemar_exact(worse, better)
+            )
+        )
+    return RunDiff(
+        previous=prev.run_id,
+        current=curr.run_id,
+        common_items=common,
+        same_items=before == _items(curr),
+        warnings=comparability_warnings(prev, curr),
+        changed=[
+            SettingChange(setting=name, previous=a, current=b)
+            for name, a, b in changed_settings(prev, curr)
+        ],
+        metrics=[
+            MetricChange(
+                metric=field,
+                previous=prev.metrics.measured(field),
+                current=curr.metrics.measured(field),
+            )
+            for _label, field, _kind in DIFF_METRICS
+        ],
+        checks=checks,
+        flips=[
+            ItemFlip(
+                item_id=c.item_id,
+                check=c.check,
+                question=c.question,
+                reasoning=c.reasoning,
+                regression=c.regression,
+            )
+            for c in changes
+        ],
+    )
+
+
 def comparability_warnings(prev: EvalReport, curr: EvalReport) -> list[str]:
     """What makes a difference between the runs hard to read, one line each."""
     warnings: list[str] = []
@@ -427,8 +481,9 @@ def _short_sha(sha: str | None) -> str:
     return MISSING if sha is None else f"`{sha[:12]}`"
 
 
-def _changed_lines(prev: EvalReport, curr: EvalReport) -> list[str]:
-    """Each recorded setting that differs between the runs, as a table."""
+def changed_settings(prev: EvalReport, curr: EvalReport) -> list[tuple[str, object, object]]:
+    """Each recorded setting that differs between the runs: the model, the
+    prompt versions, and the run config when both reports have one."""
     rows: list[tuple[str, object, object]] = [
         (name, getattr(prev, name), getattr(curr, name))
         for name in ("model", "prompt_version", "judge_prompt_version")
@@ -436,7 +491,12 @@ def _changed_lines(prev: EvalReport, curr: EvalReport) -> list[str]:
     if prev.config is not None and curr.config is not None:
         before, after = prev.config.model_dump(), curr.config.model_dump()
         rows.extend((name, before[name], after[name]) for name in before)
-    changed = [(name, a, b) for name, a, b in rows if a != b]
+    return [(name, a, b) for name, a, b in rows if a != b]
+
+
+def _changed_lines(prev: EvalReport, curr: EvalReport) -> list[str]:
+    """Each recorded setting that differs between the runs, as a table."""
+    changed = changed_settings(prev, curr)
     if not changed:
         return ["_Nothing recorded differs._"]
     return [

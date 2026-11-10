@@ -219,3 +219,61 @@ class EvalReport(BaseModel):
     judge_cache_hits: int | None = None
     metrics: AggregateMetrics
     results: list[EvalResult]
+
+
+# Two runs compared (app/eval/report.py `run_diff`): what `runner diff`
+# writes as markdown, for the API and the frontend.
+Setting = str | int | float | bool | None
+
+
+class SettingChange(BaseModel):
+    setting: str
+    previous: Setting
+    current: Setting
+
+
+class MetricChange(BaseModel):
+    # An AggregateMetrics field.
+    metric: str
+    # None when that run's report is older than the metric.
+    previous: float | None
+    current: float | None
+
+
+class CheckFlips(BaseModel):
+    """The items whose verdict on one check flipped between the runs."""
+
+    check: str
+    worse: int
+    better: int
+    # McNemar's exact test over the flips: below 0.05, they lean one way
+    # more than chance would.
+    p_value: float
+
+
+class ItemFlip(BaseModel):
+    item_id: int
+    check: str
+    question: str
+    # The current run's reasoning: why the item passes or fails now.
+    reasoning: str
+    # True when it fails now and passed before.
+    regression: bool
+
+
+class RunDiff(BaseModel):
+    previous: str
+    current: str
+    # Items both runs answered: same id, same question.
+    common_items: int
+    # Whether the runs answered the same items, and no other.
+    same_items: bool
+    # What makes a difference hard to read: another dataset or judge,
+    # uncommitted code, a report older than the run config.
+    warnings: list[str]
+    # Each recorded setting that differs: the model, the prompt versions and
+    # the run config.
+    changed: list[SettingChange]
+    metrics: list[MetricChange]
+    checks: list[CheckFlips]
+    flips: list[ItemFlip]

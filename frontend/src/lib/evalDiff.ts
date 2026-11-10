@@ -1,6 +1,7 @@
-// Two eval runs side by side: what moved, and which items flipped. The CLI's
-// markdown version is `app/eval/report.py` (render_diff_markdown).
-import type { EvalMetrics, EvalReport, EvalResult, JudgeVerdict } from "@/lib/api";
+// Two eval runs side by side. The API compares them (`GET /eval/diff`), with
+// the code `runner diff` runs (app/eval/report.py run_diff); this file only
+// reads its answer for the screen.
+import type { EvalMetrics, RunDiff } from "@/lib/api";
 
 export type MetricKind = "pct" | "ms" | "cost";
 
@@ -13,28 +14,8 @@ export type MetricDelta = {
   higherIsBetter: boolean;
 };
 
-export type Check = "correctness" | "grounding";
-
-export type ItemChange = {
-  id: number;
-  question: string;
-  check: Check;
-  // The newer run's judge reasoning: why it passes or fails now.
-  reasoning: string;
-};
-
 // Each run's version of a set of prompts; null for a report from before them.
 export type VersionPair = { prev: string | null; curr: string | null };
-
-export type RunDiff = {
-  metrics: MetricDelta[];
-  // Items in both runs: same id and same question.
-  common: number;
-  regressions: ItemChange[];
-  fixes: ItemChange[];
-  prompts: VersionPair;
-  judgePrompts: VersionPair;
-};
 
 /** Both runs name their version and the two differ. A missing version says
  * nothing either way, as in the CLI's diff. */
@@ -42,64 +23,52 @@ export function versionChanged(v: VersionPair): boolean {
   return v.prev !== null && v.curr !== null && v.prev !== v.curr;
 }
 
-const METRICS: [string, keyof EvalMetrics, MetricKind, boolean][] = [
-  ["ACCURACY", "accuracy", "pct", true],
-  ["HALLUCINATION RATE", "hallucination_rate", "pct", false],
-  ["PRECISION@K", "avg_retrieval_precision", "pct", true],
-  ["RECALL@K", "avg_retrieval_recall", "pct", true],
-  ["LATENCY AVG", "avg_latency_ms", "ms", false],
-  ["LATENCY P95", "latency_p95_ms", "ms", false],
-  ["GENERATION COST", "estimated_cost_usd", "cost", false],
-];
+const METRICS: Partial<Record<keyof EvalMetrics, [string, MetricKind, boolean]>> = {
+  accuracy: ["ACCURACY", "pct", true],
+  hallucination_rate: ["HALLUCINATION RATE", "pct", false],
+  avg_retrieval_precision: ["PRECISION@K", "pct", true],
+  avg_retrieval_recall: ["RECALL@K", "pct", true],
+  avg_latency_ms: ["LATENCY AVG", "ms", false],
+  latency_p50_ms: ["LATENCY P50", "ms", false],
+  latency_p95_ms: ["LATENCY P95", "ms", false],
+  estimated_cost_usd: ["GENERATION COST", "cost", false],
+};
 
-const CHECKS: [Check, (r: EvalResult) => JudgeVerdict][] = [
-  ["correctness", (r) => r.correctness],
-  ["grounding", (r) => r.hallucination],
-];
-
-function metric(r: EvalReport, key: keyof EvalMetrics): number | null {
-  const v = r.metrics[key];
-  return typeof v === "number" ? v : null;
+/** The API's metrics, labelled, in its order; one the screen does not know
+ * is left out. */
+export function metricDeltas(diff: RunDiff): MetricDelta[] {
+  return diff.metrics.flatMap((m) => {
+    const view = METRICS[m.metric];
+    if (!view) return [];
+    const [label, kind, higherIsBetter] = view;
+    return [{ label, prev: m.previous, curr: m.current, kind, higherIsBetter }];
+  });
 }
 
-export function diffRuns(prev: EvalReport, curr: EvalReport): RunDiff {
-  const metrics = METRICS.map(([label, key, kind, higherIsBetter]) => ({
-    label,
-    prev: metric(prev, key),
-    curr: metric(curr, key),
-    kind,
-    higherIsBetter,
-  }));
+/** A check as the screen names it: the hallucination check passes an
+ * answer that is grounded. */
+export function checkLabel(check: string): string {
+  return check === "hallucination" ? "GROUNDING" : check.toUpperCase();
+}
 
-  const before = new Map(prev.results.map((r) => [r.item_id, r]));
-  let common = 0;
-  const regressions: ItemChange[] = [];
-  const fixes: ItemChange[] = [];
-  for (const r of curr.results) {
-    const p = before.get(r.item_id);
-    // Another dataset can reuse an id for another question.
-    if (!p || p.question !== r.question) continue;
-    common++;
-    for (const [check, verdict] of CHECKS) {
-      const was = verdict(p);
-      const now = verdict(r);
-      // A failed judge call is no verdict, so it is no change either.
-      if (was.error || now.error || was.passed === now.passed) continue;
-      const change = { id: r.item_id, question: r.question, check, reasoning: now.reasoning };
-      (now.passed ? fixes : regressions).push(change);
-    }
-  }
-  return {
-    metrics,
-    common,
-    regressions,
-    fixes,
-    prompts: { prev: prev.prompt_version ?? null, curr: curr.prompt_version ?? null },
-    judgePrompts: {
-      prev: prev.judge_prompt_version ?? null,
-      curr: curr.judge_prompt_version ?? null,
-    },
-  };
+/** A p-value as the CLI prints it. */
+export function fmtP(p: number): string {
+  return p < 0.001 ? "< 0.001" : p.toFixed(3);
+}
+
+/** The API's text in pieces: those between backticks are versions, SHAs or
+ * hashes, shown as written. */
+export function splitTicks(text: string): { text: string; code: boolean }[] {
+  return text
+    .split("`")
+    .map((part, i) => ({ text: part, code: i % 2 === 1 }))
+    .filter((part) => part.text !== "");
+}
+
+/** A setting's value as the CLI prints it; null is a setting that does not
+ * apply. */
+export function fmtSetting(value: string | number | boolean | null): string {
+  return value === null ? "—" : String(value);
 }
 
 /** "better", "worse" or "same" for a metric's move. */
@@ -109,4 +78,17 @@ export function trend(m: MetricDelta): "better" | "worse" | "same" {
   const noise = m.kind === "pct" ? 0.0005 : m.kind === "ms" ? 0.5 : 0.00005;
   if (Math.abs(d) < noise) return "same";
   return d > 0 === m.higherIsBetter ? "better" : "worse";
+}
+
+/** The 95 % Wilson interval of a share of n items, as app/eval/protocol.py
+ * computes it. A report saves the share rounded, so the count is the
+ * nearest whole number. */
+export function wilsonInterval(share: number, n: number): [number, number] {
+  if (n <= 0) return [0, 1];
+  const z = 1.959964;
+  const p = Math.round(share * n) / n;
+  const denominator = 1 + (z * z) / n;
+  const centre = (p + (z * z) / (2 * n)) / denominator;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denominator;
+  return [Math.max(0, centre - half), Math.min(1, centre + half)];
 }

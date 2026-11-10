@@ -589,7 +589,11 @@ with (`app/agent/prompt_version.py`: a hash of every constant in
 `judge_prompt_version`, the judge's. `runner diff` compares two reports over
 the same items and exits 3 when accuracy drops more than
 `AGENT_EVAL_MAX_ACCURACY_DROP` or the hallucination rate rises more than
-`AGENT_EVAL_MAX_HALLUCINATION_RISE` (0.10 each). The `Prompt gate` workflow
+`AGENT_EVAL_MAX_HALLUCINATION_RISE` (0.10 each). `GET /eval/diff?previous=&current=`
+returns the same comparison as data (`run_diff` in `report.py`, built from
+the helpers the CLI's diff uses): the settings that changed, the warnings, the
+metrics, the flips per check with McNemar's exact p, and the items that
+flipped. The Evaluation page shows it, and only formats it. The `Prompt gate` workflow
 runs it on a pull request that changes a prompt, the base's code against the
 head's over the same golden set and corpus; it is off until the repository
 variable `PROMPT_GATE` is `on`, since each run pays for two evals.

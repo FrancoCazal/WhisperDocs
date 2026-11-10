@@ -38,6 +38,7 @@ OPERATIONS = {
     "POST /api/v1/eval/run": "run_eval",
     "GET /api/v1/eval/results": "list_eval_results",
     "GET /api/v1/eval/results/{run_id}": "get_eval_result",
+    "GET /api/v1/eval/diff": "diff_eval_results",
     "POST /api/v1/agent/chat": "agent_chat",
     "POST /api/v1/agent/chat/stream": "agent_chat_stream",
     "GET /api/v1/conversations": "list_conversations",

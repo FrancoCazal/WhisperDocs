@@ -120,6 +120,11 @@ Fixes from the November 2026 audit, and a review of the frontend.
     judge, the dataset or uncommitted code differ, lists the items that got
     worse and better with McNemar's exact p, and does not compare runs over
     different datasets.
+  - The Evaluation page shows the same comparison, from `GET /eval/diff`:
+    what changed in the config, the warnings, the items that got worse and
+    better per check with McNemar's p. A run's view shows its config, the
+    Wilson interval of its accuracy and hallucination rate, and how many
+    verdicts came from the judge's cache.
   - `runner rejudge REPORT --times N` judges a saved run's answers again,
     with no cache, and reports how often the verdicts agree. A report keeps
     the ids of the chunks the judge read and a hash of their text.
