@@ -301,6 +301,8 @@ async def test_a_failed_health_check_says_its_kind_not_its_text(db):
     db.fail = ConnectionRefusedError(SECRET)
     r = await _call("GET", "/health")
 
+    # Degraded answers 503, with the body (audit E12).
+    assert r.status_code == 503
     assert r.json() == {"status": "degraded", "checks": {"database": "error: unavailable"}}
 
 

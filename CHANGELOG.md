@@ -173,6 +173,10 @@ Fixes from the November 2026 audit, and a review of the frontend.
 
 ### Changed
 
+- `GET /health` answers 503 when degraded, with the same body, so a load
+  balancer or a monitor reads it without parsing; the frontend still shows
+  DEGRADED. `?deep=true` keeps the embedder's result 5 minutes (30 seconds
+  after a failure) instead of paying an embedding on every call.
 - The conversation summary keeps where its facts came from: each user
   message records the collection or document its turn searched, and each
   fact in the summary names its source. Each pass carries over the

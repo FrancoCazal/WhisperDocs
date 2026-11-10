@@ -244,25 +244,66 @@ def healthy_db_and_embedder(monkeypatch):
         yield _Db()
 
     class _Embedder:
+        """Counts the embedding calls; fails them while `down`."""
+
+        calls = 0
+        down = False
+
         async def embed(self, _text):
+            _Embedder.calls += 1
+            if _Embedder.down:
+                raise ConnectionRefusedError("embedder unreachable")
             return [1.0]
 
     app.dependency_overrides[get_db] = fake_db
     monkeypatch.setattr("app.api.v1.health.EmbeddingService", _Embedder)
-    yield
+    yield _Embedder
     app.dependency_overrides.clear()
 
 
 async def test_a_deep_check_adds_the_roles_and_a_failing_one_degrades_it(healthy_db_and_embedder):
     ok = await _get("/health", params={"deep": "true"})
+    assert ok.status_code == 200
     assert ok.json()["status"] == "ok"
     assert set(ok.json()["models"].values()) == {"unknown"}
 
     model_status.failed("classifier", settings.agent.model_classifier, _Refused())
-    degraded = (await _get("/health", params={"deep": "true"})).json()
+    response = await _get("/health", params={"deep": "true"})
+    degraded = response.json()
 
+    # Degraded answers 503, with the body (audit E12).
+    assert response.status_code == 503
     assert degraded["status"] == "degraded"
     assert degraded["checks"] == {"database": "ok", "pgvector": "ok", "embedder": "ok"}
     assert degraded["models"]["classifier"] == "failing: billing"
-    # The probe without deep says nothing of the models.
-    assert "models" not in (await _get("/health")).json()
+    # The probe without deep says nothing of the models, and its database is up.
+    shallow = await _get("/health")
+    assert shallow.status_code == 200 and "models" not in shallow.json()
+
+
+async def test_the_deep_check_reuses_the_embedder_result(healthy_db_and_embedder, monkeypatch):
+    """Each deep check paid an embedding call (audit E12): an "ok" is kept 5
+    minutes, a failure 30 seconds."""
+    embedder = healthy_db_and_embedder
+    clock = [1000.0]
+    monkeypatch.setattr("app.api.v1.health.time.monotonic", lambda: clock[0])
+
+    async def embedder_check() -> str:
+        return (await _get("/health", params={"deep": "true"})).json()["checks"]["embedder"]
+
+    assert [await embedder_check(), await embedder_check()] == ["ok", "ok"]
+    assert embedder.calls == 1
+
+    embedder.down = True
+    clock[0] += 299
+    assert await embedder_check() == "ok"
+    clock[0] += 2
+    assert await embedder_check() == "error: unavailable"
+    assert embedder.calls == 2
+
+    embedder.down = False
+    clock[0] += 29
+    assert await embedder_check() == "error: unavailable"
+    clock[0] += 2
+    assert await embedder_check() == "ok"
+    assert embedder.calls == 3

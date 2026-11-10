@@ -110,6 +110,14 @@ def spans():
 
 
 @pytest.fixture(autouse=True)
+def fresh_health_check(monkeypatch):
+    """No embedder check kept from another test (app/api/v1/health.py)."""
+    from app.api.v1 import health
+
+    monkeypatch.setattr(health, "_embedder_check", None)
+
+
+@pytest.fixture(autouse=True)
 def fresh_model_status():
     """Each test starts with no call recorded (app/services/model_status.py)."""
     from app.services.model_status import model_status

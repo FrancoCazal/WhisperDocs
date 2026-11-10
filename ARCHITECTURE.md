@@ -734,7 +734,11 @@ Postgres (the compose database)
     failing over half its calls, turn p95 over 13 s. `docker compose --profile
     metrics` runs both; nothing routes the alerts (no Alertmanager).
 - **Cost tracking** — `query_logs.cost_usd` populated per turn via `pricing.estimate_cost_usd(model, tokens_in, tokens_out)`.
-- **Health** — `/health` with `?deep=true` checks DB ping + pgvector extension + embedder reachability.
+- **Health** — `/health` pings the DB; `?deep=true` also checks the pgvector
+  extension, the embedder (one embedding call, its result kept 5 minutes, 30
+  seconds after a failure) and each model role. A degraded status answers 503
+  with the same body, so a load balancer or a monitor needs no parsing; the
+  frontend reads that body and shows DEGRADED, not OFFLINE.
 - **Model status** — `app/services/model_status.py` keeps, for each role
   (the seven agent nodes' models and the embedder), when its last call worked,
   when one last failed and why (`classify_error`), and how many calls in a row

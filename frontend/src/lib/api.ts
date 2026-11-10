@@ -110,7 +110,13 @@ async function toApiError(res: Response): Promise<ApiError> {
   });
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// `accept`: error statuses whose body is the answer, such as /health's 503
+// when degraded; any other one throws.
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  accept: readonly number[] = [],
+): Promise<T> {
   const res = await fetch(`${ROOT}${path}`, {
     ...init,
     headers: {
@@ -122,7 +128,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  if (!res.ok) throw await toApiError(res);
+  if (!res.ok && !accept.includes(res.status)) throw await toApiError(res);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
@@ -639,7 +645,8 @@ function agentEvent({ event, data }: SseMessage): AgentStreamEvent | null {
 
 // ============ Endpoints ============
 export const api = {
-  health: () => request<Health>("/health"),
+  // A degraded API answers 503 with the same body: it is up, and says what fails.
+  health: () => request<Health>("/health", undefined, [503]),
   adminSettings: () =>
     request<{
       models: Record<string, { model: string; temperature: number }>;

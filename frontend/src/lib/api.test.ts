@@ -318,6 +318,20 @@ describe("the API key", () => {
   });
 });
 
+describe("the health check", () => {
+  it("reads a degraded API's 503 as its answer, not as the API being down", async () => {
+    const body = { status: "degraded", checks: { database: "error: unavailable" } };
+    stubFetch(Response.json(body, { status: 503 }));
+    await expect(api.health()).resolves.toEqual(body);
+  });
+
+  it("still fails on any other error", async () => {
+    stubFetch(Response.json({ detail: "Bad gateway" }, { status: 502 }));
+    const error = (await api.health().catch((e: unknown) => e)) as ApiError;
+    expect(error.status).toBe(502);
+  });
+});
+
 describe("formatting", () => {
   it("writes dates and times in UTC", () => {
     expect(fmtDate("2026-05-16T23:35:00-03:00")).toBe("2026-05-17 02:35 UTC");

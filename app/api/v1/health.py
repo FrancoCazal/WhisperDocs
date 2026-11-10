@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Request, Security
+import time
+
+from fastapi import APIRouter, Depends, Request, Response, Security
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +17,36 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["health"])
 
+# The embedder check pays an embedding call: its result is reused for this
+# long, a failure for less, so a recovered embedder shows up soon (audit E12).
+EMBEDDER_OK_TTL_SECONDS = 300.0
+EMBEDDER_ERROR_TTL_SECONDS = 30.0
+_embedder_check: tuple[float, str] | None = None
 
-@router.get("/health", operation_id="check_health")
+
+async def _check_embedder() -> str:
+    global _embedder_check
+    now = time.monotonic()
+    if _embedder_check is not None and now < _embedder_check[0]:
+        return _embedder_check[1]
+    try:
+        await EmbeddingService().embed("ping")
+        result, ttl = "ok", EMBEDDER_OK_TTL_SECONDS
+    except Exception as exc:
+        logger.exception("health_embedder_failed")
+        result, ttl = f"error: {classify_error(exc)}", EMBEDDER_ERROR_TTL_SECONDS
+    _embedder_check = (now + ttl, result)
+    return result
+
+
+@router.get(
+    "/health",
+    operation_id="check_health",
+    responses={503: {"description": "Degraded: the same body, with the failing checks."}},
+)
 async def health(
     request: Request,
+    response: Response,
     deep: bool = False,
     db: AsyncSession = Depends(get_db),
     key: str | None = Security(api_key_header),
@@ -26,16 +54,18 @@ async def health(
     """Liveness + readiness check.
 
     Default: DB ping only (fast), without the API key: a probe needs none.
-    deep=true: also verifies pgvector extension and embedder connectivity. It
-    pays an embedding call, so it needs the key when API_KEY is set, and counts
-    against the questions rate limit (audit E12). It adds `models`: each role's
-    last call, from the record real calls leave ("ok", "failing: <kind>",
-    "unknown" with no call yet), without calling them. A failing role makes the
-    status "degraded".
+    deep=true: also verifies pgvector extension and embedder connectivity. The
+    embedder check pays an embedding call, so it needs the key when API_KEY is
+    set, counts against the questions rate limit, and its result is reused for
+    5 minutes (30 seconds after a failure). It adds `models`: each role's last
+    call, from the record real calls leave ("ok", "failing: <kind>", "unknown"
+    with no call yet), without calling them. A failing role makes the status
+    "degraded".
 
-    A failed check reads "error: <kind>" (unavailable, billing, timeout, ...,
-    from classify_error); the exception is in the logs, not in this open
-    response (audit R9).
+    A degraded status answers 503, with the same body, so a load balancer or a
+    monitor reads it without parsing (audit E12). A failed check reads
+    "error: <kind>" (unavailable, billing, timeout, ..., from classify_error);
+    the exception is in the logs, not in this open response (audit R9).
     """
     if deep:
         check_api_key(key)
@@ -51,8 +81,10 @@ async def health(
         checks["database"] = f"error: {classify_error(exc)}"
 
     if not deep:
-        status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
-        return {"status": status, "checks": checks}
+        healthy = all(v == "ok" for v in checks.values())
+        if not healthy:
+            response.status_code = 503
+        return {"status": "ok" if healthy else "degraded", "checks": checks}
 
     try:
         result = await db.execute(text("SELECT extname FROM pg_extension WHERE extname = 'vector'"))
@@ -61,13 +93,7 @@ async def health(
         logger.exception("health_pgvector_failed")
         checks["pgvector"] = f"error: {classify_error(exc)}"
 
-    try:
-        embedder = EmbeddingService()
-        await embedder.embed("ping")
-        checks["embedder"] = "ok"
-    except Exception as exc:
-        logger.exception("health_embedder_failed")
-        checks["embedder"] = f"error: {classify_error(exc)}"
+    checks["embedder"] = await _check_embedder()
 
     models = {
         role: f"failing: {s['last_failure_kind']}" if s["state"] == "failing" else s["state"]
@@ -76,4 +102,6 @@ async def health(
     healthy = all(v == "ok" for v in checks.values()) and not any(
         v.startswith("failing") for v in models.values()
     )
+    if not healthy:
+        response.status_code = 503
     return {"status": "ok" if healthy else "degraded", "checks": checks, "models": models}
