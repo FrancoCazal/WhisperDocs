@@ -25,7 +25,11 @@ from app.config import settings
 from app.services.llm.base import LLMResponse, LLMStreamDelta
 
 DB_URL = os.environ.get("TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(not DB_URL, reason="TEST_DATABASE_URL not set")
+pytestmark = [
+    pytest.mark.skipif(not DB_URL, reason="TEST_DATABASE_URL not set"),
+    # The saver drives psycopg's async mode (tests/conftest.py).
+    pytest.mark.psycopg,
+]
 
 _REPLY = LLMResponse(
     text="la respuesta", tokens_input=10, tokens_output=5, model="fake", latency_ms=1
