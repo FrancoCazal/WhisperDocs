@@ -208,9 +208,12 @@ class Settings(BaseSettings):
     reranker_enabled: bool = False
     reranker_model: str = "BAAI/bge-reranker-base"
     reranker_candidate_pool: int = 20
-    # Drop chunks whose normalized rerank score is below this threshold.
-    # 0.0 = keep all (legacy). Tune via eval suite. Higher → fewer marginal
-    # citations → lower hallucination at cost of recall.
+    # Drop the chunks whose rerank score, the sigmoid of the cross-encoder's
+    # logit (a probability that the chunk answers the query), is below this;
+    # the best chunk always stays, so a turn never ends with none (that would
+    # be the relevance gate, out of V1's scope). 0.0 keeps all. Before audit
+    # R16 the score was min-max normalized per query, so a value tuned then
+    # means something else now. Tune via the eval suite.
     reranker_score_threshold: float = 0.0
 
     # MMR diversity (post-rerank, pre-output). Off by default.
