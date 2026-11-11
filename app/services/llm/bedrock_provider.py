@@ -1,6 +1,4 @@
 import asyncio
-import json
-import re
 import time
 from collections.abc import AsyncIterator
 from typing import TypeVar
@@ -9,13 +7,14 @@ import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 from langchain_aws import ChatBedrockConverse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.config import settings
 from app.logging_config import get_logger
 from app.services.llm.base import LLMResponse, LLMStreamDelta, extract_text
+from app.services.llm.base import salvage_structured as _salvage_structured
+from app.services.llm.base import to_lc_messages as _to_lc_messages
 from app.services.llm.model_policy import (
     THINKING_HEADROOM_TOKENS,
     accepts_custom_sampling,
@@ -59,20 +58,6 @@ _retry = retry(
     retry=retry_if_exception(_is_bedrock_retryable),
     reraise=True,
 )
-
-
-def _to_lc_messages(system: str, messages: list[dict]) -> list:
-    lc: list = [SystemMessage(content=system)]
-    for m in messages:
-        role = m["role"]
-        content = m["content"]
-        if role == "user":
-            lc.append(HumanMessage(content=content))
-        elif role == "assistant":
-            lc.append(AIMessage(content=content))
-        elif role == "system":
-            lc.append(SystemMessage(content=content))
-    return lc
 
 
 _extract_text = extract_text
@@ -301,36 +286,3 @@ def _output_schema(response_model: type[BaseModel]) -> dict:
     schema = response_model.model_json_schema()
     _strip_constraints(schema)
     return schema
-
-
-_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(.*?)\s*```", re.DOTALL)
-
-
-def _salvage_structured(text: str, response_model: type[T]) -> T | None:
-    """Best-effort recovery when langchain's `with_structured_output` returned
-    `parsed=None` but the raw text still carries JSON.
-
-    Mirrors the Gemini provider's salvage helper. See `gemini_provider.py`.
-    """
-    if not text:
-        return None
-
-    candidates: list[str] = []
-
-    fence = _FENCE_RE.search(text)
-    if fence:
-        candidates.append(fence.group(1).strip())
-
-    first = text.find("{")
-    last = text.rfind("}")
-    if first != -1 and last != -1 and last > first:
-        candidates.append(text[first : last + 1])
-
-    candidates.append(text.strip())
-
-    for c in candidates:
-        try:
-            return response_model.model_validate_json(c)
-        except (ValidationError, ValueError, json.JSONDecodeError):
-            continue
-    return None
