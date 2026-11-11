@@ -3,14 +3,14 @@ import { fmtNumber, fmtPct, type EvalResult, type JudgeVerdict } from "@/lib/api
 import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { Markdown } from "@/components/chat/Markdown";
 
-type Filter = "all" | "wrong" | "hallucinated" | "judge";
+type Filter = "all" | "wrong" | "unsupported" | "judge";
 
 const FILTERS: { key: Filter; label: string; match: (r: EvalResult) => boolean }[] = [
   { key: "all", label: "ALL", match: () => true },
   { key: "wrong", label: "WRONG", match: (r) => !r.correctness.passed && !r.correctness.error },
   {
-    key: "hallucinated",
-    label: "HALLUCINATED",
+    key: "unsupported",
+    label: "UNSUPPORTED",
     match: (r) => !r.hallucination.passed && !r.hallucination.error,
   },
   {
@@ -178,12 +178,29 @@ function Block({ label, text, markdown }: { label: string; text: string; markdow
 }
 
 function Reasoning({ label, v }: { label: string; v: JudgeVerdict }) {
+  const missing = v.facts_missing ?? [];
+  const wrong = v.wrong_claims ?? [];
   return (
     <div>
       <div className="label-xs text-text-tertiary mb-1 flex items-center gap-2">
         {label} <Verdict v={v} pass="PASS" fail="FAIL" />
       </div>
-      <div className="body-sm text-text-secondary">{v.reasoning}</div>
+      {missing.length > 0 && <Claims title="MISSING FACTS" claims={missing} />}
+      {wrong.length > 0 && <Claims title="WRONG OR UNSUPPORTED" claims={wrong} />}
+      <div className="body-sm text-text-secondary whitespace-pre-wrap">{v.reasoning}</div>
+    </div>
+  );
+}
+
+function Claims({ title, claims }: { title: string; claims: string[] }) {
+  return (
+    <div className="mb-2">
+      <div className="label-xs text-error mb-1">{title}</div>
+      <ul className="body-sm text-text-primary list-disc pl-5">
+        {claims.map((c) => (
+          <li key={c}>{c}</li>
+        ))}
+      </ul>
     </div>
   );
 }

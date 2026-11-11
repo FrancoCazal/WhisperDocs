@@ -350,7 +350,17 @@ export type RunDiff = {
 
 // A judge's verdict. For hallucination, `passed` means grounded. `error`: the
 // judge call failed, so `passed` is false by construction.
-export type JudgeVerdict = { passed: boolean; reasoning: string; error?: boolean };
+export type JudgeVerdict = {
+  passed: boolean;
+  reasoning: string;
+  error?: boolean;
+  // Correctness against required facts: the ones the answer does not state.
+  // Absent in reports from before the judge checked facts.
+  facts_missing?: string[];
+  // Statements that count against the answer: those that contradict a
+  // required fact, or that the context does not support.
+  wrong_claims?: string[];
+};
 
 export type EvalResult = {
   item_id: number;

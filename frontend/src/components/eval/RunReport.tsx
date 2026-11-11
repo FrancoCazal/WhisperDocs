@@ -12,9 +12,11 @@ import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { ItemResults } from "./ItemResults";
 import { RunCompare } from "./RunCompare";
 import { GENERATION_COST_HINT } from "./costHint";
+import { UNSUPPORTED_ALL_ITEMS_HINT, UNSUPPORTED_CLAIMS_HINT } from "./faithfulnessHint";
 import { PROMPTS_HINT, fmtVersion } from "@/lib/promptVersion";
 import { fmtSetting, wilsonInterval } from "@/lib/evalDiff";
 import { toneText } from "@/lib/metricTone";
+import { unsupportedClaims } from "@/lib/unsupportedClaims";
 
 const INTERVAL_HINT =
   "The 95% Wilson interval: with this many items, where the share would most likely land over a dataset like this one. Two runs whose intervals overlap may not differ at all.";
@@ -30,6 +32,7 @@ function interval(share: number, n: number) {
 
 export function RunReport({ report, runs }: { report: EvalReport; runs: EvalRunSummary[] }) {
   const m = report.metrics;
+  const unsupported = unsupportedClaims(m);
   const judgeErrors = m.judge_errors ?? 0;
   const cacheHits = report.judge_cache_hits ?? null;
   return (
@@ -83,11 +86,11 @@ export function RunReport({ report, runs }: { report: EvalReport; runs: EvalRunS
           subHint={INTERVAL_HINT}
         />
         <BigMetric
-          label="HALLUCINATION RATE"
-          value={fmtPct(m.hallucination_rate)}
-          tone={toneText("hallucination", m.hallucination_rate)}
-          sub={m.total > 0 ? interval(m.hallucination_rate, m.total) : undefined}
-          subHint={INTERVAL_HINT}
+          label={unsupported.inScope ? "UNSUPPORTED CLAIMS · IN SCOPE" : "UNSUPPORTED CLAIMS"}
+          value={fmtPct(unsupported.rate)}
+          tone={toneText("hallucination", unsupported.rate)}
+          sub={unsupported.items > 0 ? interval(unsupported.rate, unsupported.items) : undefined}
+          subHint={`${unsupported.inScope ? UNSUPPORTED_CLAIMS_HINT : UNSUPPORTED_ALL_ITEMS_HINT} ${INTERVAL_HINT}`}
         />
         <BigMetric
           label="PRECISION@K · RECALL@K"
@@ -192,7 +195,12 @@ function BreakdownTable({ title, data }: { title: string; data?: Record<string, 
                 <th className="text-left pl-6 py-2 font-normal">LEVEL</th>
                 <th className="text-right py-2 font-normal">ITEMS</th>
                 <th className="text-right py-2 font-normal">ACCURACY</th>
-                <th className="text-right pr-6 py-2 font-normal">HAL</th>
+                <th
+                  className="text-right pr-6 py-2 font-normal"
+                  title="The share of items with a claim the retrieved context does not support"
+                >
+                  UNSUPPORTED
+                </th>
               </tr>
             </thead>
             <tbody>

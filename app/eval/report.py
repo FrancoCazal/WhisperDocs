@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from app.eval.protocol import mcnemar_exact, wilson_interval
 from app.eval.schemas import (
     AggregateMetrics,
+    AgreementSummary,
     CheckFlips,
     EvalReport,
     EvalResult,
@@ -116,6 +117,22 @@ def _dataset_hashes(prev: EvalReport, curr: EvalReport) -> tuple[str, str] | Non
     return pair if pair[0] != pair[1] else None
 
 
+def _collection_change(prev: EvalReport, curr: EvalReport) -> str | None:
+    """How the chunks the two runs searched differ, "71 chunks `a` → 95
+    chunks `b`", when both reports recorded them and they differ."""
+    if prev.config is None or curr.config is None:
+        return None
+    before, after = prev.config, curr.config
+    if None in (before.collection_hash, after.collection_hash):
+        return None
+    if before.collection_hash == after.collection_hash:
+        return None
+    return (
+        f"{before.collection_chunks} chunks `{before.collection_hash}` → "
+        f"{after.collection_chunks} chunks `{after.collection_hash}`"
+    )
+
+
 # The two verdicts of an item; for hallucination, `passed` means grounded.
 CHECKS: dict[str, Callable[[EvalResult], JudgeResult]] = {
     "correctness": lambda r: r.correctness,
@@ -134,6 +151,18 @@ class ItemChange:
     regression: bool
 
 
+def _why(verdict: JudgeResult) -> str:
+    """Why a verdict is what it is: the facts the answer misses and the claims
+    that count against it first, then the judge's reasoning."""
+    parts = []
+    if verdict.facts_missing:
+        parts.append("Missing: " + "; ".join(verdict.facts_missing) + ".")
+    if verdict.wrong_claims:
+        parts.append("Wrong: " + "; ".join(verdict.wrong_claims) + ".")
+    parts.append(verdict.reasoning)
+    return " ".join(parts)
+
+
 def item_changes(prev: EvalReport, curr: EvalReport) -> list[ItemChange]:
     """The verdicts that flipped between the runs, over the items both
     answered (same id, same question). A failed judge call is no verdict, so
@@ -148,7 +177,7 @@ def item_changes(prev: EvalReport, curr: EvalReport) -> list[ItemChange]:
             was, now = verdict(p), verdict(r)
             if was.error or now.error or was.passed == now.passed:
                 continue
-            changes.append(ItemChange(r.item_id, check, r.question, now.reasoning, was.passed))
+            changes.append(ItemChange(r.item_id, check, r.question, _why(now), was.passed))
     return changes
 
 
@@ -219,9 +248,21 @@ def render_markdown(report: EvalReport) -> str:
     lines.append("|--------|-------|")
     lines.append(f"| Accuracy | {m.accuracy:.2%} |")
     lines.append(f"| Accuracy, 95% interval | {_interval(m.accuracy, m.total)} |")
-    lines.append(f"| Hallucination rate | {m.hallucination_rate:.2%} |")
+    scoped = m.in_scope_unsupported()
+    if scoped is not None:
+        rate, n_scoped = scoped
+        lines.append(f"| Unsupported-claim rate, in-scope items (faithfulness) | {rate:.2%} |")
+        lines.append(
+            f"| Unsupported-claim rate, in-scope items, 95% interval "
+            f"| {_interval(rate, n_scoped)} |"
+        )
     lines.append(
-        f"| Hallucination rate, 95% interval | {_interval(m.hallucination_rate, m.total)} |"
+        f"| Unsupported-claim rate, all items (the hallucination rate of the gates) "
+        f"| {m.hallucination_rate:.2%} |"
+    )
+    lines.append(
+        f"| Unsupported-claim rate, all items, 95% interval "
+        f"| {_interval(m.hallucination_rate, m.total)} |"
     )
     lines.append(f"| Retrieval precision@k | {m.avg_retrieval_precision:.2%} |")
     lines.append(f"| Retrieval recall@k | {_pct(m.measured('avg_retrieval_recall'))} |")
@@ -237,6 +278,12 @@ def render_markdown(report: EvalReport) -> str:
     judge_errors = m.measured("judge_errors")
     lines.append(
         f"| Items with a failed judge call | {MISSING if judge_errors is None else judge_errors} |"
+    )
+    lines.append("")
+    lines.append(
+        "_An unsupported claim is one the retrieved context does not support, true or not: "
+        "the rate measures faithfulness to the context, not facts. The in-scope rate leaves "
+        "out the out-of-scope items, which are mostly refusals with nothing to support._"
     )
     lines.append("")
     lines.append("## Run config")
@@ -262,11 +309,9 @@ def render_markdown(report: EvalReport) -> str:
         for r in failures:
             corr = "OK" if r.correctness.passed else "FAIL"
             hall = "OK" if r.hallucination.passed else "FAIL"
-            reason = (
-                r.correctness.reasoning if not r.correctness.passed else r.hallucination.reasoning
-            )
+            reason = _why(r.correctness if not r.correctness.passed else r.hallucination)
             lines.append(
-                f"| {r.item_id} | {_truncate(r.question, 60)} | {corr} | {hall} | {_truncate(reason, 80)} |"
+                f"| {r.item_id} | {_truncate(r.question, 60)} | {corr} | {hall} | {_truncate(reason, 140)} |"
             )
     lines.append("")
     return "\n".join(lines)
@@ -320,7 +365,7 @@ def _truncate(text: str, max_chars: int) -> str:
 # The metrics a diff compares: (label, AggregateMetrics field, kind).
 DIFF_METRICS: list[tuple[str, str, str]] = [
     ("Accuracy", "accuracy", "pct"),
-    ("Hallucination rate", "hallucination_rate", "pct"),
+    ("Unsupported-claim rate, all items", "hallucination_rate", "pct"),
     ("Precision@k", "avg_retrieval_precision", "pct"),
     ("Recall@k", "avg_retrieval_recall", "pct"),
     ("Latency avg (ms)", "avg_latency_ms", "num"),
@@ -446,6 +491,12 @@ def comparability_warnings(prev: EvalReport, curr: EvalReport) -> list[str]:
             f"The runs read different datasets ({hashes[0]} → {hashes[1]}): a difference can "
             "be the dataset's."
         )
+    if (corpora := _collection_change(prev, curr)) is not None:
+        warnings.append(
+            f"The runs searched different chunks ({corpora}): the collection was seeded "
+            "again with other code, or its documents changed, so part of a difference can be "
+            "the corpus's."
+        )
     judges = (prev.judge_prompt_version, curr.judge_prompt_version)
     if None not in judges and judges[0] != judges[1]:
         warnings.append(
@@ -547,7 +598,7 @@ def render_series_markdown(summary: SeriesSummary) -> str:
     lines.append("|--------|------|-----|-----|--------------------------|")
     for label, spread in (
         ("Accuracy", summary.accuracy),
-        ("Hallucination rate", summary.hallucination_rate),
+        ("Unsupported-claim rate, all items", summary.hallucination_rate),
     ):
         interval = (
             MISSING
@@ -558,8 +609,8 @@ def render_series_markdown(summary: SeriesSummary) -> str:
             f"| {label} | {spread.mean:.1%} | {spread.min:.1%} | {spread.max:.1%} | {interval} |"
         )
     lines += ["", "## Runs", ""]
-    lines.append("| Run | Accuracy | Hallucination rate | Items with a failed judge call |")
-    lines.append("|-----|----------|--------------------|--------------------------------|")
+    lines.append("| Run | Accuracy | Unsupported-claim rate | Items with a failed judge call |")
+    lines.append("|-----|----------|------------------------|--------------------------------|")
     for run in summary.runs:
         lines.append(
             f"| `{run.run_id[:8]}` | {run.accuracy:.1%} | {run.hallucination_rate:.1%} "
@@ -639,3 +690,78 @@ def render_rejudge_markdown(summary: RejudgeSummary) -> str:
 
 def _verdict(passed: bool | None) -> str:
     return "error" if passed is None else ("pass" if passed else "fail")
+
+
+def render_agreement_markdown(summary: AgreementSummary) -> str:
+    lines = [f"# Judge vs Human — `{summary.run_id[:8]}`", ""]
+    lines.append(f"- **Timestamp**: {summary.timestamp.isoformat()}")
+    lines.append(
+        f"- **Judge**: {_setting(summary.judge_model)}, prompts "
+        f"{_version(summary.judge_prompt_version)}"
+    )
+    labeled = sum(c.labeled for c in summary.checks)
+    lines.append(
+        f"- **Verdicts a person ruled on**: {labeled} "
+        f"({summary.unlabeled} still without a ruling, {summary.unmatched} not matched to the run)"
+    )
+    lines += ["", "## Agreement", ""]
+    lines.append(
+        "Kappa is the agreement beyond what the two sides' pass rates would give by chance: "
+        "1 is perfect, 0 is chance. The interval is the 95% Wilson interval of the agreement."
+    )
+    lines += ["", "| Check | Ruled on | Agree | Agreement | 95% interval | Cohen's kappa |"]
+    lines.append("|-------|----------|-------|-----------|--------------|---------------|")
+    for c in summary.checks:
+        if not c.labeled:
+            lines.append(f"| {c.check} | 0 | {MISSING} | {MISSING} | {MISSING} | {MISSING} |")
+            continue
+        low, high = wilson_interval(c.agree, c.labeled)
+        kappa = MISSING if c.kappa is None else f"{c.kappa:.2f}"
+        lines.append(
+            f"| {c.check} | {c.labeled} | {c.agree} | {c.agree / c.labeled:.1%} "
+            f"| {low:.1%} – {high:.1%} | {kappa} |"
+        )
+    lines += ["", "## What a person says of each kind of verdict", ""]
+    lines.append(
+        "The sample is balanced by the judge's verdict, so the agreement above is not the "
+        "run's. These two shares are not distorted by that: how often a person confirms a "
+        "pass, and how often a fail."
+    )
+    lines += ["", "| Check | Judge passed, person agrees | Judge failed, person agrees |"]
+    lines.append("|-------|-----------------------------|-----------------------------|")
+    for c in summary.checks:
+        passes = c.both_pass + c.judge_pass_human_fail
+        fails = c.both_fail + c.judge_fail_human_pass
+        lines.append(
+            f"| {c.check} | {_share(c.both_pass, passes)} | {_share(c.both_fail, fails)} |"
+        )
+    lines += ["", "## Disagreements", ""]
+    if not labeled:
+        lines.append("_No verdict has been ruled on yet._")
+    elif not summary.disagreements:
+        lines.append("_The judge and the person agreed on every verdict._")
+    else:
+        lines += [
+            "| ID | Check | Judge | Person | Question | Why the judge ruled so | Note |",
+            "|----|-------|-------|--------|----------|------------------------|------|",
+        ]
+        for d in summary.disagreements:
+            why = _why(
+                JudgeResult(
+                    passed=d.judge_passed,
+                    reasoning=d.judge_reasoning,
+                    facts_missing=d.facts_missing,
+                    wrong_claims=d.wrong_claims,
+                )
+            )
+            lines.append(
+                f"| {d.item_id} | {d.check} | {_verdict(d.judge_passed)} "
+                f"| {_verdict(d.human_passed)} | {_truncate(d.question, 60)} "
+                f"| {_truncate(why, 140)} | {_truncate(d.note, 60)} |"
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _share(part: int, whole: int) -> str:
+    return MISSING if not whole else f"{part} of {whole} ({part / whole:.1%})"

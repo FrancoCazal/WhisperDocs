@@ -45,7 +45,7 @@ describe("the API's metrics on screen", () => {
         { metric: "latency_p95_ms", previous: null, current: 900 },
       ]),
     );
-    expect(rows.map((r) => r.label)).toEqual(["HALLUCINATION RATE", "ACCURACY", "LATENCY P95"]);
+    expect(rows.map((r) => r.label)).toEqual(["UNSUPPORTED CLAIMS", "ACCURACY", "LATENCY P95"]);
     expect(rows[1]).toEqual({
       label: "ACCURACY",
       prev: 0.5,

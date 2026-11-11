@@ -19,6 +19,7 @@ from app.eval.judge_cache import JudgeCache, judge_cache_from_settings
 from app.eval.judges import Judge
 from app.eval.metrics import compute_metrics
 from app.eval.schemas import Category, Difficulty, EvalReport, JudgeResult
+from tests.judge_fakes import verdict_for
 
 OLD_CLAUDE = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 # Sampled and reasoned like OLD_CLAUDE: only the model differs.
@@ -33,11 +34,11 @@ class _Provider:
         self.passed = passed
         self.down = False
 
-    async def generate_structured(self, **_kwargs):
+    async def generate_structured(self, *, response_model, **_kwargs):
         self.calls += 1
         if self.down:
             raise ConnectionError("judge unreachable")
-        return JudgeResult(passed=self.passed, reasoning=f"call {self.calls}"), None
+        return verdict_for(response_model, self.passed, f"call {self.calls}"), None
 
 
 def _item(question: str = "q", **overrides: object) -> eval_schemas.TestItem:

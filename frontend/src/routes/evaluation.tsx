@@ -16,6 +16,7 @@ import { Modal, Field, textareaCls, inputCls } from "@/components/ui-kit/Modal";
 import { Elapsed } from "@/components/chat/Trace";
 import { RunReport } from "@/components/eval/RunReport";
 import { GENERATION_COST_HINT } from "@/components/eval/costHint";
+import { UNSUPPORTED_ALL_ITEMS_HINT } from "@/components/eval/faithfulnessHint";
 import { PROMPTS_HINT, fmtVersion } from "@/lib/promptVersion";
 import { toneText } from "@/lib/metricTone";
 
@@ -187,7 +188,9 @@ function EvaluationPage() {
                 </th>
                 <th className="text-right py-3 font-normal">ITEMS</th>
                 <th className="text-right py-3 font-normal">ACCURACY</th>
-                <th className="text-right py-3 font-normal">HALLUCINATION</th>
+                <th className="text-right py-3 font-normal" title={UNSUPPORTED_ALL_ITEMS_HINT}>
+                  UNSUPPORTED
+                </th>
                 <th className="text-right py-3 font-normal" title={GENERATION_COST_HINT}>
                   GEN. COST
                 </th>

@@ -21,6 +21,7 @@ from app.eval.rejudge import DatasetMismatchError, items_for, rejudge
 from app.eval.report import render_rejudge_markdown
 from app.eval.schemas import Category, Difficulty, EvalReport, EvalResult, JudgeResult
 from app.models import Chunk, Collection, Document
+from tests.judge_fakes import verdict_for
 
 JUDGE = "gemini-3.8-flash"
 
@@ -33,14 +34,14 @@ class _Provider:
     def __init__(self):
         self.calls: dict[str, int] = {}
 
-    async def generate_structured(self, *, messages, **_kwargs):
+    async def generate_structured(self, *, messages, response_model, **_kwargs):
         prompt = messages[0]["content"]
         n = self.calls[prompt] = self.calls.get(prompt, 0) + 1
         if "down" in prompt:
             raise ConnectionError("judge unreachable")
         passed = (False, True, True)[(n - 1) % 3] if "wobbly" in prompt else True
         passed = passed and "contrary" not in prompt
-        return JudgeResult(passed=passed, reasoning=f"call {n}"), None
+        return verdict_for(response_model, passed, f"call {n}"), None
 
 
 def _item(item_id: int, **overrides: object) -> eval_schemas.TestItem:

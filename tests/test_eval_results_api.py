@@ -85,6 +85,8 @@ async def test_a_run_is_read_in_full(results_dir: Path):
         "passed": True,
         "reasoning": "matches",
         "error": False,
+        "facts_missing": [],
+        "wrong_claims": [],
     }
     assert body["metrics"]["latency_p95_ms"] == 1200
     assert body["metrics"]["avg_retrieval_recall"] == 1.0

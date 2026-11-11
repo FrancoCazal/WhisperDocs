@@ -11,7 +11,7 @@ from app.agent.utils.citation_validation import validate_citations_semantic
 from app.config import settings
 from app.eval.judges import JUDGE_PROMPT_VERSION, Judge
 from app.eval.metrics import compute_metrics
-from app.eval.protocol import context_hash, run_config
+from app.eval.protocol import collection_fingerprint, context_hash, run_config
 from app.eval.schemas import EvalReport, EvalResult, TestItem
 from app.logging_config import get_logger
 from app.services.embedder import EmbeddingService
@@ -78,6 +78,10 @@ class RAGEvaluator:
         self.semaphore = asyncio.Semaphore(concurrency)
 
     async def run(self, dataset: list[TestItem]) -> EvalReport:
+        # What the collection holds as the run starts: a reseed with other
+        # code changes what a run reads, and a diff should say so.
+        async with self.session_maker() as db:
+            chunks_held, chunks_hash = await collection_fingerprint(db, self.collection_id)
         tasks = [self._evaluate_with_semaphore(item) for item in dataset]
         results = await asyncio.gather(*tasks)
         metrics = compute_metrics(results, self.model)
@@ -92,6 +96,8 @@ class RAGEvaluator:
             config=run_config(
                 items=dataset,
                 collection_id=self.collection_id,
+                collection_chunks=chunks_held,
+                collection_hash=chunks_hash,
                 top_k=self.top_k,
                 concurrency=self.concurrency,
                 rag_model=self.model,

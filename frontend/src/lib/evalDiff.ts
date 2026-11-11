@@ -25,7 +25,7 @@ export function versionChanged(v: VersionPair): boolean {
 
 const METRICS: Partial<Record<keyof EvalMetrics, [string, MetricKind, boolean]>> = {
   accuracy: ["ACCURACY", "pct", true],
-  hallucination_rate: ["HALLUCINATION RATE", "pct", false],
+  hallucination_rate: ["UNSUPPORTED CLAIMS", "pct", false],
   avg_retrieval_precision: ["PRECISION@K", "pct", true],
   avg_retrieval_recall: ["RECALL@K", "pct", true],
   avg_latency_ms: ["LATENCY AVG", "ms", false],

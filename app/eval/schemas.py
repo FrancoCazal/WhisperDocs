@@ -26,14 +26,30 @@ class TestItem(BaseModel):
     # in the question or the documents asks for (eval/golden/adversarial.jsonl).
     # An answer holding any of it is wrong, whatever the judge would say.
     forbidden: list[str] = Field(default_factory=list)
+    # What a correct answer must say, one atomic fact each (audit E4). The
+    # judge checks the answer against this list and the verdict follows from
+    # it: any fact missing, or any statement against one, fails the item. An
+    # in-scope item with none is judged against `expected_answer` as a whole.
+    required_facts: list[str] = Field(default_factory=list)
+    # Facts the answer may add or leave out: they never fail it.
+    optional_facts: list[str] = Field(default_factory=list)
 
 
 class JudgeResult(BaseModel):
-    passed: bool
+    # The reasoning comes first so a model that fills the fields in order
+    # reasons before it rules (audit E4).
     reasoning: str
+    passed: bool
     # True when the judge call itself failed; `passed` is then False by
     # construction and says nothing about the answer.
     error: bool = False
+    # Correctness against `required_facts`: the required facts the answer
+    # does not state. Empty for an item judged as a whole.
+    facts_missing: list[str] = Field(default_factory=list)
+    # Statements that make the verdict a fail: for correctness, those that
+    # contradict a required fact; for grounding, those the context does not
+    # support.
+    wrong_claims: list[str] = Field(default_factory=list)
 
 
 class EvalResult(BaseModel):
@@ -84,6 +100,17 @@ class AggregateMetrics(BaseModel):
         the schema's default 0 would read as a measurement."""
         return getattr(self, name) if name in self.model_fields_set else None
 
+    def in_scope_unsupported(self) -> tuple[float, int] | None:
+        """The share of in-scope items whose answer has a claim the context
+        does not support, and how many in-scope items there are (audit E5).
+        `hallucination_rate` is over every item, and an out-of-scope item is
+        mostly a refusal with nothing to support, so it dilutes the rate.
+        None when the run had no in-scope item."""
+        bucket = self.by_category.get(Category.IN_SCOPE.value)
+        if not bucket or not bucket.get("total"):
+            return None
+        return bucket["hallucination_rate"], bucket["total"]
+
 
 class RunConfig(BaseModel):
     """What a run answered and judged with, beyond its model and prompt
@@ -96,6 +123,12 @@ class RunConfig(BaseModel):
     # 12 hex characters over the items the run read, in order.
     dataset_hash: str
     collection_id: int
+    # The chunks the collection held when the run started: how many, and 12
+    # hex characters over their texts (app/eval/protocol.py). A reseed with
+    # another chunker, or a document added, removed or changed, moves them.
+    # None in reports from before.
+    collection_chunks: int | None = None
+    collection_hash: str | None = None
     top_k: int
     concurrency: int
     # The temperature sent; None when the model samples with its defaults
@@ -202,6 +235,71 @@ class RejudgeSummary(BaseModel):
     run_judge_prompt_version: str | None
     checks: list[CheckAgreement]
     disagreements: list[Disagreement]
+
+
+class LabelRow(BaseModel):
+    """One verdict for a person to rule on (app/eval/agreement.py): what the
+    judge read, without what it ruled. The person fills `human`."""
+
+    run_id: str
+    item_id: int
+    check: str
+    # What `human` answers: true when the answer is correct, or fully grounded.
+    ask: str
+    question: str
+    # Correctness only: the reference the answer is compared with.
+    expected_answer: str | None = None
+    required_facts: list[str] = Field(default_factory=list)
+    optional_facts: list[str] = Field(default_factory=list)
+    system_answer: str
+    # Grounding only: the chunks the answer was given.
+    context: list[str] | None = None
+    # The person's ruling; None until they give it.
+    human: bool | None = None
+    note: str = ""
+
+
+class HumanAgreement(BaseModel):
+    """How a check's judge verdicts line up with a person's."""
+
+    check: str
+    labeled: int
+    # Judge and person agree on this many.
+    agree: int
+    # The judge's verdict, then the person's.
+    both_pass: int
+    judge_pass_human_fail: int
+    judge_fail_human_pass: int
+    both_fail: int
+    # Cohen's kappa: agreement beyond what the two verdict rates would give by
+    # chance. None when chance already explains all of it (a side never varies).
+    kappa: float | None
+
+
+class HumanDisagreement(BaseModel):
+    item_id: int
+    check: str
+    question: str
+    judge_passed: bool
+    human_passed: bool
+    judge_reasoning: str
+    facts_missing: list[str]
+    wrong_claims: list[str]
+    note: str
+
+
+class AgreementSummary(BaseModel):
+    run_id: str
+    timestamp: datetime
+    judge_model: str | None
+    judge_prompt_version: str | None
+    checks: list[HumanAgreement]
+    disagreements: list[HumanDisagreement]
+    # Rows with no ruling yet.
+    unlabeled: int
+    # Labeled rows with no judge verdict to set against: another run, an item
+    # the run did not answer, or a verdict whose call failed.
+    unmatched: int
 
 
 class EvalReport(BaseModel):

@@ -81,7 +81,7 @@ async def rejudge(
             ]
         else:
             skipped["correctness"] += 1
-        texts = _context(r, contexts)
+        texts = judged_context(r, contexts)
         if texts:
             jobs += [
                 (r, "hallucination", judge.judge_hallucination(r.system_answer, texts))
@@ -119,7 +119,7 @@ async def rejudge(
     )
 
 
-def _context(r: EvalResult, contexts: Mapping[int, str]) -> list[str] | None:
+def judged_context(r: EvalResult, contexts: Mapping[int, str]) -> list[str] | None:
     """The chunks the judge read for `r`, as they were; None when there were
     none, a chunk is gone or its text changed under the same id."""
     ids = r.context_chunk_ids

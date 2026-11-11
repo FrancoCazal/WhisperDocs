@@ -2,6 +2,8 @@
 
 - `run_config`: the settings a run answered and judged with, saved in its
   report, so a diff can tell which of them changed.
+- `collection_fingerprint`: the chunks the run's collection held, so a diff
+  can tell a run over a reseeded or rechunked corpus.
 - `wilson_interval`: how far a share measured on n items can be from the
   true one, at 95 %. 48 right out of 50 is [86.5 %, 98.9 %].
 - `mean_interval`: how far the mean of a few runs of one config can be
@@ -23,8 +25,12 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import settings
 from app.eval.schemas import RunConfig, TestItem
+from app.models import Chunk, Document
 from app.services.llm.model_policy import accepts_custom_sampling, reasoning_level
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,10 +38,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def dataset_hash(items: Sequence[TestItem]) -> str:
     """12 hex characters over the items as the run read them: their order,
-    questions, expected answers and sources. A `--limit` run has its own."""
-    canonical = json.dumps(
-        [item.model_dump(mode="json") for item in items], sort_keys=True, ensure_ascii=False
-    )
+    questions, expected answers, sources and facts. A `--limit` run has its
+    own. An item with no facts hashes as it did before they existed, so a
+    dataset that never gained any keeps its hash."""
+    rows = []
+    for item in items:
+        row = item.model_dump(mode="json")
+        for name in ("required_facts", "optional_facts"):
+            if not row[name]:
+                del row[name]
+        rows.append(row)
+    canonical = json.dumps(rows, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
 
@@ -44,6 +57,24 @@ def context_hash(texts: Sequence[str]) -> str:
     rejudge` reads the chunks back by id; a database rebuilt since can hold
     other text under the same ids, and this tells them apart."""
     return hashlib.sha256("\x00".join(texts).encode("utf-8")).hexdigest()[:16]
+
+
+async def collection_fingerprint(db: AsyncSession, collection_id: int) -> tuple[int, str]:
+    """The chunks a collection holds: how many, and 12 hex characters over
+    their text hashes, sorted.
+
+    The same texts give the same hash whatever their ids, so seeding the
+    collection again with the same code keeps it. Another chunker, or a
+    document added, removed or changed, moves it: two runs over different
+    chunks measure the corpus as much as the change between them. A chunk
+    stored before the text hashes is hashed by its text's MD5."""
+    rows = await db.execute(
+        select(func.coalesce(Chunk.text_hash, func.md5(Chunk.text)))
+        .join(Document, Chunk.document_id == Document.id)
+        .where(Document.collection_id == collection_id)
+    )
+    hashes = sorted(text_hash for (text_hash,) in rows.all())
+    return len(hashes), hashlib.sha256("\n".join(hashes).encode("utf-8")).hexdigest()[:12]
 
 
 def git_revision() -> tuple[str | None, bool | None]:
@@ -109,6 +140,8 @@ def run_config(
     judge_model: str,
     judge_temperature: float,
     judge_cache: bool,
+    collection_chunks: int | None = None,
+    collection_hash: str | None = None,
 ) -> RunConfig:
     sha, dirty = git_revision()
     return RunConfig(
@@ -116,6 +149,8 @@ def run_config(
         git_dirty=dirty,
         dataset_hash=dataset_hash(items),
         collection_id=collection_id,
+        collection_chunks=collection_chunks,
+        collection_hash=collection_hash,
         top_k=top_k,
         concurrency=concurrency,
         rag_temperature=sampling(rag_model, rag_temperature),

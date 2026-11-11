@@ -216,7 +216,12 @@ async def test_a_run_reports_the_prompt_versions_it_answered_and_judged_with(mon
     async def nothing_retrieved(**_kwargs):
         return []
 
+    async def fingerprint(_db, collection_id):
+        assert collection_id == 1
+        return 95, "c" * 12
+
     monkeypatch.setattr(evaluator_module, "retrieve_pipeline", nothing_retrieved)
+    monkeypatch.setattr(evaluator_module, "collection_fingerprint", fingerprint)
     evaluator = RAGEvaluator(
         session_maker=_NoSession,  # type: ignore[arg-type]
         embedder=_Embedder(),  # type: ignore[arg-type]
@@ -242,6 +247,8 @@ async def test_a_run_reports_the_prompt_versions_it_answered_and_judged_with(mon
     assert report.config is not None
     assert report.config.dataset_hash == dataset_hash([item])
     assert (report.config.collection_id, report.config.top_k) == (1, evaluator.top_k)
+    # The chunks its collection held as it started.
+    assert (report.config.collection_chunks, report.config.collection_hash) == (95, "c" * 12)
     assert report.config.concurrency == evaluator.concurrency
     assert report.config.judge_model == "fake-judge"
     assert report.config.rag_temperature == 0.0

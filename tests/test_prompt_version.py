@@ -59,8 +59,12 @@ def test_the_judges_version_is_its_own_prompts_and_verdict():
     edited = {**namespace, "JUDGE_SYSTEM": namespace["JUDGE_SYSTEM"] + " Be strict."}
 
     assert re.fullmatch(r"[0-9a-f]{12}", JUDGE_PROMPT_VERSION)
-    assert compute_prompt_version(namespace, (JudgeResult,)) == JUDGE_PROMPT_VERSION
-    assert compute_prompt_version(edited, (JudgeResult,)) != JUDGE_PROMPT_VERSION
+    assert compute_prompt_version(namespace, judges.JUDGE_SCHEMAS) == JUDGE_PROMPT_VERSION
+    assert compute_prompt_version(edited, judges.JUDGE_SCHEMAS) != JUDGE_PROMPT_VERSION
+    # What the judge fills in is part of its version, and so is the facts prompt.
+    assert compute_prompt_version(namespace, (JudgeResult,)) != JUDGE_PROMPT_VERSION
+    facts = {**namespace, "CORRECTNESS_PROMPT_FACTS": namespace["CORRECTNESS_PROMPT_FACTS"] + " "}
+    assert compute_prompt_version(facts, judges.JUDGE_SCHEMAS) != JUDGE_PROMPT_VERSION
     assert JUDGE_PROMPT_VERSION != PROMPT_VERSION
 
 
