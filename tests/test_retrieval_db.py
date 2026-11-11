@@ -308,3 +308,44 @@ async def test_exact_order_does_not_use_the_hnsw_index(session):
 
     assert "idx_chunk_embedding" in await explain(distance)
     assert "idx_chunk_embedding" not in await explain(distance + 0)
+
+
+async def test_both_legs_return_where_each_chunk_sits(session):
+    """A chunk's section and pages (audit M-7) come back from the vector leg
+    and from the full-text leg, so every citation can name them."""
+    coll = Collection(name="located")
+    session.add(coll)
+    await session.flush()
+    doc = Document(
+        collection_id=coll.id,
+        title="policy.pdf",
+        filename="policy.pdf",
+        file_type="pdf",
+        raw_text="Invoices are kept for five years.",
+        language="en",
+    )
+    session.add(doc)
+    await session.flush()
+    session.add(
+        Chunk(
+            document_id=doc.id,
+            chunk_index=0,
+            text="Invoices are kept for five years.",
+            token_count=7,
+            embedding=_EMBEDDING,
+            language="en",
+            section="Policy › Retention",
+            page_start=3,
+            page_end=4,
+        )
+    )
+    await session.flush()
+    retriever = VectorRetriever(session)
+
+    vector = await retriever.retrieve(_EMBEDDING, collection_id=coll.id, top_k=1)
+    lexical = await retriever.lexical_retrieve("how long are invoices kept", collection_id=coll.id)
+
+    for chunks in (vector, lexical):
+        assert [(c.section, c.page_start, c.page_end) for c in chunks] == [
+            ("Policy › Retention", 3, 4)
+        ]

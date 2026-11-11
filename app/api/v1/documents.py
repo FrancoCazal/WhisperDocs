@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 from collections.abc import AsyncIterator
 
@@ -16,6 +15,7 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import upstream_error
@@ -38,11 +38,19 @@ from app.schemas.pagination import Page
 from app.services import catalog
 from app.services.embedder import EmbeddingError, EmbeddingService, get_embedder
 from app.services.ingestion import (
+    DuplicateDocumentError,
     FreshChunk,
+    chunk_hashes,
     chunk_rows,
     chunk_text_in_thread,
+    content_hash,
     create_job,
+    duplicate_from,
+    embed_chunks,
+    ensure_new_document,
     extract_text_in_thread,
+    fresh_chunks,
+    reusable_embeddings,
     spawn_ingestion,
 )
 from app.services.text_extractor import (
@@ -106,6 +114,8 @@ def _upload_error(exc: Exception) -> Exception:
         return upstream_error(exc, "Embedding the document")
     if isinstance(exc, FileTooLargeError):
         code = status.HTTP_413_CONTENT_TOO_LARGE
+    elif isinstance(exc, DuplicateDocumentError):
+        code = status.HTTP_409_CONFLICT
     elif isinstance(exc, (EmptyDocumentError, UnreadableDocumentError)):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     elif isinstance(exc, ValueError):  # includes UnsupportedFileTypeError
@@ -135,38 +145,26 @@ async def _ingest_single(
 ) -> Document:
     filename, file_type, file_bytes = await _read_upload(file)
     raw_text = await extract_text_in_thread(file_bytes, file_type)
-    chunks_data, language = await chunk_text_in_thread(raw_text)
+    chunks_data, language = await chunk_text_in_thread(raw_text, file_type)
     if not chunks_data:
         raise ValueError("Document produced no chunks after processing")
 
-    # Dedup: skip chunks whose hash already exists in this collection.
-    hashes = [hashlib.sha256(c.text.encode("utf-8")).hexdigest() for c in chunks_data]
-    existing_q = (
-        select(Chunk.text_hash)
-        .join(Document, Chunk.document_id == Document.id)
-        .where(Document.collection_id == collection_id)
-        .where(Chunk.text_hash.in_(hashes))
-    )
-    existing_hashes = {row[0] for row in (await db.execute(existing_q)).all()}
-
-    fresh: list[FreshChunk] = [
-        (cd.index, cd.text, cd.token_count, h)
-        for cd, h in zip(chunks_data, hashes, strict=True)
-        if h not in existing_hashes
-    ]
-    skipped = len(chunks_data) - len(fresh)
-    if skipped:
+    # The same document twice in a collection is refused before anything is
+    # paid for; a chunk another document holds too is stored again, with
+    # that chunk's vector (audit R12).
+    digest = content_hash(raw_text)
+    await ensure_new_document(db, collection_id, digest)
+    hashes = chunk_hashes(chunks_data)
+    fresh: list[FreshChunk] = fresh_chunks(chunks_data, hashes)
+    reused = await reusable_embeddings(db, hashes, embedder.model_id)
+    if reused:
         logger.info(
-            "chunk_dedup_skipped",
-            skipped=skipped,
-            kept=len(fresh),
+            "chunk_embeddings_reused",
+            reused=sum(1 for chunk in fresh if chunk.text_hash in reused),
+            chunks=len(fresh),
             collection_id=collection_id,
         )
-
-    if not fresh:
-        raise ValueError("All chunks already exist in this collection (full duplicate)")
-
-    embeddings = await embedder.embed_batch([t for _idx, t, _tc, _h in fresh])
+    embeddings = await embed_chunks(fresh, embedder, reused)
 
     document = Document(
         collection_id=collection_id,
@@ -174,15 +172,18 @@ async def _ingest_single(
         filename=filename,
         file_type=file_type,
         raw_text=raw_text,
+        content_hash=digest,
         chunk_count=len(fresh),
-        total_tokens=sum(tc for _idx, _t, tc, _h in fresh),
+        total_tokens=sum(chunk.token_count for chunk in fresh),
         language=language,
     )
     db.add(document)
-    await db.flush()
-
-    db.add_all(await chunk_rows(document, fresh, embeddings))
-    await db.commit()
+    try:
+        await db.flush()
+        db.add_all(await chunk_rows(document, fresh, embeddings, embedder.model_id))
+        await db.commit()
+    except IntegrityError as exc:
+        raise await duplicate_from(db, exc, collection_id, digest) from exc
     await db.refresh(document)
     return document
 
@@ -368,24 +369,81 @@ async def bulk_move_documents(
             detail=f"Target collection {payload.target_collection_id} not found",
         )
 
-    moved = await db.scalars(
-        update(Document)
-        .where(Document.id.in_(payload.document_ids))
-        .values(collection_id=payload.target_collection_id)
-        .returning(Document.id)
+    # A collection holds each document once (audit R12): one whose text the
+    # target already holds, or that another moved document brings first,
+    # stays where it is.
+    rows = (
+        await db.execute(
+            select(Document.id, Document.content_hash, Document.collection_id)
+            .where(Document.id.in_(payload.document_ids))
+            .order_by(Document.id)
+        )
+    ).all()
+    held = dict(
+        (
+            await db.execute(
+                select(Document.content_hash, Document.title).where(
+                    Document.collection_id == payload.target_collection_id,
+                    Document.content_hash.is_not(None),
+                    Document.id.not_in(payload.document_ids),
+                )
+            )
+        ).all()
     )
-    found_ids = set(moved.all())
+    errors: dict[int, str] = {}
+    movable: list[int] = []
+    # Who keeps each text among the requested documents.
+    claimed: dict[str, int] = {}
+    # The documents already in the target come first: they stay, and claim their text.
+    for document_id, digest, collection_id in sorted(
+        rows, key=lambda row: (row.collection_id != payload.target_collection_id, row.id)
+    ):
+        if digest is not None and digest in held:
+            errors[document_id] = (
+                f'The target collection already holds this document, as "{held[digest]}".'
+            )
+            continue
+        if digest is not None and digest in claimed:
+            errors[document_id] = (
+                f"Document {claimed[digest]}, also in this request, has the same text."
+            )
+            continue
+        if digest is not None:
+            claimed[digest] = document_id
+        if collection_id != payload.target_collection_id:
+            movable.append(document_id)
+
+    if movable:
+        try:
+            await db.execute(
+                update(Document)
+                .where(Document.id.in_(movable))
+                .values(collection_id=payload.target_collection_id)
+            )
+        except IntegrityError as exc:
+            # An upload of the same text reached the target in between.
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A document with the same text reached the target collection while "
+                "moving; nothing was moved. Try again.",
+            ) from exc
     await db.commit()
-    return _bulk_result(payload.document_ids, found_ids)
+    moved = {document_id for document_id, _digest, _coll in rows} - set(errors)
+    return _bulk_result(payload.document_ids, moved, errors)
 
 
-def _bulk_result(requested: list[int], found_ids: set[int]) -> BulkOpResult:
-    not_found = [i for i in requested if i not in found_ids]
+def _bulk_result(
+    requested: list[int], found_ids: set[int], errors: dict[int, str] | None = None
+) -> BulkOpResult:
+    errors = errors or {}
+    not_found = [i for i in requested if i not in found_ids and i not in errors]
     return BulkOpResult(
         requested=len(requested),
         succeeded=len(found_ids),
-        failed=len(not_found),
+        failed=len(not_found) + len(errors),
         not_found=not_found,
+        errors=errors,
     )
 
 

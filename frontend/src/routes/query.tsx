@@ -15,6 +15,7 @@ import {
   type QueryLog,
   type QueryMetadata,
 } from "@/lib/api";
+import { ChunkPlace } from "@/components/ui-kit/ChunkPlace";
 import { ErrorBanner, LoadingLine } from "@/components/ui-kit/EmptyState";
 import { Composer } from "@/components/ui-kit/Composer";
 import { ScopeControls } from "@/components/ui-kit/ScopeControls";
@@ -502,7 +503,10 @@ function AssistantTurn({
                       <span className="text-text-primary">[{num}]</span>
                       <span className="text-text-secondary">{c.document_title}</span>
                       <span className="text-text-tertiary">·</span>
-                      <span className="text-text-secondary">CHUNK {c.chunk_index}</span>
+                      <span className="text-text-secondary">
+                        CHUNK {c.chunk_index}
+                        <ChunkPlace c={c} />
+                      </span>
                       <span className="text-text-tertiary">·</span>
                       <span className="tabular-nums text-text-secondary" title={COSINE_HINT}>
                         {fmtCosine(c.cosine)}

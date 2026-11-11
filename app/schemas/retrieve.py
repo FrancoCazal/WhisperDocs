@@ -32,6 +32,17 @@ class RetrievedChunkRead(BaseModel):
         description="Cosine similarity to the query. Null when only full-text search found "
         "the chunk."
     )
+    section: str | None = Field(
+        default=None,
+        description="The headings the chunk is under, from the top level down, joined by "
+        '" › ". Null when the document has none there.',
+    )
+    page_start: int | None = Field(
+        default=None, description="The first page the chunk comes from, from 1; PDFs only."
+    )
+    page_end: int | None = Field(
+        default=None, description="The last page the chunk comes from; PDFs only."
+    )
 
 
 class RetrieveMetadata(BaseModel):

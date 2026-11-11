@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 
 from app import telemetry
 from app.config import settings
@@ -15,6 +15,12 @@ def _l2_normalize(vec: list[float]) -> list[float]:
     if norm < 1e-12:
         return vec
     return [x / norm for x in vec]
+
+
+def takes_dimensions(model: str) -> bool:
+    """Whether the model takes `dimensions`: the text-embedding-3 models and
+    later do; text-embedding-ada-002 rejects it."""
+    return not model.startswith("text-embedding-ada")
 
 
 class OpenAIEmbeddingProvider:
@@ -50,17 +56,20 @@ class OpenAIEmbeddingProvider:
         return vectors[0]
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """The texts' vectors, `dimension` floats each (audit R19). The size is
+        asked for, so text-embedding-3-large gives 1536 and not its 3072, and
+        a vector of another size is refused here, not at the insert."""
         if not texts:
             return []
 
+        sized = self._dimension if takes_dimensions(self._model) else omit
         all_vectors: list[list[float]] = []
         for i in range(0, len(texts), self.BATCH_SIZE):
             batch = texts[i : i + self.BATCH_SIZE]
             with telemetry.embeddings(provider="openai", model=self._model) as call:
                 try:
                     response = await self.client.embeddings.create(
-                        model=self._model,
-                        input=batch,
+                        model=self._model, input=batch, dimensions=sized
                     )
                 except Exception as exc:
                     model_status.failed("embedding", self._model, exc)
@@ -70,6 +79,13 @@ class OpenAIEmbeddingProvider:
 
             for item in response.data:
                 vec = item.embedding
+                if len(vec) != self._dimension:
+                    error = EmbeddingError(
+                        f"{self._model} returned {len(vec)}-dimension vectors, not the "
+                        f"{self._dimension} of EMBEDDING_DIMENSION"
+                    )
+                    model_status.failed("embedding", self._model, error)
+                    raise error
                 if self.normalize:
                     vec = _l2_normalize(vec)
                 all_vectors.append(vec)

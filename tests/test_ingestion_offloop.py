@@ -94,6 +94,8 @@ class _FakeSession:
 
 
 class _FakeEmbedder:
+    model_id = "fake-embedding"
+
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] * 1536 for _ in texts]
 
@@ -138,7 +140,9 @@ async def test_the_background_worker_parses_off_the_loop(steps, monkeypatch):
 async def test_the_instruction_scan_runs_off_the_loop(steps):
     document = Document(id=1, filename="doc.md", language="en")
 
-    rows = await ingestion.chunk_rows(document, [(0, PARAGRAPH, 40, "h")], [[0.0]])
+    rows = await ingestion.chunk_rows(
+        document, [ingestion.FreshChunk(0, PARAGRAPH, 40, "h")], [[0.0]], "fake-embedding"
+    )
 
     assert len(rows) == 1
     assert steps["scan"].calls == 1

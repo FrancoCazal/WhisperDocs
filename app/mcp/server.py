@@ -67,8 +67,9 @@ DOCUMENT_URI = "whisperdocs://documents/{document_id}"
 LISTED_DOCUMENTS = 200
 
 INSTRUCTIONS = """\
-WhisperDocs is a knowledge base of uploaded documents (PDF, Markdown, text), \
-split into chunks for hybrid search (vector and full text).
+WhisperDocs is a knowledge base of uploaded documents (PDF, Word, Excel, CSV, HTML, \
+Markdown, text), split into chunks for hybrid search (vector and full text). Each \
+chunk names the section it sits in and, for a PDF, its pages.
 
 - search_documents returns the passages that match a query, with their text, \
 to quote or reason over. When the first passages miss, call it again with \

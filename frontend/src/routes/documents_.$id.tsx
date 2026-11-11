@@ -8,12 +8,13 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { api, ApiError, fmtDate, fmtNumber } from "@/lib/api";
+import { api, ApiError, fmtDate, fmtNumber, type ChunkLocation } from "@/lib/api";
 import { LoadingLine, ErrorBanner } from "@/components/ui-kit/EmptyState";
 import { Btn, btnCls } from "@/components/ui-kit/Button";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import { ChunkFlags } from "@/components/documents/Flags";
 import { FLAGS_LEAD } from "@/lib/instructionFlags";
+import { fmtPages, fmtSection } from "@/lib/chunkLocation";
 
 // "documents_": the page renders on its own, not inside the list's layout,
 // which has no outlet for it.
@@ -301,6 +302,7 @@ function DocumentDetailPage() {
                   index={c.chunk_index}
                   tokens={c.token_count}
                   text={c.text}
+                  place={c}
                   flags={c.instruction_flags}
                   cited={c.chunk_index === cited}
                   query={needle}
@@ -373,6 +375,7 @@ function ChunkBlock({
   index,
   tokens,
   text,
+  place,
   flags,
   cited,
   query,
@@ -380,6 +383,7 @@ function ChunkBlock({
   index: number;
   tokens: number;
   text: string;
+  place: ChunkLocation;
   flags: string[] | undefined;
   cited: boolean;
   query: string;
@@ -389,6 +393,8 @@ function ChunkBlock({
   // While searching, a chunk shows in full: the match may be past its first lines.
   const isLong = !query && (lines.length > 4 || text.length > 400);
   const display = expanded || !isLong ? text : lines.slice(0, 4).join("\n");
+  const pages = fmtPages(place);
+  const section = fmtSection(place);
 
   return (
     <div
@@ -401,6 +407,12 @@ function ChunkBlock({
         {cited && <span className="label-xs text-primary-blue">CITED</span>}
         <span className="text-text-tertiary">·</span>
         <span>TOKENS: {tokens}</span>
+        {pages && <span>{pages}</span>}
+        {section && (
+          <span className="normal-case min-w-0 truncate" title={place.section ?? undefined}>
+            {section}
+          </span>
+        )}
         <ChunkFlags rules={flags} />
       </div>
       <pre className="body-sm text-text-primary whitespace-pre-wrap break-words bg-surface-lowest p-3 border border-border-subtle">

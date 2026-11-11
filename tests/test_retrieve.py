@@ -20,6 +20,8 @@ EMBEDDING = [0.1, 0.2]
 
 
 def _chunk(i: int, document_id: int = 7) -> RetrievedChunk:
+    # The first chunk comes from a section of a PDF's pages 3 and 4.
+    located = {"section": "RAG › Indexing", "page_start": 3, "page_end": 4} if i == 0 else {}
     return RetrievedChunk(
         chunk_id=100 + i,
         document_id=document_id,
@@ -28,6 +30,7 @@ def _chunk(i: int, document_id: int = 7) -> RetrievedChunk:
         text=f"passage {i}",
         relevance=1.0 - i / 10,
         cosine=0.8 if i == 0 else None,
+        **located,
     )
 
 
@@ -100,8 +103,12 @@ async def test_it_returns_the_chunks_with_their_text_and_no_answer(backend):
         "text": "passage 0",
         "relevance": 1.0,
         "cosine": 0.8,
+        "section": "RAG › Indexing",
+        "page_start": 3,
+        "page_end": 4,
     }
     assert body["chunks"][1]["cosine"] is None
+    assert body["chunks"][1]["section"] is None and body["chunks"][1]["page_start"] is None
     assert body["metadata"]["embedding_model"] == settings.embedding_model
     assert set(body["metadata"]) == {"embedding_model", "reranker", "mmr", "latency_ms"}
     assert backend == [

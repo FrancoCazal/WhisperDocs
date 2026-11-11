@@ -16,7 +16,12 @@ import { PAGE_SIZE, usePagedList } from "@/lib/paged";
 import { ConfirmDialog } from "@/components/ui-kit/ConfirmDialog";
 import { RecentJobs } from "@/components/documents/RecentJobs";
 import { FlaggedCount } from "@/components/documents/Flags";
-import { ACCEPT_ATTR, rejectReason, stageText } from "@/components/documents/stages";
+import {
+  ACCEPTED_LABEL,
+  ACCEPT_ATTR,
+  rejectReason,
+  stageText,
+} from "@/components/documents/stages";
 import { Btn, btnCls } from "@/components/ui-kit/Button";
 import {
   EmptyState,
@@ -362,7 +367,7 @@ function DocumentsPage() {
           >
             <div className="label-sm text-text-primary">DROP FILES HERE OR CLICK TO SELECT</div>
             <div className="label-xs text-text-tertiary mt-2">
-              SUPPORTED: PDF, MD, TXT · MAX 10 MB PER FILE
+              SUPPORTED: {ACCEPTED_LABEL} · MAX 10 MB PER FILE
             </div>
             <input
               ref={fileInputRef}

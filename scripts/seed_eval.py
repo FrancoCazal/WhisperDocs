@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import sys
 from pathlib import Path
 
@@ -23,9 +22,20 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.logging_config import get_logger
-from app.models import Chunk, Collection, Document
+from app.models import Collection, Document
 from app.services.embedder import EmbeddingService
-from app.services.ingestion import chunk_rows, chunk_text_in_thread, extract_text_in_thread
+from app.services.ingestion import (
+    DuplicateDocumentError,
+    chunk_hashes,
+    chunk_rows,
+    chunk_text_in_thread,
+    content_hash,
+    embed_chunks,
+    ensure_new_document,
+    extract_text_in_thread,
+    fresh_chunks,
+    reusable_embeddings,
+)
 from app.services.text_extractor import detect_file_type
 
 logger = get_logger(__name__)
@@ -64,27 +74,20 @@ async def ingest_file(
     file_bytes = path.read_bytes()
     file_type = detect_file_type(path.name)
     raw_text = await extract_text_in_thread(file_bytes, file_type)
-    chunks_data, language = await chunk_text_in_thread(raw_text)
+    chunks_data, language = await chunk_text_in_thread(raw_text, file_type)
     if not chunks_data:
         raise ValueError(f"{path.name}: produced no chunks")
 
-    hashes = [hashlib.sha256(c.text.encode("utf-8")).hexdigest() for c in chunks_data]
-    existing_q = (
-        select(Chunk.text_hash)
-        .join(Document, Chunk.document_id == Document.id)
-        .where(Document.collection_id == collection_id)
-        .where(Chunk.text_hash.in_(hashes))
-    )
-    skip_hashes = {row[0] for row in (await db.execute(existing_q)).all()}
-    fresh = [
-        (cd.index, cd.text, cd.token_count, h)
-        for cd, h in zip(chunks_data, hashes, strict=True)
-        if h not in skip_hashes
-    ]
-    if not fresh:
+    digest = content_hash(raw_text)
+    try:
+        await ensure_new_document(db, collection_id, digest)
+    except DuplicateDocumentError:
+        # Another file of the collection has this text: nothing to add.
         return None
-
-    embeddings = await embedder.embed_batch([t for _i, t, _tc, _h in fresh])
+    hashes = chunk_hashes(chunks_data)
+    fresh = fresh_chunks(chunks_data, hashes)
+    reused = await reusable_embeddings(db, hashes, embedder.model_id)
+    embeddings = await embed_chunks(fresh, embedder, reused)
 
     document = Document(
         collection_id=collection_id,
@@ -92,13 +95,14 @@ async def ingest_file(
         filename=path.name,
         file_type=file_type,
         raw_text=raw_text,
+        content_hash=digest,
         chunk_count=len(fresh),
-        total_tokens=sum(tc for _i, _t, tc, _h in fresh),
+        total_tokens=sum(chunk.token_count for chunk in fresh),
         language=language,
     )
     db.add(document)
     await db.flush()
-    db.add_all(await chunk_rows(document, fresh, embeddings))
+    db.add_all(await chunk_rows(document, fresh, embeddings, embedder.model_id))
     await db.commit()
     await db.refresh(document)
     return document

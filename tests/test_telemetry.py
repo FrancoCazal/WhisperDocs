@@ -187,18 +187,19 @@ async def test_an_embedding_request_is_a_span_priced_on_its_input(spans):
     created = []
 
     class _Embeddings:
-        async def create(self, model, input):
-            created.append(model)
+        async def create(self, model, input, dimensions):
+            created.append((model, dimensions))
             return SimpleNamespace(
                 data=[SimpleNamespace(embedding=[3.0, 4.0]) for _ in input],
                 usage=SimpleNamespace(prompt_tokens=50_000, total_tokens=50_000),
             )
 
-    provider = OpenAIEmbeddingProvider(api_key="test", model="text-embedding-3-small")
+    provider = OpenAIEmbeddingProvider(api_key="test", model="text-embedding-3-small", dimension=2)
     provider.client = SimpleNamespace(embeddings=_Embeddings())  # type: ignore[assignment]
 
     await provider.embed_batch(["a", "b"])
 
+    assert created == [("text-embedding-3-small", 2)]
     (span,) = spans.get_finished_spans()
     assert span.name == "embeddings text-embedding-3-small"
     assert span.kind == SpanKind.CLIENT

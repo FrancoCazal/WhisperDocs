@@ -172,7 +172,7 @@ export type DocumentRead = {
   collection_id: number;
   title: string;
   filename: string;
-  file_type: "pdf" | "md" | "txt" | string;
+  file_type: "pdf" | "docx" | "xlsx" | "csv" | "html" | "md" | "txt" | string;
   chunk_count: number;
   total_tokens: number;
   // Chunks whose text reads as an instruction to the model
@@ -183,7 +183,16 @@ export type DocumentRead = {
 
 export type DocumentDetail = DocumentRead & { raw_text: string };
 
-export type Chunk = {
+// Where a chunk sits in its document (app/models/chunk.py): the headings it is
+// under, joined by " › ", and the pages of a PDF's chunk. Missing from a
+// backend older than them and null on chunks stored before.
+export type ChunkLocation = {
+  section?: string | null;
+  page_start?: number | null;
+  page_end?: number | null;
+};
+
+export type Chunk = ChunkLocation & {
   id: number;
   document_id: number;
   chunk_index: number;
@@ -193,7 +202,7 @@ export type Chunk = {
   instruction_flags?: string[];
 };
 
-export type Citation = {
+export type Citation = ChunkLocation & {
   chunk_id: number;
   document_id: number;
   document_title: string;

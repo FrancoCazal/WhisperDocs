@@ -21,8 +21,9 @@ export function stageText(stage: IngestionStatus): string {
 }
 
 // What the backend takes (app/api/v1/documents.py, app/services/text_extractor.py).
-const ACCEPTED_TYPES = ["pdf", "md", "txt"];
+const ACCEPTED_TYPES = ["pdf", "docx", "xlsx", "csv", "html", "htm", "md", "txt"];
 export const ACCEPT_ATTR = ACCEPTED_TYPES.map((t) => `.${t}`).join(",");
+export const ACCEPTED_LABEL = "PDF, DOCX, XLSX, CSV, HTML, MD, TXT";
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_NAME_LENGTH = 300;
 
@@ -32,7 +33,7 @@ const fmtMb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 export function rejectReason(file: File): string | null {
   const ext = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "";
   if (!ACCEPTED_TYPES.includes(ext)) {
-    return `UNSUPPORTED TYPE${ext ? ` .${ext.toUpperCase()}` : ""}: PDF, MD OR TXT ONLY`;
+    return `UNSUPPORTED TYPE${ext ? ` .${ext.toUpperCase()}` : ""}: ${ACCEPTED_LABEL} ONLY`;
   }
   if (file.size === 0) return "EMPTY FILE";
   if (file.size > MAX_FILE_BYTES) return `TOO LARGE: ${fmtMb(file.size)}, MAX 10 MB`;

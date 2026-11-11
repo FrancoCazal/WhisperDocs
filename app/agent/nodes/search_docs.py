@@ -289,6 +289,9 @@ def _turn_result(
             "relevance": c.relevance,
             "cosine": c.cosine,
             "text_preview": (c.text[:500] + "...") if len(c.text) > 500 else c.text,
+            "section": c.section,
+            "page_start": c.page_start,
+            "page_end": c.page_end,
         }
         for c in cited
     ]

@@ -86,6 +86,9 @@ async def search(
                 text=c.text,
                 relevance=c.relevance,
                 cosine=c.cosine,
+                section=c.section,
+                page_start=c.page_start,
+                page_end=c.page_end,
             )
             for c in chunks
         ],
