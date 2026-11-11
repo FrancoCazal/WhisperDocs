@@ -24,6 +24,10 @@ class AgentSettings(BaseSettings):
     model_answer_direct: str = "gemini-3.8-flash"
     model_summarize: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     model_eval_judge: str = "gemini-3.8-flash"
+    # Fields out of a document, each with the passage that states it (audit
+    # M-8, app/services/extraction.py): the answering model, as accuracy
+    # matters more than cost there.
+    model_extraction: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
     # Sent only to models that accept custom sampling: Claude 4.6 and earlier,
     # Gemini 2.x. Claude 4.7+ and Gemini 3+ sample with their defaults.
@@ -34,6 +38,7 @@ class AgentSettings(BaseSettings):
     temp_answer_direct: float = 0.7
     temp_summarize: float = 0.2
     temp_eval_judge: float = 0.0
+    temp_extraction: float = 0.0
 
     compaction_token_threshold: int = 8000
     compaction_count_threshold: int = 30

@@ -32,6 +32,7 @@ async def get_settings() -> dict:
             "answer_direct": {"model": a.model_answer_direct, "temperature": a.temp_answer_direct},
             "summarize": {"model": a.model_summarize, "temperature": a.temp_summarize},
             "eval_judge": {"model": a.model_eval_judge, "temperature": a.temp_eval_judge},
+            "extraction": {"model": a.model_extraction, "temperature": a.temp_extraction},
         },
         "retrieval": {
             "top_k": a.retrieval_top_k,

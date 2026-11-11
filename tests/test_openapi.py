@@ -27,6 +27,7 @@ OPERATIONS = {
     "GET /api/v1/documents/{document_id}": "get_document",
     "DELETE /api/v1/documents/{document_id}": "delete_document",
     "GET /api/v1/documents/{document_id}/chunks": "list_document_chunks",
+    "POST /api/v1/documents/{document_id}/extract": "extract_fields",
     "POST /api/v1/documents/bulk-delete": "bulk_delete_documents",
     "POST /api/v1/documents/bulk-move": "bulk_move_documents",
     "POST /api/v1/documents/upload-async": "upload_document_async",

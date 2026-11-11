@@ -17,8 +17,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.errors import upstream_error
-from app.api.rate_limit import uploads_limit
+from app.api.errors import APIError, upstream_error
+from app.api.rate_limit import questions_limit, uploads_limit
 from app.db import SessionLocal, get_db
 from app.logging_config import get_logger
 from app.models import Chunk, Collection, Document, IngestionJob, IngestionStatus
@@ -32,9 +32,10 @@ from app.schemas.document import (
     DocumentDetail,
     DocumentRead,
 )
+from app.schemas.extraction import ExtractionRequest, ExtractionResponse
 from app.schemas.ingestion_job import IngestionJobCreate, IngestionJobRead
 from app.schemas.pagination import Page
-from app.services import catalog
+from app.services import catalog, extraction
 from app.services.documents import MoveConflictError, delete_documents, move_documents
 from app.services.embedder import EmbeddingError, EmbeddingService, get_embedder
 from app.services.ingestion import (
@@ -255,6 +256,44 @@ async def list_document_chunks(
         select(Chunk).where(Chunk.document_id == document_id).order_by(Chunk.chunk_index)
     )
     return list(result.scalars().all())
+
+
+@router.post(
+    "/{document_id:int}/extract",
+    operation_id="extract_fields",
+    response_model=ExtractionResponse,
+    dependencies=[Depends(questions_limit)],
+)
+async def extract_document_fields(
+    document_id: int,
+    payload: ExtractionRequest,
+    db: AsyncSession = Depends(get_db),
+    embedder: EmbeddingService = Depends(get_embedder),
+) -> ExtractionResponse:
+    """The fields a JSON Schema names, out of the document, each with the
+    passage and the words that state it (audit M-8). One model call, paid
+    for; a field the document does not state is null. Shared with the MCP
+    server's `extract_fields` (`app/services/extraction.py`)."""
+    try:
+        return await extraction.extract_fields(
+            db,
+            embedder,
+            document_id=document_id,
+            json_schema=payload.json_schema,
+            instructions=payload.instructions,
+        )
+    except extraction.DocumentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except extraction.SchemaError as exc:
+        raise APIError(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_schema", f"The schema: {exc}"
+        ) from exc
+    except EmbeddingError as exc:
+        logger.exception("extraction_search_failed", document_id=document_id)
+        raise upstream_error(exc, "Searching the document") from exc
+    except extraction.ExtractionError as exc:
+        logger.exception("extraction_failed", document_id=document_id)
+        raise upstream_error(exc, "Extraction") from exc
 
 
 @router.delete(

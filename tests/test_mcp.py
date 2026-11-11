@@ -34,6 +34,7 @@ EMBEDDING = [0.1, 0.2]
 READS = {
     "search_documents",
     "ask_documents",
+    "extract_fields",
     "list_collections",
     "list_documents",
 }
@@ -172,10 +173,11 @@ async def test_the_tools_are_few_typed_and_say_what_they_change(backend):
     assert {n for n, t in tools.items() if t.annotations.read_only_hint} == READS
     # Deleting is the one change that cannot be undone (BE-36).
     assert [n for n, t in tools.items() if t.annotations.destructive_hint] == ["delete_document"]
-    # ask_documents pays a model call and differs each time; ingest_document
-    # adds a document, then refuses the same one.
+    # ask_documents and extract_fields pay a model call and differ each time;
+    # ingest_document adds a document, then refuses the same one.
     assert sorted(n for n, t in tools.items() if not t.annotations.idempotent_hint) == [
         "ask_documents",
+        "extract_fields",
         "ingest_document",
     ]
     for name in ("search_documents", "ask_documents"):

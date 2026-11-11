@@ -32,6 +32,7 @@ Role = Literal[
     "answer_direct",
     "summarize",
     "eval_judge",
+    "extraction",
     "embedding",
 ]
 ROLES: tuple[Role, ...] = (
@@ -42,6 +43,7 @@ ROLES: tuple[Role, ...] = (
     "answer_direct",
     "summarize",
     "eval_judge",
+    "extraction",
     "embedding",
 )
 

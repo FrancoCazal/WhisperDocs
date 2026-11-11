@@ -222,6 +222,7 @@ async def test_the_status_route_reads_the_record():
         "answer_direct",
         "summarize",
         "eval_judge",
+        "extraction",
         "embedding",
     ]
     classifier = body["roles"]["classifier"]

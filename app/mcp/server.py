@@ -5,6 +5,8 @@ Any MCP client (Claude Code, Claude Desktop, Cursor) gets the knowledge base:
 - `search_documents`: the chunks for a query, with their text. Nothing is
   generated, so the client answers with its own model.
 - `ask_documents`: an answer from WhisperDocs' own model, with its citations.
+- `extract_fields`: the fields a JSON Schema names, out of one document, each
+  with the passage that states it (audit M-8).
 - `list_collections` and `list_documents`: the ids that scope a search.
 - a resource per document, `whisperdocs://documents/{id}`: its full text.
 - `ingest_document`, `delete_document` and `move_document`, which write
@@ -12,8 +14,8 @@ Any MCP client (Claude Code, Claude Desktop, Cursor) gets the knowledge base:
   before a deletion or a move, and a row in `audit_log` for every call.
 
 The tools call the services the API's routes call (`app/services/search.py`,
-`answering.py`, `catalog.py`, `ingestion.py`, `documents.py`), so a tool
-returns what its route returns.
+`answering.py`, `catalog.py`, `extraction.py`, `ingestion.py`,
+`documents.py`), so a tool returns what its route returns.
 
 Two transports:
 
@@ -52,10 +54,11 @@ from app.mcp.common import DOCUMENT_URI, document_uri
 from app.mcp.common import why as _why
 from app.mcp.writes import add_write_tools
 from app.models import Collection, Document
+from app.schemas.extraction import ExtractionResponse
 from app.schemas.mcp import CollectionList, DocumentEntry, DocumentList
 from app.schemas.query import QueryRequest, QueryResponse
 from app.schemas.retrieve import RetrieveRequest, RetrieveResponse
-from app.services import catalog
+from app.services import catalog, extraction
 from app.services.answering import GenerationError, answer_question
 from app.services.embeddings import EmbeddingError, EmbeddingProvider, get_embedder
 from app.services.search import ScopeError, resolve_scope, search
@@ -79,6 +82,8 @@ chunk names the section it sits in and, for a PDF, its pages.
 to quote or reason over. When the first passages miss, call it again with \
 other wording or a narrower scope.
 - ask_documents answers with WhisperDocs' own model and cites its passages.
+- extract_fields fills a JSON Schema's fields from one document, each with the \
+words that state it.
 - list_collections and list_documents give the ids that scope both.
 - A document's full text is the resource whisperdocs://documents/{id}.
 - ingest_document adds a file; delete_document and move_document ask the user \
@@ -343,6 +348,65 @@ def build_server(
         if document is None or not access.reaches(document.collection_id):
             raise ResourceNotFoundError(f"Document {document_id} not found")
         return document.raw_text
+
+    @server.tool(
+        title="Extract fields from a document",
+        annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=False, openWorldHint=False),
+    )
+    async def extract_fields(
+        document_id: Annotated[int, Field(description="The document (an id from list_documents).")],
+        json_schema: Annotated[
+            dict[str, Any],
+            Field(
+                description="A JSON Schema object whose properties are the fields: each a "
+                "string, number, integer or boolean, an enum, or a list of one of them, with "
+                "a description of what to look for. `required` lists the ones the document "
+                "should state."
+            ),
+        ],
+        instructions: Annotated[
+            str | None,
+            Field(max_length=2000, description="Anything else the extraction should know."),
+        ] = None,
+        *,
+        ctx: Context,
+    ) -> ExtractionResponse:
+        """The fields a JSON Schema names, out of one document, each with the
+        passage and the words that state it, by WhisperDocs' own model.
+
+        A field the document does not state is null; a required one is also in
+        `missing`. Check the fields in `unverified`: their quote is not in the
+        document word for word. Each call pays for a model call. To read the
+        document yourself, use its resource instead."""
+        access = caller(ctx)
+        async with sessions() as db:
+            owner = await db.scalar(
+                select(Document.collection_id).where(Document.id == document_id)
+            )
+            if owner is None or not access.reaches(owner):
+                raise ToolError(f"Document {document_id} not found: list_documents gives the ids.")
+            # A schema the extraction cannot take is refused before anything is paid for.
+            try:
+                extraction.field_specs(json_schema)
+            except extraction.SchemaError as exc:
+                raise ToolError(f"The schema: {exc}") from exc
+            spend(ctx, access)
+            try:
+                return await extraction.extract_fields(
+                    db,
+                    embedder(),
+                    document_id=document_id,
+                    json_schema=json_schema,
+                    instructions=instructions,
+                )
+            except extraction.DocumentNotFoundError as exc:
+                raise ToolError(str(exc)) from exc
+            except EmbeddingError as exc:
+                logger.exception("mcp_extract_search_failed")
+                raise ToolError(f"Searching the document failed: {_why(exc)}.") from exc
+            except extraction.ExtractionError as exc:
+                logger.exception("mcp_extract_failed")
+                raise ToolError(f"Extraction failed: {_why(exc)}.") from exc
 
     add_write_tools(server, sessions=sessions, embedder=embedder, spend=spend)
     return server
