@@ -41,6 +41,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.metrics import agent_turn_duration_seconds
 from app.models import Collection, Conversation
+from app.services.lang import reply_language
 from app.services.twilio_client import failure_fields, send_whatsapp_message
 from app.services.whatsapp.formatter import format_for_whatsapp
 from app.telemetry import AGENT_WORKFLOW, error_type, workflow
@@ -206,7 +207,7 @@ async def _answer(agent: Any, db: AsyncSession, *, sender: str, body: str, threa
     answer = final.content if isinstance(final.content, str) else str(final.content)
     citations = result.get("retrieved_chunks") or []
 
-    formatted = format_for_whatsapp(answer, citations or None)
+    formatted = format_for_whatsapp(answer, citations or None, language=reply_language([body]))
     if is_new_thread:
         formatted = NEW_THREAD_DISCLAIMER + formatted
     await _send(sender, formatted, thread_id)
