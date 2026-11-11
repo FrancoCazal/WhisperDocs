@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import IntegrityError
 
@@ -270,8 +270,8 @@ async def chunk_rows(
 # --- a file, into a collection -----------------------------------------------------
 
 MB = 1024 * 1024
-# The largest file every way in takes: the upload routes and the MCP
-# server's ingest_document.
+# The largest file every way in takes: the upload routes, the MCP server's
+# ingest_document and the MCP connector (app/connectors/mcp_sync.py).
 MAX_DOCUMENT_BYTES = 10 * MB
 # `documents.filename` and `documents.title` are String(300).
 MAX_NAME_LENGTH = 300
@@ -326,15 +326,18 @@ async def store_document(
     *,
     collection_id: int,
     title: str | None = None,
+    source_uri: str | None = None,
+    replaces: int | None = None,
     audit: Callable[[Document], object] | None = None,
 ) -> Document:
     """Embed an extracted file and store it in the collection, in one commit.
 
     The same document twice in a collection is refused before anything is
     paid for; a chunk another document holds too is stored again, with that
-    chunk's vector (audit R12). `audit` builds a row committed with the
-    document (an `AuditLog`), so a write and its record go in together or
-    not at all.
+    chunk's vector (audit R12). `replaces` is a document deleted in the same
+    commit: the earlier version of a synced source (`source_uri`). `audit`
+    builds a row committed with the document (an `AuditLog`), so a write and
+    its record go in together or not at all.
 
     Raises DuplicateDocumentError, or the embedder's EmbeddingError.
     """
@@ -352,6 +355,9 @@ async def store_document(
         )
     embeddings = await embed_chunks(fresh, embedder, reused)
 
+    if replaces is not None:
+        # Its vectors were read above, so its unchanged chunks are reused.
+        await db.execute(delete(Document).where(Document.id == replaces))
     document = Document(
         collection_id=collection_id,
         title=title or extracted.filename,
@@ -359,6 +365,7 @@ async def store_document(
         file_type=extracted.file_type,
         raw_text=extracted.raw_text,
         content_hash=digest,
+        source_uri=source_uri,
         chunk_count=len(fresh),
         total_tokens=sum(chunk.token_count for chunk in fresh),
         language=extracted.language,

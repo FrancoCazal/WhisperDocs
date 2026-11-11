@@ -27,6 +27,10 @@ class Document(Base):
     # Null on the later copies of a document that alembic 0021 found twice
     # in one collection, and on rows written without it.
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Where a synced document came from: the URI of the MCP resource it was
+    # read from (app/connectors/mcp_sync.py, audit M-6), unique per
+    # collection. Null on uploads.
+    source_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     total_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     language: Mapped[str | None] = mapped_column(String(8), nullable=True)
@@ -46,4 +50,6 @@ class Document(Base):
 
     __table_args__ = (
         Index("uq_documents_collection_content", "collection_id", "content_hash", unique=True),
+        # Nulls are distinct, so uploads, which have none, are not constrained.
+        Index("uq_documents_collection_source", "collection_id", "source_uri", unique=True),
     )
