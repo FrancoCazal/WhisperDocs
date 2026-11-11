@@ -25,14 +25,21 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 - **Multi-provider routing** — Gemini 3.8 Flash for cheap hot-path nodes (classifier, query rewrite, direct answers); AWS Bedrock Claude for grounded RAG generation. Provider auto-detected from model ID; startup fails on a model ID that can't be routed.
 - **Token-level SSE streaming** — `astream_events` v2 + custom event dispatch. Frontend renders tokens as they arrive, with progress markers per node.
 - **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE. Parsing runs off the event loop, and a job cut short by a restart ends as `failed`, not stuck.
-- **Eval suite (50-query golden set)** — single-turn retrieval + generation path. LLM-as-judge for correctness + hallucination, retrieval precision/recall@k, latency p50/p95, generation cost USD. Diff between runs for regression detection.
+- **Seven formats, citations that say where** — PDF, DOCX, XLSX, CSV, HTML, Markdown and plain text, all extracted to one shape (headings, markdown tables, page breaks). Chunks follow the document's sections and keep tables whole or repeat their header; each citation names its section and, for a PDF, its pages.
+- **Eval suite (50-query golden set)** — single-turn retrieval + generation path. LLM-as-judge for correctness + faithfulness (unsupported claims), retrieval precision/recall@k, latency p50/p95, generation cost USD. Diff between runs for regression detection.
 - **Cost tracking** — per-call USD via `pricing.py`, persisted on `query_logs`. Single source for runner, API, dashboard.
 - **Logs, metrics and traces** — `structlog` JSON output, Prometheus `/metrics` (HTTP rate, errors and latency per route, turn duration, tokens, retrieval relevance, errors) with a Grafana dashboard and alert rules, and an OpenTelemetry trace per turn: each graph node, model call, embedding and retrieval, with its tokens and cost, under the GenAI semantic conventions. A local Langfuse shows them (see [Tracing](#tracing)).
 - **WhatsApp integration** — full agent pipeline over Twilio webhooks, answered in the background so Twilio's 15 s timeout never cuts a turn.
 - **MCP server** — the knowledge base for Claude Code, Claude Desktop and Cursor:
-  search, answers with citations, the lists and a resource per document, over
-  stdio or over HTTP at `/mcp`, where each key reaches only its collections.
-  Each tool calls the same service as its REST route.
+  search, answers with citations, fields extracted from a document with the
+  words that state each, the lists and a resource per document, over stdio or
+  over HTTP at `/mcp`, where each key reaches only its collections. A key made
+  to write also adds, deletes and moves documents, after the user confirms a
+  deletion or a move, and every write is in an audit log. Each tool calls the
+  same service as its REST route.
+- **MCP connector** — WhisperDocs as an MCP client, for ingestion: it reads an
+  MCP server's resources into a collection and keeps them in step on later
+  runs, re-embedding only what changed.
 
 ---
 
@@ -121,8 +128,8 @@ Both carry `fixtures/`, so `python -m scripts.seed_eval` works without compose's
 ## Environment
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs
-DB_PORT=5435                     # the compose database's port on the host; change it if 5435 is taken
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5442/whisperdocs
+DB_PORT=5442                     # the compose database's port on the host; change it if 5442 is taken
 OPENAI_API_KEY=sk-...
 
 # Generation providers
@@ -161,6 +168,7 @@ See `.env.example` for every knob.
 | `GET` | `/api/v1/documents/jobs/{job_id}/stream` | SSE: ingestion progress |
 | `POST` | `/api/v1/documents/bulk-delete` | Delete many documents |
 | `POST` | `/api/v1/documents/bulk-move` | Move documents between collections |
+| `POST` | `/api/v1/documents/{document_id}/extract` | Fields a JSON Schema names, each with the chunk and the words that state it |
 | `POST` | `/api/v1/query` | Single-turn RAG query |
 | `POST` | `/api/v1/retrieve` | The chunks for a query, without an answer (for other agents) |
 | `GET` | `/api/v1/query/history` | Paginated query log |
@@ -179,14 +187,50 @@ See `.env.example` for every knob.
 | `GET` | `/api/v1/eval/results` | List past eval reports |
 | `GET` | `/api/v1/admin/settings` | Runtime settings snapshot |
 | `GET` | `/api/v1/admin/model-status` | Each model role's last calls, from real traffic (no model is called) |
+| `GET` | `/api/v1/admin/audit-log` | The MCP server's writes, newest first, done or not |
 | `GET` | `/api/v1/health` | Health check (`?deep=true` for full probe and each model role's state); 503 when degraded |
 | `GET` | `/api/v1/metrics` | Prometheus metrics |
 
-Uploads accept PDF, Markdown and plain text, up to 10 MB per file. Batches
-take up to 20 files and 50 MB in total. A larger body is rejected with 413
-before it is parsed. A `.pdf` must carry the PDF header, a `.md` or `.txt`
-must not contain binary data, and file names and titles are capped at 300
-characters. List endpoints take `limit` between 1 and 200.
+Uploads accept PDF, DOCX, XLSX, CSV, HTML, Markdown and plain text, up to 10 MB
+per file. Batches take up to 20 files and 50 MB in total. A larger body is
+rejected with 413 before it is parsed. A `.pdf` must carry the PDF header, a
+`.docx` or `.xlsx` must be a zip archive, a text format must not contain
+binary data, and file names and titles are capped at 300 characters. List
+endpoints take `limit` between 1 and 200.
+
+What each format becomes:
+
+| Format | Extracted as | A citation names |
+|---|---|---|
+| PDF | each page's text, each table once as a markdown table where it sits | its pages |
+| DOCX | paragraphs and tables in order; Title and Heading 1-6 as headings; list items | its section |
+| XLSX | each sheet as a heading over a markdown table of its cells | its sheet |
+| CSV | one markdown table, the delimiter sniffed | — |
+| HTML | headings, paragraphs, lists, tables and `<pre>`; no scripts, styles or markup | its section |
+| Markdown | as written | its section |
+| Plain text | as written | — |
+
+Text files are read as UTF-8, by their byte order mark (UTF-16, UTF-32), or as
+the encoding `charset-normalizer` finds. Not read: scanned PDFs (there is no
+OCR, and one with no text layer is a 422), legacy `.doc` and `.xls`, DOCX
+headers, footers, footnotes and text boxes, and XLSX formulas never
+calculated. A DOCX or XLSX that would expand past 100 MB is refused unopened,
+and so is a document past 20 million characters of text.
+
+Chunks hold up to 500 tokens. A heading starts a new one once the current one
+has 250 tokens, so short sections share a chunk; each chunk starts with the
+headings above it, a table that does not fit is cut between rows with its
+header repeated, and a paragraph longer than a chunk is cut at a sentence or
+word with 50 tokens of overlap. Chunks stored before this have no section or
+pages: upload the document again to get them.
+
+A collection holds each document once: uploading a file whose extracted text
+the collection already holds is a 409 that names the document holding it,
+decided before anything is embedded, and a move into a collection that holds
+the same text leaves that document where it is, with the reason in `errors`.
+Every document keeps all its chunks; a chunk whose text another document has
+too reuses that chunk's vector when the same embedding model made it, and a
+text a document repeats is embedded once.
 
 Full reference at `/docs` (FastAPI auto-generated OpenAPI). Every operation has a
 fixed `operationId` (`retrieve_chunks`, `answer_question`, `list_collections`, ...),
@@ -200,21 +244,26 @@ so a client generated from the schema, or an agent's tool list, keeps its names;
 WhisperDocs is also an MCP server, so Claude Code, Claude Desktop, Cursor or
 any other MCP client can use the knowledge base. It runs over stdio, against
 the compose Postgres, or over Streamable HTTP at `/mcp`, inside the API,
-where each key reaches only its collections. No tool changes the knowledge
-base.
+where each key reaches only its collections.
 
 | Tool | What it returns |
 |------|-----------------|
 | `search_documents` | The passages for a query, with their text and document, and nothing generated: the client answers with its own model. Scoped by `collection_id` or `document_id`; `top_k` from 1 to 20. |
 | `ask_documents` | WhisperDocs' own answer, with its citations: `[n]` in the answer is `citations[n-1]`. It pays for a model call and is saved to the query history. |
+| `extract_fields` | The fields a JSON Schema names, out of one document, each with the chunk and the words that state it; null when the document does not say. It pays for a model call. |
 | `list_collections` | The collections, with their document, chunk and token totals. |
 | `list_documents` | A page of documents, each with its resource URI. |
+| `ingest_document` | Adds a file to a collection, as an upload does: text for `.md`, `.txt`, `.csv` and `.html`, base64 for `.pdf`, `.docx` and `.xlsx`, up to 10 MB. |
+| `delete_document` | Deletes a document, once the user confirms it. |
+| `move_document` | Moves a document to another collection, once the user confirms it. |
 
 Each document is also a resource, `whisperdocs://documents/{id}`, holding its
 full text. Each tool calls the service its REST route calls (`/retrieve`,
-`/query`, the lists), so both return the same thing. The server speaks the
-current MCP spec (2026-07-28) and the older `initialize` handshake that many
-clients still use. [ADR 0005](docs/adr/0005-mcp-server.md) has the design.
+`/query`, `/documents/{id}/extract`, the upload, the lists, the delete and the
+move), so both return the same thing. The server speaks the current MCP spec
+(2026-07-28) and the older `initialize` handshake that many clients still use.
+[ADR 0005](docs/adr/0005-mcp-server.md) has the design, and
+[ADR 0008](docs/adr/0008-mcp-writes-confirmed-and-audited.md) the writes.
 
 With the stack up (`docker compose up`; after pulling this change, rebuild
 the API image once with `docker compose build api`), point the client at the
@@ -246,7 +295,7 @@ entry:
 ```
 
 Without Docker, `uv run python -m app.mcp` starts it from a checkout whose
-`DATABASE_URL` reaches the database (`localhost:5435` with the compose
+`DATABASE_URL` reaches the database (`localhost:5442` with the compose
 defaults).
 
 - **No auth over stdio.** The client starts the process on your machine, and
@@ -265,6 +314,7 @@ should see ([ADR 0007](docs/adr/0007-mcp-over-http-scoped-keys.md)):
 docker compose exec api python -m app.mcp.keys create claude-code --collection 3
 # wdk_...   shown once: only its SHA-256 is stored
 docker compose exec api python -m app.mcp.keys create cursor --collection 3 --collection 5
+docker compose exec api python -m app.mcp.keys create editor --collection 3 --write
 docker compose exec api python -m app.mcp.keys create admin --all
 docker compose exec api python -m app.mcp.keys list
 docker compose exec api python -m app.mcp.keys revoke cursor
@@ -299,11 +349,59 @@ claude mcp add --transport http whisperdocs http://localhost:8000/mcp \
   collection. Unset, `/mcp` is open, as the API is: a client with no key
   reaches everything. Set, a request without a valid key is a 401. A key
   goes in `Authorization: Bearer` or `X-API-Key`.
-- **Shared limits.** `search_documents` and `ask_documents` count against
-  the API's questions limit, per key.
+- **Shared limits.** `search_documents`, `ask_documents` and `extract_fields`
+  count against the API's questions limit, per key; `ingest_document`
+  against the uploads limit.
 - **localhost only.** `/mcp` answers the Host headers in
   `MCP_ALLOWED_HOSTS` (localhost by default), the SDK's guard against DNS
   rebinding. Add the API's name to reach it by that name.
+
+### Writes: a key that writes, the user's yes, and a log
+
+- **A key reads only** unless made with `--write`; then it adds, deletes and
+  moves documents in the collections it reaches, and a move needs both. The
+  API's own key, an open API and stdio write, as the REST API lets them.
+- **The user confirms** a deletion or a move, through MCP elicitation: the
+  client shows the question ("Delete "a.md" (document 7, 12 chunks) from the
+  collection "Docs"? It cannot be undone.") and the server acts only on a
+  yes. Claude Code, Cursor and VS Code declare elicitation; Claude Code
+  serves it in interactive sessions. A client that cannot ask its user is
+  refused, and so is a client on MCP 2025-11-25 over HTTP, whose stateless
+  exchange has no channel for the question; over stdio either era works.
+  `ingest_document` asks nothing: it only adds, and refuses a text the
+  collection holds.
+- **Every write is logged**, done or not: who (the key's name, `api-key`,
+  `open` or `stdio`), the tool, the document and collection, and whether it
+  was done, declined, cancelled, refused or failed, with why.
+  `GET /api/v1/admin/audit-log` pages the log, newest first.
+
+### Reading another MCP server's resources
+
+`python -m app.connectors.mcp_sync` turns WhisperDocs into an MCP client that
+reads a server's resources into a collection. A later run leaves the ones
+whose text did not change alone, replaces the ones that did, re-embedding only
+the chunks that changed, and adds the new ones; it deletes nothing. No model
+is involved.
+
+```bash
+# A server over stdio: its command goes after --. --env passes it a variable.
+python -m app.connectors.mcp_sync --collection 3 --dry-run -- npx -y @scope/some-server
+# Over HTTP, with a token from an environment variable.
+python -m app.connectors.mcp_sync --collection 3 --url https://host/mcp --bearer-env SERVER_TOKEN
+# Another WhisperDocs, its documents only.
+python -m app.connectors.mcp_sync --collection 3 --url http://other:8000/mcp \
+  --bearer-env OTHER_KEY --prefix whisperdocs://documents/
+```
+
+It reads what `resources/list` names (`--prefix` narrows it), or only the
+URIs given with `--uri` or `--uri-file` (one a line). The reference
+filesystem server lists nothing on purpose, and reads any file under its
+directories by URI, so pass it the files:
+`--uri-file uris.txt -- npx -y @modelcontextprotocol/server-filesystem /docs`,
+with lines such as `file:///docs/runbook.md`. `--dry-run` compares and embeds
+and writes nothing, and needs no embedding key. Each line of output is a
+resource: added, updated, unchanged, skipped (a format WhisperDocs does not
+read, a text the collection already holds, too large) or failed.
 
 ---
 
@@ -449,12 +547,22 @@ What it measures: the single-turn retrieval + generation path
 directly. It does not go through the agent graph, so there is no classifier, query rewrite or
 conversation history; routing is covered by the graph and router unit tests in `tests/agent/`.
 
-Metrics: accuracy, hallucination rate, retrieval precision@k and recall@k (averaged over the
+Metrics: accuracy, unsupported-claim rate, retrieval precision@k and recall@k (averaged over the
 in-scope queries), latency avg/p50/p95, and generation cost in USD (RAG model only; judge calls
-and embeddings are not included). Bucketed by difficulty and category. The run aborts with exit
+and embeddings are not included). Bucketed by difficulty and category.
+
+An unsupported claim is one the retrieved context does not support, true or not: the rate
+measures faithfulness to the context, not facts. A report gives it over the in-scope items,
+since the out-of-scope ones are mostly refusals with nothing to support and dilute it, and over
+all items. The all-items figure is the one the API (`hallucination_rate`), the thresholds
+(`AGENT_EVAL_MAX_HALLUCINATION_RATE`, `--max-hallucination`) and `runner diff` read, and it keeps
+that name there so stored reports and scripts still work.
+
+The run aborts with exit
 code 2 when more than 10% of the judge calls fail (`AGENT_EVAL_MAX_JUDGE_ERROR_RATE`), instead of
 scoring those items as failures. A finished run exits 3 when its accuracy is below 80% or its
-hallucination rate above 10% (`AGENT_EVAL_MIN_ACCURACY`, `AGENT_EVAL_MAX_HALLUCINATION_RATE`, or
+unsupported-claim rate (all items) above 10% (`AGENT_EVAL_MIN_ACCURACY`,
+`AGENT_EVAL_MAX_HALLUCINATION_RATE`, or
 `--min-accuracy` and `--max-hallucination`), so a script or CI job fails on a regression. The
 five full runs of 2026-04-28 scored 88-96% and 2-6%.
 
@@ -462,6 +570,37 @@ The `Eval suite` workflow runs it from GitHub Actions, by hand only, since it ca
 `smoke` (10 items) or `full`. It needs the provider secrets (`OPENAI_API_KEY`, `GCP_PROJECT`,
 `GCP_SA_KEY_JSON`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`); the reports go to the run's
 artifacts.
+
+### How the judge rules
+
+Two judge calls score an answer, and each one reasons before it rules.
+
+- **Correctness.** An in-scope item lists the `required_facts` a correct answer must state and
+  the `optional_facts` it may add. The judge goes through the required facts one by one, says
+  which the answer states (in any wording) and which of its statements contradict one, and the
+  verdict follows in code: it passes only when every required fact is stated and nothing
+  contradicts one. A report names what is missing (`facts_missing`) and what counts against the
+  answer (`wrong_claims`), so a failure says why. An answer is not failed for lacking a detail
+  nobody listed, which is what the earlier whole-answer comparison did to "What are the two
+  phases of a RAG system?" for not detailing the second one. An item with no facts is still
+  compared with its `expected_answer` as a whole, and an out-of-scope item is judged on whether
+  the system refused.
+- **Grounding.** The judge lists the claims in the answer that the context does not support,
+  whether or not they are true; the answer is grounded when it lists none. `[n]` citation
+  markers are not claims.
+
+Whether this judge rules as a careful reader would is measured, not assumed. `label` draws a
+sample of a run's verdicts, balanced by what the judge ruled so the failures are in it, and
+writes what the judge read without what it decided; you fill in `human` (`true` when the answer
+is correct, or fully grounded) on each line; `agreement` sets your rulings against the judge's
+and reports the agreement, Cohen's kappa and the verdicts you split on. No model is called,
+and `label` refuses to overwrite a file of rulings.
+
+```bash
+python -m app.eval.runner label eval/results/<run>.json --n 50 -o eval/results/labels.jsonl
+# fill "human" in each line of eval/results/labels.jsonl
+python -m app.eval.runner agreement eval/results/<run>.json eval/results/labels.jsonl
+```
 
 ### Adversarial set
 
@@ -508,10 +647,12 @@ One run is one draw: the same code and settings land a few points apart from run
 the judge can rule the other way on the same answer. So:
 
 - **Run config.** Each report records what it ran with: the commit (and whether the tree had
-  uncommitted changes), a hash of the dataset, the collection, `top_k`, the concurrency, what
-  the RAG model and the judge were sent (temperature, effort or thinking level), the embedding
-  model, the reranker and MMR. The Markdown report shows it, with the 95% Wilson interval of
-  the accuracy and the hallucination rate: 48 right out of 50 is 86.5% to 98.9%.
+  uncommitted changes), a hash of the dataset, the collection and how many chunks it held with
+  a hash of their texts, `top_k`, the concurrency, what the RAG model and the judge were sent
+  (temperature, effort or thinking level), the embedding model, the reranker and MMR. The
+  Markdown report shows it, with the 95% Wilson interval of the accuracy and the hallucination
+  rate: 48 right out of 50 is 86.5% to 98.9%. A diff warns when two runs searched different
+  chunks: a collection seeded again with another chunker, or with documents added or changed.
 - **Eval temperature.** A run answers at `AGENT_EVAL_RAG_TEMPERATURE` (0), not at the chat's
   0.3. Claude 4.7+ and Gemini 3+ take no temperature, so for them it changes nothing.
 - **Judge cache.** The judge keeps its verdicts in `eval/cache/judge.jsonl`
@@ -535,22 +676,24 @@ the judge can rule the other way on the same answer. So:
   keeps their ids and a hash of their text, and an answer whose chunks are gone or changed is
   left out of the grounding check. It calls the judge's paid API.
 
-Dataset: JSONL at `eval/golden/queries.jsonl`.
+Dataset: JSONL at `eval/golden/queries.jsonl`. Each in-scope item carries `required_facts` and
+`optional_facts` (see [How the judge rules](#how-the-judge-rules)).
 
 ### Last full run
 
 | Metric | Value |
 |---|---|
 | Answer accuracy (LLM judge) | 96% (48/50) |
-| Hallucination rate | 6% (3/50) |
+| Unsupported-claim rate, in-scope items (faithfulness) | 7.3% (3/41) |
+| Unsupported-claim rate, all items (the gates' hallucination rate) | 6% (3/50) |
 | Retrieval precision@k / recall@k | 91.5% / 92.1% (40 of the 41 in-scope queries) |
 | Out-of-scope queries refused by the RAG prompt | 9/9 |
 | Single-turn RAG latency p50 / p95 | 5.9 s / 9.1 s |
-| Generation cost (RAG model only) | $0.63 for the 50 queries |
+| Generation cost (RAG model only) | $0.63 for the 50 queries, about $0.013 per answer |
 
 Run `b2b0899a` on 2026-04-28, with Claude Sonnet 4.5 on Bedrock for generation. The full
 report, including the five failing cases, is in
-[`eval/reports/2026-04-28_b2b0899a.md`](eval/reports/2026-04-28_b2b0899a.md). Three caveats:
+[`eval/reports/2026-04-28_b2b0899a.md`](eval/reports/2026-04-28_b2b0899a.md). Caveats:
 
 - It used the original Spanish version of the seed corpus and the golden set. This repo ships
   the English translation, which is why the questions in that report are in Spanish; a run
@@ -558,6 +701,16 @@ report, including the five failing cases, is in
 - It is one run of a stochastic pipeline. The seven full runs that day, made while tuning the
   engine, ranged from 80% to 96% accuracy.
 - It predates this snapshot by three weeks and has not been re-run against it.
+- It was judged by the earlier judge, which ruled before it reasoned and compared each answer
+  with the expected one as a whole. The judge in this repo checks facts (see
+  [How the judge rules](#how-the-judge-rules)), so its verdicts are not comparable with these,
+  and it has not been run yet.
+- The three unsupported claims are claims the retrieved context did not back, not necessarily
+  false ones: #38's answer explains how SQL injection works, which the documents do not.
+- The cost per answer is the Sonnet generation call alone. A chat turn also pays the
+  Gemini Flash classifier, the query rewrite on follow-ups and the query embedding. The
+  chat footer prices the generation too; the turn's trace carries the total
+  (`whisperdocs.cost_usd`, see [Tracing](#tracing)).
 
 That run averaged retrieval only over queries with a non-zero precision or recall, which
 dropped the one in-scope query that retrieved no chunk from its expected source; over all 41
@@ -604,22 +757,26 @@ hybrid was vector-only in practice. Details, and why MMR at the default λ costs
 
 ```bash
 uv run pytest -q
-# 150 passed, 9 skipped
+# 778 passed, 83 skipped
 
 # Database tests (full-text, HNSW, job cleanup) against a real Postgres, migrated with `alembic upgrade head`:
-TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5435/whisperdocs_test uv run pytest -q
-# 159 passed
+TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5442/whisperdocs_test uv run pytest -q
+# 861 passed
 ```
 
-Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), MCP (`tests/test_mcp.py`: an in-memory MCP client, and the stdio process; `test_mcp_http.py`: the key check in front of `/mcp`), database (`tests/test_retrieval_db.py`, `test_mcp_db.py`, `test_mcp_http_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`). No test reaches a model or embedding API, even with credentials in `.env`: `tests/conftest.py` fails any test that resolves a host other than this machine or the test database.
+Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_document_formats.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`, `test_extraction.py`, `test_mcp_sync.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), MCP (`tests/test_mcp.py`: an in-memory MCP client, and the stdio process; `test_mcp_http.py`: the key check in front of `/mcp`), database (`tests/test_retrieval_db.py`, `test_mcp_db.py`, `test_mcp_http_db.py`, `test_mcp_writes_db.py`, `test_mcp_sync_db.py`, `test_extraction_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`). No test reaches a model or embedding API, even with credentials in `.env`: `tests/conftest.py` fails any test that resolves a host other than this machine or the test database.
 
 CI (`.github/workflows/tests.yml`) runs, on every push to `main` and every pull request:
 - `pre-commit run --all-files`: ruff, ruff format and file hygiene;
 - gitleaks over the full history;
 - pip-audit over every locked package;
-- mypy (`app/agent`, `app/eval`, `app/mcp` and what they import);
+- mypy (`app/agent`, `app/eval`, `app/mcp`, `app/connectors` and what they import);
 - `alembic check`, after the migrations: the models match the schema they build;
-- the full suite against a pgvector Postgres service, database tests included.
+- the full suite against a pgvector Postgres service, database tests included, with the
+  coverage of `app/`: under 88% fails (90.6% on 2026-11-10; a run without a database measures
+  about 87%, since the database tests are skipped). Locally: `uv run pytest --cov`. The
+  default tracer does not see an MCP tool's code after its first `await` under the SDK's
+  in-memory client, which undercounts the tools; `COVERAGE_CORE=sysmon` measures 92.3%.
 
 Dependabot proposes weekly updates for Python, npm, GitHub Actions and Docker images.
 
@@ -634,11 +791,13 @@ app/
                   conversations, notes, collections, eval, admin, webhooks,
                   health, metrics
   mcp/            MCP server (stdio, and /mcp over HTTP): tools, document
-                  resources, scoped keys
+                  resources, scoped keys, the write tools
+  connectors/     mcp_sync: another MCP server's resources into a collection
   services/       llm/ (providers + pricing), retriever, embedder, chunker,
                   reranker, mmr, retrieval_pipeline, ingestion, text_extractor,
-                  rag, lang, whatsapp/, twilio_client; search, answering and
-                  catalog, shared by the API routes and the MCP tools
+                  rag, lang, whatsapp/, twilio_client; search, answering,
+                  catalog, documents, extraction and audit, shared by the API
+                  routes and the MCP tools
   models/         SQLAlchemy ORM
   schemas/        Pydantic
   eval/           Evaluation framework (runner, judge, evaluator, report, metrics)
