@@ -80,9 +80,11 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # No type information: boto3, botocore and langdetect ship no stubs, and
-# sentence-transformers and torch come with an optional extra.
+# sentence-transformers and torch come with an optional extra. openpyxl's
+# stubs are a separate package the extractor does not need.
 module = [
     "boto3", "boto3.*", "botocore", "botocore.*", "langdetect", "sentence_transformers", "torch",
+    "openpyxl", "openpyxl.*",
 ]
 ignore_missing_imports = true
 

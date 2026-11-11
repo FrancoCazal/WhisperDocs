@@ -20,7 +20,6 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from app.api.v1 import documents
 from app.db import get_db
 from app.main import app
 from app.models import Chunk, Collection, Document
@@ -165,11 +164,19 @@ async def test_two_uploads_at_once_are_kept_apart_by_the_index(api, monkeypatch)
     await session.commit()
     held_id = held.id
 
-    async def misses_it(*_args) -> None:
-        return None
+    real = ingestion.ensure_new_document
+    checks = 0
+
+    async def misses_it_once(*args) -> None:
+        # The check before embedding misses it; the one after the index
+        # refused the commit finds the holder.
+        nonlocal checks
+        checks += 1
+        if checks > 1:
+            await real(*args)
 
     # As if the other upload committed between the check and the insert.
-    monkeypatch.setattr(documents, "ensure_new_document", misses_it)
+    monkeypatch.setattr(ingestion, "ensure_new_document", misses_it_once)
 
     r = await _upload(client, cid, "second.txt", text)
 

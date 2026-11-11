@@ -75,7 +75,8 @@ header against DNS rebinding when it is told the hosts to allow.
   network, OAuth would replace the keys.
 - **Read-only, still.** No tool writes, so there is no audit log and no
   elicitation yet. Write tools need a key that may write, an `audit_log`
-  table and a confirmation before a delete or a move (BE-36).
+  table and a confirmation before a delete or a move (BE-36). They came
+  later: [ADR 0008](0008-mcp-writes-confirmed-and-audited.md).
 - **Collections, not documents.** A key reaches whole collections. Finer
   scopes would need the same check in every query, as collections have it
   now.

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +24,11 @@ class ApiKey(Base):
     prefix: Mapped[str] = mapped_column(String(16), nullable=False)
     # The collections the key reaches; null reaches all of them.
     collection_ids: Mapped[list[int] | None] = mapped_column(ARRAY(Integer), nullable=True)
+    # Whether the key may add, delete and move documents in its collections
+    # (BE-36). Keys made before alembic 0023 only read.
+    can_write: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

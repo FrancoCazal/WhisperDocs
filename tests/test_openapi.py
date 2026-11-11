@@ -16,6 +16,7 @@ OPERATIONS = {
     "GET /api/v1/metrics": "get_metrics",
     "GET /api/v1/admin/settings": "get_settings",
     "GET /api/v1/admin/model-status": "get_model_status",
+    "GET /api/v1/admin/audit-log": "list_audit_log",
     "GET /api/v1/collections": "list_collections",
     "POST /api/v1/collections": "create_collection",
     "GET /api/v1/collections/{collection_id}": "get_collection",

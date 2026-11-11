@@ -1,12 +1,14 @@
 """`python -m app.mcp.keys`: the keys of the MCP server over HTTP (audit M-2).
 
-    python -m app.mcp.keys create NAME --collection 3 [--collection 5]
-    python -m app.mcp.keys create NAME --all
+    python -m app.mcp.keys create NAME --collection 3 [--collection 5] [--write]
+    python -m app.mcp.keys create NAME --all [--write]
     python -m app.mcp.keys list
     python -m app.mcp.keys revoke NAME
 
 A key reaches the collections it was made for, or every one with `--all`;
 one of the two is required, so a key reaches everything only when asked to.
+It reads only, unless made with `--write`: then it may also add, delete and
+move documents in those collections (BE-36).
 `create` prints the key once: only its SHA-256 is stored. Under compose:
 `docker compose exec api python -m app.mcp.keys ...`.
 """
@@ -42,11 +44,17 @@ class KeyInfo:
     collection_ids: list[int] | None
     created_at: datetime
     revoked_at: datetime | None
+    can_write: bool = False
 
 
-async def create_key(db: AsyncSession, name: str, collection_ids: Sequence[int] | None) -> str:
+async def create_key(
+    db: AsyncSession,
+    name: str,
+    collection_ids: Sequence[int] | None,
+    can_write: bool = False,
+) -> str:
     """Store a new key and return it. `collection_ids` None reaches every
-    collection."""
+    collection; `can_write` lets it add, delete and move documents there."""
     ids = None if collection_ids is None else sorted(set(collection_ids))
     if ids is not None:
         if not ids:
@@ -57,7 +65,13 @@ async def create_key(db: AsyncSession, name: str, collection_ids: Sequence[int] 
             raise KeyCommandError(f"No collection {', '.join(map(str, missing))}.")
     key = new_key()
     db.add(
-        ApiKey(name=name, key_hash=key_hash(key), prefix=key[:PREFIX_LENGTH], collection_ids=ids)
+        ApiKey(
+            name=name,
+            key_hash=key_hash(key),
+            prefix=key[:PREFIX_LENGTH],
+            collection_ids=ids,
+            can_write=can_write,
+        )
     )
     try:
         await db.commit()
@@ -69,7 +83,10 @@ async def create_key(db: AsyncSession, name: str, collection_ids: Sequence[int] 
 
 async def list_keys(db: AsyncSession) -> list[KeyInfo]:
     rows = await db.scalars(select(ApiKey).order_by(ApiKey.created_at, ApiKey.id))
-    return [KeyInfo(r.name, r.prefix, r.collection_ids, r.created_at, r.revoked_at) for r in rows]
+    return [
+        KeyInfo(r.name, r.prefix, r.collection_ids, r.created_at, r.revoked_at, r.can_write)
+        for r in rows
+    ]
 
 
 async def revoke_key(db: AsyncSession, name: str) -> None:
@@ -101,6 +118,11 @@ def _parser() -> argparse.ArgumentParser:
         help="A collection the key reaches; repeat for more.",
     )
     reach.add_argument("--all", action="store_true", help="Every collection, today's and later.")
+    create.add_argument(
+        "--write",
+        action="store_true",
+        help="Also add, delete and move documents in those collections.",
+    )
     commands.add_parser("list", help="The keys, without the keys themselves.")
     revoke = commands.add_parser("revoke", help="Revoke a key, at once.")
     revoke.add_argument("name")
@@ -109,8 +131,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def _row(info: KeyInfo) -> str:
     reach = "all" if info.collection_ids is None else ",".join(map(str, info.collection_ids))
+    access = "write" if info.can_write else "read"
     state = f"revoked {info.revoked_at:%Y-%m-%d}" if info.revoked_at else "active"
-    return f"{info.name}\t{info.prefix}…\tcollections={reach}\t{state}"
+    return f"{info.name}\t{info.prefix}…\tcollections={reach}\t{access}\t{state}"
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -119,7 +142,9 @@ async def _run(args: argparse.Namespace) -> int:
     async with SessionLocal() as db:
         try:
             if args.command == "create":
-                key = await create_key(db, args.name, None if args.all else args.collections)
+                key = await create_key(
+                    db, args.name, None if args.all else args.collections, can_write=args.write
+                )
                 print(key)
                 print("Shown once: only its hash is stored.", file=sys.stderr)
             elif args.command == "list":

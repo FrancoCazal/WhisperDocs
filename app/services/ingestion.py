@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import NamedTuple
 
@@ -27,6 +28,7 @@ from app.models import Chunk, Document, IngestionJob, IngestionStatus
 from app.services.chunker import Chunk as TextChunk
 from app.services.chunker import TextChunker
 from app.services.embedder import EmbeddingError, EmbeddingService
+from app.services.embeddings import EmbeddingProvider
 from app.services.instruction_scan import instruction_flags
 from app.services.lang import detect_language
 from app.services.llm.errors import failure_text
@@ -36,6 +38,7 @@ from app.services.text_extractor import (
     EmptyDocumentError,
     UnreadableDocumentError,
     UnsupportedFileTypeError,
+    check_content,
     detect_file_type,
     extract_text,
 )
@@ -86,7 +89,8 @@ async def chunk_text_in_thread(raw_text: str, file_type: str) -> tuple[list[Text
 class FreshChunk(NamedTuple):
     """A chunk to store, and where it sits in its document."""
 
-    index: int
+    # Shadows tuple.index, which nothing here calls.
+    index: int  # type: ignore[assignment]
     text: str
     token_count: int
     text_hash: str
@@ -185,7 +189,7 @@ async def reusable_embeddings(db, hashes: Sequence[str], model: str) -> dict[str
 
 async def embed_chunks(
     chunks: Sequence[FreshChunk],
-    embedder: EmbeddingService,
+    embedder: EmbeddingProvider,
     reused: dict[str, list[float]],
     *,
     batch_size: int | None = None,
@@ -261,6 +265,137 @@ async def chunk_rows(
             chunks=flagged,
         )
     return rows
+
+
+# --- a file, into a collection -----------------------------------------------------
+
+MB = 1024 * 1024
+# The largest file every way in takes: the upload routes and the MCP
+# server's ingest_document.
+MAX_DOCUMENT_BYTES = 10 * MB
+# `documents.filename` and `documents.title` are String(300).
+MAX_NAME_LENGTH = 300
+
+
+class DocumentTooLargeError(ValueError):
+    """The file is larger than MAX_DOCUMENT_BYTES."""
+
+
+def check_document(filename: str, file_bytes: bytes, file_type: str | None = None) -> str:
+    """The file's type, once the checks every way in makes have passed: its
+    name fits the column, it is not empty or too large, and its bytes are
+    what its type says (`check_content`). Raises a ValueError subclass."""
+    if len(filename) > MAX_NAME_LENGTH:
+        raise ValueError(f"Filename is longer than {MAX_NAME_LENGTH} characters")
+    file_type = file_type or detect_file_type(filename)
+    if not file_bytes:
+        raise ValueError("The file is empty")
+    if len(file_bytes) > MAX_DOCUMENT_BYTES:
+        raise DocumentTooLargeError(f"File exceeds maximum size of {MAX_DOCUMENT_BYTES // MB} MB")
+    check_content(file_bytes, file_type)
+    return file_type
+
+
+@dataclass(frozen=True)
+class ExtractedDocument:
+    """A file's text and chunks, before anything is embedded or stored."""
+
+    filename: str
+    file_type: str
+    raw_text: str
+    content_hash: str
+    chunks: list[TextChunk]
+    language: str | None
+
+
+async def extract_document(filename: str, file_type: str, file_bytes: bytes) -> ExtractedDocument:
+    """Extract and chunk a checked file, off the event loop."""
+    raw_text = await extract_text_in_thread(file_bytes, file_type)
+    chunks, language = await chunk_text_in_thread(raw_text, file_type)
+    if not chunks:
+        raise ValueError("Document produced no chunks after processing")
+    return ExtractedDocument(
+        filename, file_type, raw_text, content_hash(raw_text), chunks, language
+    )
+
+
+async def store_document(
+    db,
+    embedder: EmbeddingProvider,
+    extracted: ExtractedDocument,
+    *,
+    collection_id: int,
+    title: str | None = None,
+    audit: Callable[[Document], object] | None = None,
+) -> Document:
+    """Embed an extracted file and store it in the collection, in one commit.
+
+    The same document twice in a collection is refused before anything is
+    paid for; a chunk another document holds too is stored again, with that
+    chunk's vector (audit R12). `audit` builds a row committed with the
+    document (an `AuditLog`), so a write and its record go in together or
+    not at all.
+
+    Raises DuplicateDocumentError, or the embedder's EmbeddingError.
+    """
+    digest = extracted.content_hash
+    await ensure_new_document(db, collection_id, digest)
+    hashes = chunk_hashes(extracted.chunks)
+    fresh = fresh_chunks(extracted.chunks, hashes)
+    reused = await reusable_embeddings(db, hashes, embedder.model_id)
+    if reused:
+        logger.info(
+            "chunk_embeddings_reused",
+            reused=sum(1 for chunk in fresh if chunk.text_hash in reused),
+            chunks=len(fresh),
+            collection_id=collection_id,
+        )
+    embeddings = await embed_chunks(fresh, embedder, reused)
+
+    document = Document(
+        collection_id=collection_id,
+        title=title or extracted.filename,
+        filename=extracted.filename,
+        file_type=extracted.file_type,
+        raw_text=extracted.raw_text,
+        content_hash=digest,
+        chunk_count=len(fresh),
+        total_tokens=sum(chunk.token_count for chunk in fresh),
+        language=extracted.language,
+    )
+    db.add(document)
+    try:
+        await db.flush()
+        db.add_all(await chunk_rows(document, fresh, embeddings, embedder.model_id))
+        if audit is not None:
+            db.add(audit(document))
+        await db.commit()
+    except IntegrityError as exc:
+        raise await duplicate_from(db, exc, collection_id, digest) from exc
+    await db.refresh(document)
+    return document
+
+
+async def ingest_bytes(
+    db,
+    embedder: EmbeddingProvider,
+    *,
+    collection_id: int,
+    filename: str,
+    file_bytes: bytes,
+    title: str | None = None,
+    file_type: str | None = None,
+    audit: Callable[[Document], object] | None = None,
+) -> Document:
+    """Check, extract, embed and store a file: what the synchronous upload
+    does, for the ways in that bring bytes without a form (the MCP server's
+    ingest_document). Raises a ValueError subclass for a file that is
+    refused, or the embedder's EmbeddingError."""
+    file_type = check_document(filename, file_bytes, file_type)
+    extracted = await extract_document(filename, file_type, file_bytes)
+    return await store_document(
+        db, embedder, extracted, collection_id=collection_id, title=title, audit=audit
+    )
 
 
 async def _set_status(
@@ -506,4 +641,5 @@ async def fail_interrupted_jobs() -> int:
             )
         )
         await db.commit()
-    return result.rowcount
+    # An UPDATE's result is a CursorResult, which the stubs do not say.
+    return result.rowcount  # type: ignore[attr-defined]

@@ -14,8 +14,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import upstream_error
@@ -36,27 +35,22 @@ from app.schemas.document import (
 from app.schemas.ingestion_job import IngestionJobCreate, IngestionJobRead
 from app.schemas.pagination import Page
 from app.services import catalog
+from app.services.documents import MoveConflictError, delete_documents, move_documents
 from app.services.embedder import EmbeddingError, EmbeddingService, get_embedder
 from app.services.ingestion import (
+    MAX_DOCUMENT_BYTES,
+    MAX_NAME_LENGTH,
+    DocumentTooLargeError,
     DuplicateDocumentError,
-    FreshChunk,
-    chunk_hashes,
-    chunk_rows,
-    chunk_text_in_thread,
-    content_hash,
+    check_document,
     create_job,
-    duplicate_from,
-    embed_chunks,
-    ensure_new_document,
-    extract_text_in_thread,
-    fresh_chunks,
-    reusable_embeddings,
+    extract_document,
     spawn_ingestion,
+    store_document,
 )
 from app.services.text_extractor import (
     EmptyDocumentError,
     UnreadableDocumentError,
-    check_content,
     detect_file_type,
 )
 
@@ -65,11 +59,9 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 MB = 1024 * 1024
-MAX_UPLOAD_BYTES = 10 * MB
+MAX_UPLOAD_BYTES = MAX_DOCUMENT_BYTES
 MAX_BATCH_FILES = 20
 MAX_BATCH_BYTES = 50 * MB
-# `documents.filename`, `documents.title` and their ingestion_jobs columns are String(300).
-MAX_NAME_LENGTH = 300
 _MULTIPART_OVERHEAD = 64 * 1024  # boundaries, part headers and the form fields
 
 # Request body limits, enforced by BodySizeLimitMiddleware before the form is
@@ -80,29 +72,22 @@ BODY_LIMITS = {
     "/documents/upload-batch": MAX_BATCH_BYTES + _MULTIPART_OVERHEAD,
 }
 
-
-class FileTooLargeError(ValueError):
-    pass
+FileTooLargeError = DocumentTooLargeError
 
 
 async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
     """Validate an uploaded file and read it. Returns (filename, file_type, bytes).
 
     Raises a ValueError subclass for every rejection; `_upload_error` maps
-    them to status codes. Reads at most one byte past the limit, so an
-    oversized part is not loaded whole.
+    them to status codes. An unsupported type is refused before the body is
+    read, and at most one byte past the limit is read, so an oversized part
+    is not loaded whole. The checks are `check_document`'s, which every way
+    in makes.
     """
     filename = file.filename or "untitled"
-    if len(filename) > MAX_NAME_LENGTH:
-        raise ValueError(f"Filename is longer than {MAX_NAME_LENGTH} characters")
     file_type = detect_file_type(filename)
     file_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
-    if len(file_bytes) == 0:
-        raise ValueError("Uploaded file is empty")
-    if len(file_bytes) > MAX_UPLOAD_BYTES:
-        raise FileTooLargeError(f"File exceeds maximum size of {MAX_UPLOAD_BYTES // MB} MB")
-    check_content(file_bytes, file_type)
-    return filename, file_type, file_bytes
+    return filename, check_document(filename, file_bytes, file_type), file_bytes
 
 
 def _upload_error(exc: Exception) -> Exception:
@@ -144,48 +129,8 @@ async def _ingest_single(
     embedder: EmbeddingService,
 ) -> Document:
     filename, file_type, file_bytes = await _read_upload(file)
-    raw_text = await extract_text_in_thread(file_bytes, file_type)
-    chunks_data, language = await chunk_text_in_thread(raw_text, file_type)
-    if not chunks_data:
-        raise ValueError("Document produced no chunks after processing")
-
-    # The same document twice in a collection is refused before anything is
-    # paid for; a chunk another document holds too is stored again, with
-    # that chunk's vector (audit R12).
-    digest = content_hash(raw_text)
-    await ensure_new_document(db, collection_id, digest)
-    hashes = chunk_hashes(chunks_data)
-    fresh: list[FreshChunk] = fresh_chunks(chunks_data, hashes)
-    reused = await reusable_embeddings(db, hashes, embedder.model_id)
-    if reused:
-        logger.info(
-            "chunk_embeddings_reused",
-            reused=sum(1 for chunk in fresh if chunk.text_hash in reused),
-            chunks=len(fresh),
-            collection_id=collection_id,
-        )
-    embeddings = await embed_chunks(fresh, embedder, reused)
-
-    document = Document(
-        collection_id=collection_id,
-        title=title or filename,
-        filename=filename,
-        file_type=file_type,
-        raw_text=raw_text,
-        content_hash=digest,
-        chunk_count=len(fresh),
-        total_tokens=sum(chunk.token_count for chunk in fresh),
-        language=language,
-    )
-    db.add(document)
-    try:
-        await db.flush()
-        db.add_all(await chunk_rows(document, fresh, embeddings, embedder.model_id))
-        await db.commit()
-    except IntegrityError as exc:
-        raise await duplicate_from(db, exc, collection_id, digest) from exc
-    await db.refresh(document)
-    return document
+    extracted = await extract_document(filename, file_type, file_bytes)
+    return await store_document(db, embedder, extracted, collection_id=collection_id, title=title)
 
 
 @router.post(
@@ -320,10 +265,7 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     # One statement; the foreign key removes the chunks (audit R11).
-    deleted = await db.scalar(
-        delete(Document).where(Document.id == document_id).returning(Document.id)
-    )
-    if deleted is None:
+    if not await delete_documents(db, [document_id]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     await db.commit()
 
@@ -344,10 +286,7 @@ async def bulk_delete_documents(
     if not payload.document_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_ids is empty")
 
-    deleted = await db.scalars(
-        delete(Document).where(Document.id.in_(payload.document_ids)).returning(Document.id)
-    )
-    found_ids = set(deleted.all())
+    found_ids = await delete_documents(db, payload.document_ids)
     await db.commit()
     return _bulk_result(payload.document_ids, found_ids)
 
@@ -358,7 +297,8 @@ async def bulk_move_documents(
     db: AsyncSession = Depends(get_db),
 ) -> BulkOpResult:
     """Reassign N documents to another collection, in one statement (see
-    `bulk_delete_documents`)."""
+    `bulk_delete_documents`). A document whose text the target already holds
+    stays where it is (`move_documents`)."""
     if not payload.document_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_ids is empty")
 
@@ -369,68 +309,12 @@ async def bulk_move_documents(
             detail=f"Target collection {payload.target_collection_id} not found",
         )
 
-    # A collection holds each document once (audit R12): one whose text the
-    # target already holds, or that another moved document brings first,
-    # stays where it is.
-    rows = (
-        await db.execute(
-            select(Document.id, Document.content_hash, Document.collection_id)
-            .where(Document.id.in_(payload.document_ids))
-            .order_by(Document.id)
-        )
-    ).all()
-    held = dict(
-        (
-            await db.execute(
-                select(Document.content_hash, Document.title).where(
-                    Document.collection_id == payload.target_collection_id,
-                    Document.content_hash.is_not(None),
-                    Document.id.not_in(payload.document_ids),
-                )
-            )
-        ).all()
-    )
-    errors: dict[int, str] = {}
-    movable: list[int] = []
-    # Who keeps each text among the requested documents.
-    claimed: dict[str, int] = {}
-    # The documents already in the target come first: they stay, and claim their text.
-    for document_id, digest, collection_id in sorted(
-        rows, key=lambda row: (row.collection_id != payload.target_collection_id, row.id)
-    ):
-        if digest is not None and digest in held:
-            errors[document_id] = (
-                f'The target collection already holds this document, as "{held[digest]}".'
-            )
-            continue
-        if digest is not None and digest in claimed:
-            errors[document_id] = (
-                f"Document {claimed[digest]}, also in this request, has the same text."
-            )
-            continue
-        if digest is not None:
-            claimed[digest] = document_id
-        if collection_id != payload.target_collection_id:
-            movable.append(document_id)
-
-    if movable:
-        try:
-            await db.execute(
-                update(Document)
-                .where(Document.id.in_(movable))
-                .values(collection_id=payload.target_collection_id)
-            )
-        except IntegrityError as exc:
-            # An upload of the same text reached the target in between.
-            await db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A document with the same text reached the target collection while "
-                "moving; nothing was moved. Try again.",
-            ) from exc
+    try:
+        result = await move_documents(db, payload.document_ids, payload.target_collection_id)
+    except MoveConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     await db.commit()
-    moved = {document_id for document_id, _digest, _coll in rows} - set(errors)
-    return _bulk_result(payload.document_ids, moved, errors)
+    return _bulk_result(payload.document_ids, result.moved, result.errors)
 
 
 def _bulk_result(
