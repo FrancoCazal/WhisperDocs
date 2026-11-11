@@ -63,8 +63,9 @@ async def validate_citations_semantic(
     `embedder` must expose `embed_batch(texts) -> list[list[float]]`.
     `included_chunks` must be ordered so index `i` corresponds to citation `i+1`.
 
-    On any internal failure the function returns empty results — the caller
-    must not block answer delivery on validation.
+    A failed embedding raises. The callers deliver the answer anyway; the
+    agent records the turn error (step `citation_check`) so the client can
+    say the citations went unchecked, which an empty result would hide.
     """
     sentences = _split_sentences(answer)
     if not sentences or not included_chunks:
@@ -96,11 +97,7 @@ async def validate_citations_semantic(
 
     sentence_texts = [sentences[i] for i in relevant_sentence_idxs]
 
-    try:
-        sentence_vecs, chunk_vecs = await _embed_pair(embedder, sentence_texts, chunk_texts)
-    except Exception:
-        logger.exception("citation_semantic_validation_embed_failed")
-        return {"low_confidence_refs": [], "scores": {}}
+    sentence_vecs, chunk_vecs = await _embed_pair(embedder, sentence_texts, chunk_texts)
 
     sims_per_cite: dict[int, list[float]] = defaultdict(list)
     for local_idx, original_idx in enumerate(relevant_sentence_idxs):
