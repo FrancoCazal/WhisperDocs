@@ -86,6 +86,11 @@ module = [
 ]
 ignore_missing_imports = true
 
+[tool.coverage.run]
+# What `pytest --cov` measures (audit E14): the app, not the tests or scripts.
+# CI fails under its floor (.github/workflows/tests.yml).
+source = ["app"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

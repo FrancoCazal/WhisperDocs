@@ -147,5 +147,10 @@ jobs:
       - name: Models match the migrations
         run: uv run --frozen alembic check
 
+      # Coverage of app/ (audit E14). 90.6% with the database tests on
+      # 2026-11-10, where the audit measured 36%; the floor sits a few points
+      # under it, so dropping tests fails and a small refactor does not. The
+      # database tests count: they run here against the service above, and a
+      # local run without a database measures about 87%. Raise it as it grows.
       - name: pytest
-        run: uv run --frozen pytest -q
+        run: uv run --frozen pytest -q --cov --cov-report=term:skip-covered --cov-fail-under=88
