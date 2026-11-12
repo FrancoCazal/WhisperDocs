@@ -46,8 +46,8 @@ graph TB
     MMR[MMR diversity]
     Embedder[OpenAI Embeddings]
     LLM[LLM Provider Abstraction]
-    Bedrock[Bedrock Claude]
-    Gemini[Gemini 2.5 Flash]
+    Bedrock[Bedrock: Claude Haiku 4.5, Sonnet 4.6, Nova 2 Lite]
+    Gemini[Vertex AI Gemini, optional]
     Ingestion[Async Ingestion Worker]
     Pricing[pricing.py]
   end
@@ -120,7 +120,7 @@ sequenceDiagram
     G->>LLM: summarize history
     LLM-->>G: summary
   end
-  G->>LLM: classifier (Gemini)
+  G->>LLM: classifier (Haiku 4.5)
   LLM-->>G: AgentAction { search_docs | ask_clarification | answer_direct | out_of_scope }
   Note over G: classifier fails → search_docs (answers only from the documents)
   alt action == search_docs
@@ -193,7 +193,7 @@ sequenceDiagram
     W->>W: extract_text (worker thread)
     W->>DB: status = chunking
     W->>W: TextChunker.chunk + detect_language (worker thread)
-    W->>DB: dedup hash check
+    W->>DB: duplicate document check, stored vectors for these texts
     W->>DB: status = embedding, total_chunks=N
     loop per batch (32)
       W->>E: embed_batch
@@ -214,8 +214,101 @@ On a 60-page text PDF (about 9 s of parsing) the loop used to stop for the whole
 parse; now its longest pause is a full garbage collection, which also holds the
 GIL. pdfminer allocates enough objects to trigger several. Freezing the objects
 allocated at startup (`gc.freeze()` in the lifespan) brought the longest pause
-from about 300 ms to about 150 ms. Removing it would mean parsing in a separate
+from the start, about 300 ms to about 150 ms. Removing it would mean parsing in a separate
 process.
+
+### Extraction and chunking
+
+`app/services/text_extractor.py` turns every format into one shape: `#`
+headings (Markdown, DOCX, HTML, and each sheet of an XLSX), markdown tables
+(from PDF, DOCX, HTML, XLSX and CSV), and a form feed on its own line between
+a PDF's pages. A PDF's text comes from the characters outside its tables'
+boxes, and each table goes in once, as markdown, at the height of its top:
+`extract_text` used to return the cells as lines and the table was added
+again after them (audit R13). Text files are decoded by their byte order
+mark, as UTF-8, or as what `charset-normalizer` finds, Windows-1252 when it
+ties with other single-byte encodings (it ranks Windows-1250 first on Spanish
+text, which reads "años" as "ańos"). DOCX and XLSX are zip archives: one whose
+entries would expand past 100 MB, or with more than 10,000 of them, is refused
+before python-docx (entity resolution off) or openpyxl (through defusedxml)
+opens it.
+
+`app/services/chunker.py` reads that text as blocks: headings, paragraphs,
+tables and code fences (audit R14). It reads `#` lines as headings only for
+the types that mark them (`HEADING_TYPES`), and counts pages only for PDFs
+(`PAGED_TYPES`). Blocks are packed into chunks of up to 500 tokens:
+
+- A heading starts a chunk once the current one has half a chunk, 250
+  tokens; under that, the next section joins it. On the eval corpus that
+  gives 95 chunks, median 305 tokens, against 71 of median 467 before; with
+  no merging, 142 chunks, half of them under 200 tokens.
+- Each chunk starts with the headings above it, up to a fifth of the chunk,
+  so its embedding, its full-text lexemes and the model's context carry the
+  section. The RAG prompt is unchanged: the headings are part of the chunk's
+  text.
+- A table that fits is never cut; one that does not is cut between rows, and
+  each part repeats the header and delimiter rows.
+- A paragraph or code block longer than a chunk is cut at the strongest
+  boundary near the end of the window, with 50 tokens of overlap into the
+  next part. There is no overlap between blocks.
+- Cuts are on the text, with offsets: the token-based cut it replaces
+  re-encoded the prefix and could drift a token, and could split a
+  character.
+
+Each chunk stores `section` (the headings its text sits under, " › "-joined;
+sibling sections merged into one chunk are listed, "Doc › A, B") and
+`page_start`/`page_end` (migration 0020). Retrieval returns them, and every
+citation carries them: `/agent/chat` and its stream, `/query`, `/retrieve`,
+the MCP tools, and the document page's chunks. Chunks stored before have
+none until their document is uploaded again. An eval collection seeded
+before keeps the old chunks too, since `seed_eval` skips the files a
+collection holds: delete the collection and seed it again before comparing
+a run with one from before. Each report records how many chunks its collection held and a
+hash of their texts (`collection_chunks`, `collection_hash`), and a diff
+warns when two runs searched different chunks.
+
+### Duplicates and vectors
+
+A collection holds each document once (audit R12). `documents.content_hash`
+is the SHA-256 of the extracted text, and a unique index on (collection_id,
+content_hash) (migration 0021, which hashed the stored documents in SQL, and
+left null on the later copies of a text a collection already held twice)
+keeps two uploads of the same file apart. The upload checks it before paying
+for the embeddings, and a commit the index refuses is the same 409. A move
+into a collection that holds the text leaves that document where it is, with
+the reason in the result's `errors`.
+
+A chunk whose text another document holds is no longer skipped: skipping it
+meant deleting the other document took the text out of the collection.
+Each document stores all its chunks, and `embed_chunks` embeds each distinct
+text once, copying the vector of a stored chunk with the same text when the
+same model made it. `chunks.embedding_model` records that model (migration
+0022; null on chunks from before, which are never reused). The OpenAI
+embedder asks for `EMBEDDING_DIMENSION` floats (`dimensions`, except for
+`text-embedding-ada-002`), so `text-embedding-3-large` fits the 1536-float
+column, and refuses a vector of another size before the insert (audit R19).
+
+### From an MCP server
+
+`python -m app.connectors.mcp_sync` (audit M-6) is WhisperDocs as an MCP
+client, for ingestion only: it connects to a server (a command over stdio,
+or a URL over Streamable HTTP with a bearer token from an environment
+variable), takes the resources `resources/list` names or the URIs it is
+given, reads each, and stores it with `store_document`, the upload's path.
+No model is involved. Each document keeps its resource's URI
+(`documents.source_uri`, unique per collection, migration 0024). A later
+run leaves a resource whose text is the same alone, embedding nothing, and
+replaces a changed one in one commit (the old document is deleted in the
+transaction that stores the new, whose unchanged chunks reuse the stored
+vectors). A resource whose text the collection holds under another
+document is skipped, and nothing is deleted when a resource leaves the
+server. Text content is read as text whatever its name (WhisperDocs' own
+resources are a PDF's extracted text, named after the PDF); a blob is read
+as its MIME type or extension says. The reference filesystem server lists
+nothing, by design, so its files go in by `file://` URI (`--uri`,
+`--uri-file`). The connector is not a tool of the agent: consulting outside
+sources during a turn is multi-hop, which is V2, and would put a tool's
+output in the prompt.
 
 The uploaded bytes live only in the API process's memory, so a job cannot
 outlive the process:
@@ -259,6 +352,8 @@ erDiagram
     string filename
     string file_type
     text raw_text
+    string content_hash "SHA-256 of raw_text, unique per collection"
+    string source_uri "MCP resource it was synced from, unique per collection"
     int chunk_count
     int total_tokens
     string language
@@ -274,9 +369,13 @@ erDiagram
     int token_count
     string text_hash
     vector embedding "pgvector(1536) HNSW"
+    string embedding_model "the model that made embedding"
     string language "copied from the document"
     tsvector tsv "full-text, generated per language"
     string_array instruction_flags "rules its text matched"
+    text section "headings it sits under"
+    int page_start "PDFs"
+    int page_end "PDFs"
   }
 
   IngestionJob {
@@ -340,15 +439,33 @@ erDiagram
     string key_hash UK
     string prefix
     int[] collection_ids
+    bool can_write "adds, deletes and moves documents"
     timestamp created_at
     timestamp revoked_at
+  }
+
+  AuditLog {
+    int id PK
+    timestamp created_at
+    string actor "key name, api-key, open or stdio"
+    string channel "mcp-http or mcp-stdio"
+    string action "the write tool"
+    string outcome "done, declined, cancelled, refused, failed"
+    int collection_id "not a foreign key"
+    int document_id "not a foreign key"
+    jsonb detail "title, target, reason"
   }
 ```
 
 `api_keys` holds the MCP server's keys over HTTP: the SHA-256 of each, and
 the collections it reaches (null for every one). `collection_ids` is an
 array, not a foreign key: a deleted collection leaves an id that reaches
-nothing.
+nothing. `can_write` (migration 0023, false on the keys from before) lets a
+key add, delete and move documents in them.
+
+`audit_log` (migration 0023) has a row per call to an MCP tool that writes
+(BE-36). Its ids are plain integers: the record outlives the document and
+the collection it names.
 
 LangGraph checkpointer state lives in dedicated tables managed by
 `langgraph-checkpoint-postgres` (not modeled here).
@@ -480,8 +597,13 @@ provider SDK.
    - Fused with Reciprocal Rank Fusion (`1 / (k + rank)`, `k=60`) in
      `fuse_rrf`
 2. **Cross-encoder rerank** (optional, `RERANKER_ENABLED=true`)
-   - `BAAI/bge-reranker-base` via `sentence-transformers`
-   - Scores `(query, chunk_text)` pairs, sorts by score, normalizes to 0-1
+   - `BAAI/bge-reranker-base` via `sentence-transformers`, loaded at startup
+   - Scores `(query, chunk_text)` pairs and sorts by score; a chunk's
+     relevance is the sigmoid of the model's logit, a probability that holds
+     across queries (audit R16). It used to be min-max over each query's
+     batch, which put the best chunk at 1.0 even when none answered.
+     `RERANKER_SCORE_THRESHOLD` drops the chunks below it but never the best
+     one: a turn left with no chunks would be the relevance gate, out of V1
 3. **MMR diversity** (optional, `MMR_ENABLED=true`)
    - Document-level penalty: `λ * relevance(c) − (1−λ) * I[doc(c) ∈ selected_docs]`
    - λ=1.0 → pure relevance; λ=0.0 → pure diversity
@@ -523,19 +645,28 @@ class LLMProvider(Protocol):
 
 | Alias | Default model | Provider |
 |-------|---------------|----------|
-| `classifier` | `gemini-3.8-flash` | Gemini |
-| `query_rewrite` | `gemini-3.8-flash` | Gemini |
-| `clarification` | `gemini-3.8-flash` | Gemini |
-| `answer_direct` | `gemini-3.8-flash` | Gemini |
-| `rag` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Bedrock |
+| `classifier` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
+| `query_rewrite` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
+| `clarification` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
+| `answer_direct` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
+| `rag` | `global.anthropic.claude-sonnet-4-6` | Bedrock |
 | `summarize` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
-| `eval_judge` | `gemini-3.8-flash` | Gemini |
+| `eval_judge` | `us.amazon.nova-2-lite-v1:0` | Bedrock |
+| `extraction` | `global.anthropic.claude-sonnet-4-6` | Bedrock |
+
+Every default is on Bedrock, so one AWS account runs every model; the
+embeddings are OpenAI's. The judge is Amazon Nova, of another family than the
+Claude it judges. A `gemini-...` ID routes to Vertex AI. See the amendment to
+[ADR 0004](docs/adr/0004-dual-llm-provider-routing.md).
 
 Override per node via `AGENT_MODEL_<ALIAS>` env vars. Model rules live in
 `app/services/llm/model_policy.py`:
 
 - **Sampling.** `temperature` is sent only to models that accept it. Gemini 3+
   and Claude 4.7+ use fixed sampling, so `AGENT_TEMP_*` has no effect on them.
+- **Legacy models.** Bedrock refuses a model marked Legacy to an account that
+  has not called it in the last 30 days. Sonnet 4.5, the answering model
+  before, is Legacy; Sonnet 4.6 is Active.
 - **Gemini 3.** `GEMINI_THINKING_LEVEL` (default `low`) sets `thinking_level`.
   `gemini-3.8-flash` is served from the `global`, `us` and `eu` locations
   only, so `GCP_LOCATION` defaults to `global`.
@@ -565,11 +696,21 @@ Retries:
 `app/eval/` is a self-contained subsystem:
 
 - `schemas.py` — `TestItem`, `EvalResult`, `AggregateMetrics`, `EvalReport`
-- `runner.py` — CLI: `run` and `diff` subcommands, JSONL or JSON dataset loaders
+- `runner.py` — CLI: `run`, `diff`, `rejudge`, `label` and `agreement` subcommands, JSONL or JSON
+  dataset loaders
 - `evaluator.py` — orchestrator (loads dataset, embeds, retrieves, generates, judges)
-- `judges.py` — LLM-as-judge for correctness + hallucination
+- `judges.py` — LLM-as-judge for correctness + hallucination. Each call fills a reasoning-first
+  schema (`HolisticVerdict`, `FactsVerdict`, `GroundingVerdict`) and the `JudgeResult` a report
+  keeps is built from it in code: a correctness verdict follows from the required facts the
+  answer states, a grounding verdict from the unsupported claims listed
+- `agreement.py` — the judge against a person: `build_labels` draws a blind sample of a run's
+  verdicts, balanced by what the judge ruled, and `measure_agreement` computes agreement and
+  Cohen's kappa from the person's rulings
 - `metrics.py` — aggregation: precision and recall@k over the in-scope items,
-  p50/p95, generation cost via shared `pricing.py`, count of failed judge calls
+  p50/p95, generation cost via shared `pricing.py`, count of failed judge calls.
+  `hallucination_rate` is the share of items with an unsupported claim (a claim the retrieved
+  context does not support, true or not); `AggregateMetrics.in_scope_unsupported()` gives it over
+  the in-scope items alone. The field and the thresholds keep the old name
 - `report.py` — Markdown rendering + diff between runs
 
 The evaluator calls the retrieval pipeline and the single-turn RAG prompt
@@ -589,7 +730,11 @@ with (`app/agent/prompt_version.py`: a hash of every constant in
 `judge_prompt_version`, the judge's. `runner diff` compares two reports over
 the same items and exits 3 when accuracy drops more than
 `AGENT_EVAL_MAX_ACCURACY_DROP` or the hallucination rate rises more than
-`AGENT_EVAL_MAX_HALLUCINATION_RISE` (0.10 each). The `Prompt gate` workflow
+`AGENT_EVAL_MAX_HALLUCINATION_RISE` (0.10 each). `GET /eval/diff?previous=&current=`
+returns the same comparison as data (`run_diff` in `report.py`, built from
+the helpers the CLI's diff uses): the settings that changed, the warnings, the
+metrics, the flips per check with McNemar's exact p, and the items that
+flipped. The Evaluation page shows it, and only formats it. The `Prompt gate` workflow
 runs it on a pull request that changes a prompt, the base's code against the
 head's over the same golden set and corpus; it is off until the repository
 variable `PROMPT_GATE` is `on`, since each run pays for two evals.
@@ -607,8 +752,13 @@ judge call.
 Dataset format (`eval/golden/queries.jsonl`):
 
 ```jsonl
-{"id": 1, "question": "...", "expected_answer": "...", "difficulty": "medium", "category": "in_scope", "expected_sources": ["foo.md"]}
+{"id": 1, "question": "...", "expected_answer": "...", "difficulty": "medium", "category": "in_scope", "expected_sources": ["foo.md"], "required_facts": ["..."], "optional_facts": ["..."]}
 ```
+
+`required_facts` are what a correct answer must state, one atomic fact each; `optional_facts`
+may be added or left out and never fail an answer. An in-scope item without them is judged
+against `expected_answer` as a whole. They are part of the dataset hash, but an item with none
+hashes as it did before they existed.
 
 The same retrieval pipeline (`retrieval_pipeline.retrieve`) is used in eval and
 production — toggling reranker / MMR via env vars produces an apples-to-apples
@@ -643,11 +793,15 @@ From the outside in: CORS, then `RequestContextMiddleware`
   `retrieval_pipeline.retrieve`, the search the chat and `/query` use, and
   returns the chunks with their text; nothing is generated. A
   `document_id` implies its collection.
-- **Shared services.** The routes for `/retrieve`, `/query` and the
-  collection and document lists are thin: their logic lives in
-  `app/services/search.py`, `answering.py` and `catalog.py`, which the MCP
-  server calls too. A route maps the services' errors to HTTP (a missing
-  scope is a 404, a failed provider a 502); a tool, to a tool error.
+- **Shared services.** The routes for `/retrieve`, `/query`, the
+  collection and document lists, the synchronous upload, the deletes and
+  moves, and the extraction are thin: their logic lives in
+  `app/services/search.py`, `answering.py`, `catalog.py`, `ingestion.py`
+  (`check_document`, `extract_document`, `store_document`), `documents.py`
+  and `extraction.py`, which the MCP server calls too. A route maps the
+  services' errors to HTTP (a missing scope is a 404, a failed provider a
+  502, a schema the extraction cannot fill a 422 `invalid_schema`); a tool,
+  to a tool error.
 - **Rate limits** (`app/api/rate_limit.py`). A sliding 60 s window per
   bucket and client, in process memory. The key names the client only when
   auth is on: with it off, a made-up key per request would get a fresh
@@ -663,6 +817,13 @@ From the outside in: CORS, then `RequestContextMiddleware`
   are cancelled. No log line carries a number: the thread id is a UUID5 of
   it, a Twilio failure logs its status and code without its message, and the
   engine hides statement parameters (`hide_parameters`).
+- **WhatsApp replies** (`app/services/whatsapp/formatter.py`). The answer's
+  markdown is stripped where it is markdown (audit A16): a heading mark at
+  the start of a line, emphasis whose delimiters touch the text they wrap.
+  `snake_case`, `__init__`, `2 * 3` and "C#" stay. The footer lists the
+  sources the answer cites by its `[n]`, each title once, in the language of
+  the user's message; an answer that cites none, such as a refusal, has no
+  footer.
 
 ---
 
@@ -672,8 +833,9 @@ From the outside in: CORS, then `RequestContextMiddleware`
 `python -m app.mcp` serves it over stdio, and clients start it with
 `docker compose exec -T api python -m app.mcp`. The API also serves it over
 Streamable HTTP at `/mcp` (`app/mcp/http.py`), behind keys scoped to
-collections. See [ADR 0005](docs/adr/0005-mcp-server.md) and
-[ADR 0007](docs/adr/0007-mcp-over-http-scoped-keys.md).
+collections. See [ADR 0005](docs/adr/0005-mcp-server.md),
+[ADR 0007](docs/adr/0007-mcp-over-http-scoped-keys.md) and
+[ADR 0008](docs/adr/0008-mcp-writes-confirmed-and-audited.md).
 
 ```
 MCP client (Claude Code, Claude Desktop, Cursor)
@@ -686,14 +848,51 @@ app/mcp/http.py      KeyAuth: key ──► Access (its collections) in the requ
 app/mcp/server.py    each tool reads its caller's Access
   search_documents ──► services/search.py    ──► retrieval_pipeline
   ask_documents    ──► services/answering.py ──► retrieval_pipeline + rag model
+  extract_fields   ──► services/extraction.py ──► the document's chunks + extraction model
   list_collections, list_documents ──► services/catalog.py
   resources: whisperdocs://documents/{id} ──► documents.raw_text
+app/mcp/writes.py    a key that writes; the user's confirmation; audit_log
+  ingest_document  ──► services/ingestion.py (ingest_bytes, as an upload)
+  delete_document, move_document ──► services/documents.py
   ▼
 Postgres (the compose database)
 ```
 
-- **Read-only.** No tool uploads, moves or deletes. `ask_documents` writes
-  its `query_logs` row, as `/query` does.
+- **Writes** (BE-36, `app/mcp/writes.py`). `ingest_document` takes a file
+  as text, or as base64 for a PDF, Word or Excel file, and runs the
+  synchronous upload's checks and ingestion. `delete_document` and
+  `move_document` ask the user first. Over HTTP only a key made with
+  `--write` writes, in the collections it reaches; the API's own key, an
+  open API and stdio write, as the REST API lets them. `ask_documents`
+  also writes its `query_logs` row, as `/query` does.
+- **Asking the user** is MCP elicitation, through the SDK's `Resolve` and
+  `Elicit`: a resolver checks the call (the key, the reach, a target that
+  already holds the text) and only then asks. On 2026-07-28 the question
+  rides the call's `InputRequiredResult` and the client calls again with
+  the answer and a `request_state` the SDK seals with a key held in the
+  process (one uvicorn process, as for the rate limits; a restart drops a
+  question in flight). That works on the stateless `/mcp`. On 2025-11-25
+  the question is a request to the client mid-call, which needs a channel
+  back: stdio has one, the stateless HTTP exchange does not, and its
+  requests arrive without the capabilities the client declared. A client
+  that cannot be asked, or declares no elicitation, is refused; nothing is
+  changed without the user's yes.
+- **The audit log** (`app/services/audit.py`). Every call to a write tool
+  leaves a row in `audit_log`: actor (the key's name, `api-key`, `open` or
+  `stdio`), channel, tool, outcome (done, declined, cancelled, refused,
+  failed), the document and collection, and a `detail` with the title or
+  the reason. A write that happens commits its row in the same transaction;
+  the others commit theirs on their own. `GET /admin/audit-log` pages it.
+- **Extraction** (audit M-8, `app/services/extraction.py`). A JSON Schema
+  of flat fields (strings, numbers, booleans, enums, lists of them) becomes
+  a Pydantic model the model fills: per field a quote, the passage's
+  number, then the value, all nullable and required. The passages are the
+  document's chunks in order, or for a document over 12k tokens the ones a
+  search for the fields finds within it. Code checks each quote against
+  the passages (case, spacing and quote marks aside); a value whose quote
+  does not hold is in `unverified`. One call, `AGENT_MODEL_EXTRACTION`
+  (Sonnet), temperature 0; the prompts are not in `app/agent/prompts.py`,
+  so they do not move `PROMPT_VERSION`.
 - **Arguments** are bounded like the API's (`top_k` 1-20, `limit` 1-100) and
   checked before the tool runs.
 - **Errors are tool results**, for the model to read: a missing scope names
@@ -719,8 +918,9 @@ Postgres (the compose database)
   `resources/list` (the SDK's handler is overridden: it does not pass the
   request) show only what the key reaches. A search without a collection
   takes the key's one, or asks for `collection_id`.
-- **Limits.** Over HTTP, `search_documents` and `ask_documents` take from
-  the `questions` bucket, per key, before any embedding.
+- **Limits.** Over HTTP, `search_documents`, `ask_documents` and
+  `extract_fields` take from the `questions` bucket, per key, before any
+  embedding; `ingest_document` from `uploads`.
 - **Tests.** `tests/test_mcp.py` runs an in-memory client against fakes,
   compares each tool with its route, covers both protocol eras, and starts
   the stdio process to check that it writes only JSON-RPC to stdout.
@@ -729,6 +929,11 @@ Postgres (the compose database)
   transport, against Postgres: a key that does not see another
   collection, the 401s, the host check, the limit per key and both eras.
   `tests/test_mcp_http.py` checks the keys without a database.
+  `tests/test_mcp_writes_db.py` runs the write tools against Postgres: each
+  answer to the confirmation, a client that cannot be asked, keys that only
+  read or reach one collection, both eras over HTTP, and the log.
+  `tests/test_extraction.py` covers the schemas, the prompt and the quote
+  check, and compares the tool with its route.
 
 ---
 
@@ -746,7 +951,7 @@ Postgres (the compose database)
   POST /api/v1/agent/chat                  FastAPI's span       SERVER
     invoke_workflow whisperdocs-agent      the turn             INTERNAL
       check_compaction, decide_action, …   one per graph node   INTERNAL
-        chat gemini-3.8-flash              a model call         CLIENT
+        chat us.anthropic.claude-haiku…    a model call         CLIENT
         embeddings text-embedding-3-small  an embedding request CLIENT
         retrieval                          the pipeline         INTERNAL
   ```
@@ -849,3 +1054,4 @@ See [`docs/adr/`](docs/adr/) for short rationale notes:
 - [0005 — An MCP server over the same services as the API](docs/adr/0005-mcp-server.md)
 - [0006 — OpenTelemetry traces with the GenAI conventions](docs/adr/0006-opentelemetry-traces.md)
 - [0007 — MCP over HTTP, with keys scoped to collections](docs/adr/0007-mcp-over-http-scoped-keys.md)
+- [0008 — MCP writes: a key that writes, the user's confirmation, an audit log](docs/adr/0008-mcp-writes-confirmed-and-audited.md)

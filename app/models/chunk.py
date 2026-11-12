@@ -35,6 +35,9 @@ class Chunk(Base):
     # Copied from the document. Picks the text search configuration of `tsv`.
     language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_COLUMN_DIMENSION))
+    # The model that made `embedding` (audit R19), so a vector is reused only
+    # for the model that made it. Null on chunks stored before alembic 0022.
+    embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # The full-text leg's lexemes (app/services/fulltext.py), which Postgres
     # computes from `text` and `language`. Deferred: no read of a chunk needs
     # them, only the WHERE of the full-text query.
@@ -47,6 +50,13 @@ class Chunk(Base):
     instruction_flags: Mapped[list[str]] = mapped_column(
         ARRAY(String(16)), nullable=False, default=list, server_default=sql_text("'{}'")
     )
+    # Where the chunk sits in its document (audit M-7), for its citations:
+    # the headings it is under, "Guide › Install", and the pages a PDF's
+    # chunk spans. Null when the format has neither, and on chunks stored
+    # before (re-upload the document to get them).
+    section: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
 

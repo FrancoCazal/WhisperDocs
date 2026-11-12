@@ -1,7 +1,8 @@
 # ADR 0005 — An MCP server over the same services as the API
 
 **Status:** accepted; HTTP added by
-[ADR 0007](0007-mcp-over-http-scoped-keys.md)
+[ADR 0007](0007-mcp-over-http-scoped-keys.md), writes by
+[ADR 0008](0008-mcp-writes-confirmed-and-audited.md)
 **Date:** 2026-11
 
 ## Context
@@ -42,7 +43,9 @@ serve both eras for a while.
   `catalog.py` (the lists). A test compares each tool's result with its
   route's, so the two cannot drift.
 - **Read-only.** No tool uploads, moves or deletes; that stays in the API.
-  `ask_documents` writes its `query_logs` row, as `/query` does.
+  `ask_documents` writes its `query_logs` row, as `/query` does. (Superseded:
+  [ADR 0008](0008-mcp-writes-confirmed-and-audited.md) adds write tools
+  behind a key that writes, the user's confirmation and an audit log.)
 - **`top_k` is an explicit argument, bounded to 1-20** like the API's. The
   server never infers it.
 - **Errors go to the model.** A missing document or an out-of-scope request

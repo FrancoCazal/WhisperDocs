@@ -73,6 +73,30 @@ def test_accuracy_hallucination_and_cost():
     assert m.judge_errors == 0
 
 
+def test_the_in_scope_unsupported_rate_leaves_out_the_refusals():
+    """One unsupported answer in six items is 17%, but in four in-scope
+    items it is 25%: the out-of-scope refusals have nothing to support and
+    dilute the rate (audit E5)."""
+    results = [
+        _result(1, hallucination=WRONG),
+        _result(2),
+        _result(3),
+        _result(4),
+        _result(5, category=Category.OUT_OF_SCOPE),
+        _result(6, category=Category.OUT_OF_SCOPE),
+    ]
+
+    m = compute_metrics(results, model="m")
+
+    assert m.hallucination_rate == pytest.approx(1 / 6, abs=1e-4)
+    assert m.in_scope_unsupported() == (0.25, 4)
+
+
+def test_a_run_with_no_in_scope_item_has_no_in_scope_rate():
+    only_refusals = [_result(1, category=Category.OUT_OF_SCOPE)]
+    assert compute_metrics(only_refusals, model="m").in_scope_unsupported() is None
+
+
 def test_judge_errors_are_counted_per_item():
     results = [
         _result(1, correctness=JUDGE_DOWN, hallucination=JUDGE_DOWN),

@@ -11,6 +11,7 @@ from app.eval import schemas as eval_schemas
 from app.eval.judges import Judge
 from app.eval.runner import DEFAULT_DATASET, load_dataset
 from app.eval.schemas import Category, Difficulty
+from tests.judge_fakes import verdict_for
 
 DATASET = Path("eval/golden/adversarial.jsonl")
 CORPUS = Path("fixtures/adversarial-docs")
@@ -74,9 +75,9 @@ class _Passes:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def generate_structured(self, **_kwargs):
+    async def generate_structured(self, *, response_model, **_kwargs):
         self.calls += 1
-        return eval_schemas.JudgeResult(passed=True, reasoning="matches"), None
+        return verdict_for(response_model, True, "matches"), None
 
 
 async def test_an_answer_without_the_forbidden_text_goes_to_the_judge():

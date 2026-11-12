@@ -12,8 +12,11 @@ asyncio client does not resolve anything, and is not caught.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import selectors
 import socket
+import sys
 from urllib.parse import urlsplit
 
 import pytest
@@ -27,6 +30,30 @@ os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
 os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = ""
 
 _real_getaddrinfo = socket.getaddrinfo
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "psycopg: the test drives psycopg's async mode, which needs a selector event loop "
+        "on Windows",
+    )
+
+
+def _selector_loop() -> asyncio.AbstractEventLoop:
+    return asyncio.SelectorEventLoop(selectors.SelectSelector())
+
+
+def pytest_asyncio_loop_factories(config, item):
+    """The event loop each async test runs on.
+
+    psycopg's async mode cannot run on Windows' default loop, the Proactor:
+    a test marked `psycopg` gets a selector loop there. Every other test gets
+    the default loop, which the stdio MCP tests need on Windows, since only
+    the Proactor runs subprocesses. On Linux, as in CI, both are the same."""
+    if sys.platform == "win32" and item.get_closest_marker("psycopg"):
+        return {"selector": _selector_loop}
+    return {"default": asyncio.new_event_loop}
 
 
 class NetworkBlocked(socket.gaierror):
@@ -83,6 +110,17 @@ def open_api(monkeypatch):
     limiter.reset()
     yield
     limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def no_default_collection(monkeypatch):
+    """No collection for WhatsApp to fall back on, as in CI: the dev .env may
+    set DEFAULT_COLLECTION_ID, and the WhatsApp tests then started threads
+    on a collection their database does not have. A test that needs one
+    sets it."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "default_collection_id", None)
 
 
 _span_exporter = None

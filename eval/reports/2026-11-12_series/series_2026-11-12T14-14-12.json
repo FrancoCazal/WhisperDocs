@@ -1,0 +1,86 @@
+{
+  "timestamp": "2026-11-12T14:14:12.366981Z",
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "prompt_version": "174c82cd74ed",
+  "judge_prompt_version": "93eab2f5c59a",
+  "dataset_size": 50,
+  "config": {
+    "git_sha": "a1eaf5f24a6dcd55211577dea2d678aeb4c97458",
+    "git_dirty": false,
+    "dataset_hash": "97f503443f4f",
+    "collection_id": 1,
+    "collection_chunks": 95,
+    "collection_hash": "5a8b4f0e2a17",
+    "top_k": 5,
+    "concurrency": 4,
+    "rag_temperature": 0.0,
+    "rag_reasoning": null,
+    "rag_structured_output": false,
+    "rag_context_token_budget": 6000,
+    "judge_model": "us.amazon.nova-2-lite-v1:0",
+    "judge_temperature": 0.0,
+    "judge_reasoning": null,
+    "judge_cache": true,
+    "embedding_model": "text-embedding-3-small",
+    "embedding_dimension": 1536,
+    "reranker_model": null,
+    "reranker_candidate_pool": 20,
+    "reranker_score_threshold": 0.0,
+    "mmr_lambda": null
+  },
+  "runs": [
+    {
+      "run_id": "866e3b28-3d9b-4103-bcf3-7caf052a9aca",
+      "accuracy": 0.98,
+      "hallucination_rate": 0.02,
+      "judge_errors": 0
+    },
+    {
+      "run_id": "9c01b948-406b-4bf4-b6c3-4d61a203d2bc",
+      "accuracy": 0.98,
+      "hallucination_rate": 0.02,
+      "judge_errors": 0
+    },
+    {
+      "run_id": "acd84be0-e3a7-4d40-bbcf-0bb1c648b765",
+      "accuracy": 0.98,
+      "hallucination_rate": 0.02,
+      "judge_errors": 0
+    },
+    {
+      "run_id": "5bc0eeb3-de69-444d-bb2c-9e89cacdd7b7",
+      "accuracy": 0.98,
+      "hallucination_rate": 0.02,
+      "judge_errors": 0
+    },
+    {
+      "run_id": "6e9781e4-705b-497a-acf5-5bb17d0ffbaf",
+      "accuracy": 0.96,
+      "hallucination_rate": 0.02,
+      "judge_errors": 0
+    }
+  ],
+  "accuracy": {
+    "mean": 0.976,
+    "min": 0.96,
+    "max": 0.98,
+    "low": 0.964896,
+    "high": 0.987104
+  },
+  "hallucination_rate": {
+    "mean": 0.02,
+    "min": 0.02,
+    "max": 0.02,
+    "low": 0.02,
+    "high": 0.02
+  },
+  "flaky": [
+    {
+      "item_id": 37,
+      "question": "How are chunking quality, embedding model, and retrieval precision related?",
+      "check": "correctness",
+      "passed": 4,
+      "judged": 5
+    }
+  ]
+}

@@ -8,9 +8,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-whisperdocs}
     ports:
       # The host's port, for tests and clients outside Docker; the API reaches
-      # the database as db:5432. Another project's Postgres on 5435 stops this
-      # one from starting: set DB_PORT in .env.
-      - "${DB_PORT:-5435}:5432"
+      # the database as db:5432. 5442 by default, since another project's
+      # Postgres took 5435: set DB_PORT in .env if 5442 is taken too.
+      - "${DB_PORT:-5442}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

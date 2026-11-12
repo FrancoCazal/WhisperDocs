@@ -167,12 +167,12 @@ class _Embeddings:
     def __init__(self, fail: Exception | None) -> None:
         self.fail = fail
 
-    async def create(self, model, input):  # noqa: A002 - the SDK's name
+    async def create(self, model, input, dimensions):  # noqa: A002 - the SDK's name
         if self.fail:
             raise self.fail
 
         class _Item:
-            embedding = [1.0, 0.0]
+            embedding = [1.0, 0.0][:dimensions]
 
         class _Usage:
             prompt_tokens = total_tokens = 3
@@ -185,7 +185,7 @@ class _Embeddings:
 
 
 async def test_the_embedder_records_its_calls():
-    embedder = OpenAIEmbeddingProvider(api_key="test")
+    embedder = OpenAIEmbeddingProvider(api_key="test", dimension=2)
     embedder.client = type("Client", (), {"embeddings": _Embeddings(None)})()  # type: ignore[assignment]
     await embedder.embed("q")
     assert model_status.role("embedding")["state"] == "ok"
@@ -222,6 +222,7 @@ async def test_the_status_route_reads_the_record():
         "answer_direct",
         "summarize",
         "eval_judge",
+        "extraction",
         "embedding",
     ]
     classifier = body["roles"]["classifier"]

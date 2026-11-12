@@ -45,6 +45,10 @@ dependencies = [
     "mcp>=2.3",
     "opentelemetry-sdk>=1.45",
     "opentelemetry-exporter-otlp-proto-http>=1.45",
+    "python-docx>=1.2.0",
+    "openpyxl>=3.1.5",
+    "defusedxml>=0.7.1",
+    "charset-normalizer>=3.5.2",
 ]
 
 [project.optional-dependencies]
@@ -55,9 +59,11 @@ dev = [
     # Same version as the pre-commit hook, so local and CI format alike.
     "ruff==0.15.12",
     "mypy>=2.4",
+    "pytest-cov>=7.0",
 ]
 rerank = [
-    "sentence-transformers>=3.3",
+    # 4.0 added CrossEncoder's activation_fn, which the reranker sets.
+    "sentence-transformers>=4.0",
 ]
 
 [tool.ruff]
@@ -65,18 +71,27 @@ line-length = 100
 target-version = "py312"
 
 [tool.mypy]
-# Gradual: the agent, the eval and the MCP server, plus every app module they
-# import, which mypy follows and reports. Default strictness; widen `files` as
-# it stays green.
+# Gradual: the agent, the eval, the MCP server and the connectors, plus every
+# app module they import, which mypy follows and reports. Default strictness;
+# widen `files` as it stays green.
 python_version = "3.12"
-files = ["app/agent", "app/eval", "app/mcp"]
+files = ["app/agent", "app/eval", "app/mcp", "app/connectors"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 # No type information: boto3, botocore and langdetect ship no stubs, and
-# sentence-transformers is an optional extra.
-module = ["boto3", "boto3.*", "botocore", "botocore.*", "langdetect", "sentence_transformers"]
+# sentence-transformers and torch come with an optional extra. openpyxl's
+# stubs are a separate package the extractor does not need.
+module = [
+    "boto3", "boto3.*", "botocore", "botocore.*", "langdetect", "sentence_transformers", "torch",
+    "openpyxl", "openpyxl.*",
+]
 ignore_missing_imports = true
+
+[tool.coverage.run]
+# What `pytest --cov` measures (audit E14): the app, not the tests or scripts.
+# CI fails under its floor (.github/workflows/tests.yml).
+source = ["app"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

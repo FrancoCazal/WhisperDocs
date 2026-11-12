@@ -11,19 +11,25 @@ EMBEDDING_COLUMN_DIMENSION = 1536
 class AgentSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AGENT_", extra="ignore")
 
-    # Models checked against the provider lifecycle pages on 2026-11-06:
-    # gemini-2.5-flash retired on Vertex AI on 2026-10-20 (replacement:
-    # gemini-3.8-flash). Claude Sonnet 4.5 is Legacy on Bedrock, with its end
-    # of life on 2027-04-08; its replacement, Claude Sonnet 5.5
-    # (`global.anthropic.claude-sonnet-5-5`), also runs on Converse. The
-    # default moves once the eval has run on it.
-    model_classifier: str = "gemini-3.8-flash"
-    model_query_rewrite: str = "gemini-3.8-flash"
-    model_rag_generation: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    model_clarification: str = "gemini-3.8-flash"
-    model_answer_direct: str = "gemini-3.8-flash"
+    # Models checked against Bedrock on 2026-11-12. Every role runs on
+    # Bedrock, so one AWS account runs the app (the embeddings aside): Claude
+    # Haiku 4.5 on the hot path, Claude Sonnet 4.6 for the answers and the
+    # extraction, and Amazon Nova 2 Lite as the eval judge, of another family
+    # than the Claude that answers. Sonnet 4.5 is Legacy, and Bedrock refuses
+    # a Legacy model to an account that has not called it in 30 days; Sonnet
+    # 5.5 was not available to the account tried. A `gemini-...` model still
+    # routes to Vertex AI, with GCP_PROJECT set.
+    model_classifier: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    model_query_rewrite: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    model_rag_generation: str = "global.anthropic.claude-sonnet-4-6"
+    model_clarification: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    model_answer_direct: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     model_summarize: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-    model_eval_judge: str = "gemini-3.8-flash"
+    model_eval_judge: str = "us.amazon.nova-2-lite-v1:0"
+    # Fields out of a document, each with the passage that states it (audit
+    # M-8, app/services/extraction.py): the answering model, as accuracy
+    # matters more than cost there.
+    model_extraction: str = "global.anthropic.claude-sonnet-4-6"
 
     # Sent only to models that accept custom sampling: Claude 4.6 and earlier,
     # Gemini 2.x. Claude 4.7+ and Gemini 3+ sample with their defaults.
@@ -34,6 +40,7 @@ class AgentSettings(BaseSettings):
     temp_answer_direct: float = 0.7
     temp_summarize: float = 0.2
     temp_eval_judge: float = 0.0
+    temp_extraction: float = 0.0
 
     compaction_token_threshold: int = 8000
     compaction_count_threshold: int = 30
@@ -208,9 +215,12 @@ class Settings(BaseSettings):
     reranker_enabled: bool = False
     reranker_model: str = "BAAI/bge-reranker-base"
     reranker_candidate_pool: int = 20
-    # Drop chunks whose normalized rerank score is below this threshold.
-    # 0.0 = keep all (legacy). Tune via eval suite. Higher → fewer marginal
-    # citations → lower hallucination at cost of recall.
+    # Drop the chunks whose rerank score, the sigmoid of the cross-encoder's
+    # logit (a probability that the chunk answers the query), is below this;
+    # the best chunk always stays, so a turn never ends with none (that would
+    # be the relevance gate, out of V1's scope). 0.0 keeps all. Before audit
+    # R16 the score was min-max normalized per query, so a value tuned then
+    # means something else now. Tune via the eval suite.
     reranker_score_threshold: float = 0.0
 
     # MMR diversity (post-rerank, pre-output). Off by default.

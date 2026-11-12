@@ -13,6 +13,10 @@ A revoked or unknown key is a 401 either way. `KeyAuth` checks the key and
 puts its `Access` in the request's state; each tool reads it from the HTTP
 request its message came in (`access_of`). Over stdio there is no request,
 and the process has what the API has: every collection.
+
+Writing (BE-36) takes more: a key from `api_keys` writes only when it was made
+with `--write`. The API's own key, an open API and stdio write, as the REST
+API lets them.
 """
 
 from __future__ import annotations
@@ -43,16 +47,18 @@ ACCESS_STATE = "mcp_access"
 
 @dataclass(frozen=True)
 class Access:
-    """What a caller reaches. `collections` None is every collection."""
+    """What a caller reaches. `collections` None is every collection.
+    `can_write`: whether it may add, delete and move documents there."""
 
     key: str | None
     collections: frozenset[int] | None
+    can_write: bool = False
 
     def reaches(self, collection_id: int) -> bool:
         return self.collections is None or collection_id in self.collections
 
 
-EVERYTHING = Access(key=None, collections=None)
+EVERYTHING = Access(key=None, collections=None, can_write=True)
 # For a request that reached a tool without KeyAuth: it gets nothing.
 NOTHING = Access(key=None, collections=frozenset())
 
@@ -78,7 +84,7 @@ async def access_for(db: AsyncSession, key: str | None) -> Access | None:
     if row is None:
         return None
     collections = None if row.collection_ids is None else frozenset(row.collection_ids)
-    return Access(key=row.name, collections=collections)
+    return Access(key=row.name, collections=collections, can_write=row.can_write)
 
 
 def _key_from(scope: Scope) -> str | None:
@@ -142,3 +148,13 @@ def access_of(request: Any) -> Access:
     state = getattr(request, "scope", {}).get("state") or {}
     access = state.get(ACCESS_STATE)
     return access if isinstance(access, Access) else NOTHING
+
+
+def actor_of(access: Access, request: Any) -> str:
+    """Who an audit row names (app/models/audit_log.py): the key's name, the
+    API's own key, the open API, or the stdio process."""
+    if request is None:
+        return "stdio"
+    if access.key is not None:
+        return access.key
+    return "open" if configured_key() is None else "api-key"

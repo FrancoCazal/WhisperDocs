@@ -13,10 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import NamedTuple
 
-from sqlalchemy import func, update
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import distinct_on
+from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
 from app.logging_config import get_logger
@@ -24,13 +28,17 @@ from app.models import Chunk, Document, IngestionJob, IngestionStatus
 from app.services.chunker import Chunk as TextChunk
 from app.services.chunker import TextChunker
 from app.services.embedder import EmbeddingError, EmbeddingService
+from app.services.embeddings import EmbeddingProvider
 from app.services.instruction_scan import instruction_flags
 from app.services.lang import detect_language
 from app.services.llm.errors import failure_text
 from app.services.text_extractor import (
+    HEADING_TYPES,
+    PAGED_TYPES,
     EmptyDocumentError,
     UnreadableDocumentError,
     UnsupportedFileTypeError,
+    check_content,
     detect_file_type,
     extract_text,
 )
@@ -65,17 +73,150 @@ async def extract_text_in_thread(file_bytes: bytes, file_type: str) -> str:
     return await asyncio.to_thread(extract_text, file_bytes, file_type)
 
 
-def _chunk_and_detect(raw_text: str) -> tuple[list[TextChunk], str | None]:
-    return TextChunker().chunk(raw_text), detect_language(raw_text)
+def _chunk_and_detect(raw_text: str, file_type: str) -> tuple[list[TextChunk], str | None]:
+    chunks = TextChunker().chunk(
+        raw_text, headings=file_type in HEADING_TYPES, paged=file_type in PAGED_TYPES
+    )
+    return chunks, detect_language(raw_text)
 
 
-async def chunk_text_in_thread(raw_text: str) -> tuple[list[TextChunk], str | None]:
-    """Chunk the text and detect its language, off the event loop."""
-    return await asyncio.to_thread(_chunk_and_detect, raw_text)
+async def chunk_text_in_thread(raw_text: str, file_type: str) -> tuple[list[TextChunk], str | None]:
+    """Chunk the text by the structure its type has, and detect its language,
+    off the event loop."""
+    return await asyncio.to_thread(_chunk_and_detect, raw_text, file_type)
 
 
-# A chunk to store: (chunk_index, text, token_count, text_hash).
-FreshChunk = tuple[int, str, int, str]
+class FreshChunk(NamedTuple):
+    """A chunk to store, and where it sits in its document."""
+
+    # Shadows tuple.index, which nothing here calls.
+    index: int  # type: ignore[assignment]
+    text: str
+    token_count: int
+    text_hash: str
+    section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+
+
+def chunk_hashes(chunks: Sequence[TextChunk]) -> list[str]:
+    return [hashlib.sha256(c.text.encode("utf-8")).hexdigest() for c in chunks]
+
+
+def fresh_chunks(chunks: Sequence[TextChunk], hashes: Sequence[str]) -> list[FreshChunk]:
+    """Every chunk of the document, with its text's hash. None is skipped:
+    a chunk whose text another document holds too used to be left out, and
+    deleting that document took the text out of the collection (audit R12).
+    Its embedding is reused instead (`embed_chunks`)."""
+    return [
+        FreshChunk(c.index, c.text, c.token_count, h, c.section, c.page_start, c.page_end)
+        for c, h in zip(chunks, hashes, strict=True)
+    ]
+
+
+# --- one document once per collection (audit R12) ----------------------------------
+
+# The unique index on (collection_id, content_hash), alembic 0021.
+DUPLICATE_CONSTRAINT = "uq_documents_collection_content"
+
+
+class DuplicateDocumentError(ValueError):
+    """The collection already holds a document with this exact text."""
+
+    def __init__(self, document_id: int | None = None, title: str | None = None):
+        self.document_id = document_id
+        held = f' as "{title}" (id {document_id})' if document_id is not None else ""
+        super().__init__(
+            f"The collection already holds this document{held}. Delete it to upload this "
+            "one again, or upload it to another collection."
+        )
+
+
+def content_hash(raw_text: str) -> str:
+    """SHA-256 of a document's extracted text, which is what two uploads of
+    the same file share whatever their names."""
+    return hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+
+
+async def ensure_new_document(db, collection_id: int, digest: str) -> None:
+    """Raise DuplicateDocumentError when the collection holds a document with
+    this text. Checked before the embeddings are paid for; the unique index
+    catches two uploads that pass it at once."""
+    rows = await db.execute(
+        select(Document.id, Document.title)
+        .where(Document.collection_id == collection_id, Document.content_hash == digest)
+        .limit(1)
+    )
+    for document_id, title in rows.all():
+        raise DuplicateDocumentError(document_id, title)
+
+
+def is_duplicate_violation(exc: IntegrityError) -> bool:
+    return DUPLICATE_CONSTRAINT in str(exc.orig)
+
+
+async def duplicate_from(db, exc: IntegrityError, collection_id: int, digest: str) -> Exception:
+    """The error for a commit the unique index refused: two uploads of one
+    document at once. Anything else is returned as it was."""
+    if not is_duplicate_violation(exc):
+        return exc
+    await db.rollback()
+    try:
+        await ensure_new_document(db, collection_id, digest)
+    except DuplicateDocumentError as duplicate:
+        return duplicate
+    return DuplicateDocumentError()
+
+
+# --- embeddings, once per text and model (audit R12, R19) --------------------------
+
+
+async def reusable_embeddings(db, hashes: Sequence[str], model: str) -> dict[str, list[float]]:
+    """The vectors already stored for these texts by `model`, one per text
+    hash, from any collection: the same text through the same model gives
+    the same vector. Chunks from before `embedding_model` was recorded are
+    not reused, since nothing says which model made them."""
+    wanted = set(hashes)
+    if not wanted:
+        return {}
+    rows = await db.execute(
+        select(Chunk.text_hash, Chunk.embedding)
+        .where(Chunk.text_hash.in_(wanted), Chunk.embedding_model == model)
+        .ext(distinct_on(Chunk.text_hash))
+    )
+    return {text_hash: [float(x) for x in vector] for text_hash, vector in rows.all()}
+
+
+async def embed_chunks(
+    chunks: Sequence[FreshChunk],
+    embedder: EmbeddingProvider,
+    reused: dict[str, list[float]],
+    *,
+    batch_size: int | None = None,
+    on_batch: Callable[[int], Awaitable[None]] | None = None,
+) -> list[list[float]]:
+    """Each chunk's vector, in order: the stored one for its text when there
+    is one, else computed, once per distinct text. `batch_size` texts go in
+    each call (all at once when None), and `on_batch` gets, after each, how
+    many chunks have a vector."""
+    pending: dict[str, str] = {}
+    for chunk in chunks:
+        if chunk.text_hash not in reused:
+            pending.setdefault(chunk.text_hash, chunk.text)
+    items = list(pending.items())
+    step = batch_size or max(len(items), 1)
+    computed: dict[str, list[float]] = {}
+    for start in range(0, len(items), step):
+        batch = items[start : start + step]
+        vectors = await embedder.embed_batch([text for _hash, text in batch])
+        computed.update(zip((text_hash for text_hash, _text in batch), vectors, strict=True))
+        if on_batch is not None:
+            await on_batch(
+                sum(1 for c in chunks if c.text_hash in reused or c.text_hash in computed)
+            )
+    return [
+        computed[c.text_hash] if c.text_hash in computed else reused[c.text_hash] for c in chunks
+    ]
 
 
 def _scan(texts: list[str]) -> list[list[str]]:
@@ -83,30 +224,36 @@ def _scan(texts: list[str]) -> list[list[str]]:
 
 
 async def chunk_rows(
-    document: Document, fresh: Sequence[FreshChunk], embeddings: Sequence[list[float]]
+    document: Document,
+    fresh: Sequence[FreshChunk],
+    embeddings: Sequence[list[float]],
+    embedding_model: str,
 ) -> list[Chunk]:
     """The document's chunk rows, each with the instruction-like text it
     holds (`instruction_flags`, audit M-5), and the document's count of them.
     Every way in builds them here: the background job, the synchronous upload
     and the eval seed. A flagged document is logged with its chunks' rules.
+    Each row records the model that made its vector (audit R19).
 
     The rules take about a millisecond a chunk, seconds for a large PDF, so
     they run off the event loop, as parsing and chunking do."""
-    flags = await asyncio.to_thread(_scan, [text for _idx, text, _tokens, _hash in fresh])
+    flags = await asyncio.to_thread(_scan, [chunk.text for chunk in fresh])
     rows = [
         Chunk(
             document_id=document.id,
-            chunk_index=idx,
-            text=text,
-            token_count=tokens,
-            text_hash=text_hash,
+            chunk_index=chunk.index,
+            text=chunk.text,
+            token_count=chunk.token_count,
+            text_hash=chunk.text_hash,
             embedding=embedding,
+            embedding_model=embedding_model,
             language=document.language,
             instruction_flags=chunk_flags,
+            section=chunk.section,
+            page_start=chunk.page_start,
+            page_end=chunk.page_end,
         )
-        for (idx, text, tokens, text_hash), embedding, chunk_flags in zip(
-            fresh, embeddings, flags, strict=True
-        )
+        for chunk, embedding, chunk_flags in zip(fresh, embeddings, flags, strict=True)
     ]
     flagged = {row.chunk_index: row.instruction_flags for row in rows if row.instruction_flags}
     document.flagged_chunks = len(flagged)
@@ -118,6 +265,144 @@ async def chunk_rows(
             chunks=flagged,
         )
     return rows
+
+
+# --- a file, into a collection -----------------------------------------------------
+
+MB = 1024 * 1024
+# The largest file every way in takes: the upload routes, the MCP server's
+# ingest_document and the MCP connector (app/connectors/mcp_sync.py).
+MAX_DOCUMENT_BYTES = 10 * MB
+# `documents.filename` and `documents.title` are String(300).
+MAX_NAME_LENGTH = 300
+
+
+class DocumentTooLargeError(ValueError):
+    """The file is larger than MAX_DOCUMENT_BYTES."""
+
+
+def check_document(filename: str, file_bytes: bytes, file_type: str | None = None) -> str:
+    """The file's type, once the checks every way in makes have passed: its
+    name fits the column, it is not empty or too large, and its bytes are
+    what its type says (`check_content`). Raises a ValueError subclass."""
+    if len(filename) > MAX_NAME_LENGTH:
+        raise ValueError(f"Filename is longer than {MAX_NAME_LENGTH} characters")
+    file_type = file_type or detect_file_type(filename)
+    if not file_bytes:
+        raise ValueError("The file is empty")
+    if len(file_bytes) > MAX_DOCUMENT_BYTES:
+        raise DocumentTooLargeError(f"File exceeds maximum size of {MAX_DOCUMENT_BYTES // MB} MB")
+    check_content(file_bytes, file_type)
+    return file_type
+
+
+@dataclass(frozen=True)
+class ExtractedDocument:
+    """A file's text and chunks, before anything is embedded or stored."""
+
+    filename: str
+    file_type: str
+    raw_text: str
+    content_hash: str
+    chunks: list[TextChunk]
+    language: str | None
+
+
+async def extract_document(filename: str, file_type: str, file_bytes: bytes) -> ExtractedDocument:
+    """Extract and chunk a checked file, off the event loop."""
+    raw_text = await extract_text_in_thread(file_bytes, file_type)
+    chunks, language = await chunk_text_in_thread(raw_text, file_type)
+    if not chunks:
+        raise ValueError("Document produced no chunks after processing")
+    return ExtractedDocument(
+        filename, file_type, raw_text, content_hash(raw_text), chunks, language
+    )
+
+
+async def store_document(
+    db,
+    embedder: EmbeddingProvider,
+    extracted: ExtractedDocument,
+    *,
+    collection_id: int,
+    title: str | None = None,
+    source_uri: str | None = None,
+    replaces: int | None = None,
+    audit: Callable[[Document], object] | None = None,
+) -> Document:
+    """Embed an extracted file and store it in the collection, in one commit.
+
+    The same document twice in a collection is refused before anything is
+    paid for; a chunk another document holds too is stored again, with that
+    chunk's vector (audit R12). `replaces` is a document deleted in the same
+    commit: the earlier version of a synced source (`source_uri`). `audit`
+    builds a row committed with the document (an `AuditLog`), so a write and
+    its record go in together or not at all.
+
+    Raises DuplicateDocumentError, or the embedder's EmbeddingError.
+    """
+    digest = extracted.content_hash
+    await ensure_new_document(db, collection_id, digest)
+    hashes = chunk_hashes(extracted.chunks)
+    fresh = fresh_chunks(extracted.chunks, hashes)
+    reused = await reusable_embeddings(db, hashes, embedder.model_id)
+    if reused:
+        logger.info(
+            "chunk_embeddings_reused",
+            reused=sum(1 for chunk in fresh if chunk.text_hash in reused),
+            chunks=len(fresh),
+            collection_id=collection_id,
+        )
+    embeddings = await embed_chunks(fresh, embedder, reused)
+
+    if replaces is not None:
+        # Its vectors were read above, so its unchanged chunks are reused.
+        await db.execute(delete(Document).where(Document.id == replaces))
+    document = Document(
+        collection_id=collection_id,
+        title=title or extracted.filename,
+        filename=extracted.filename,
+        file_type=extracted.file_type,
+        raw_text=extracted.raw_text,
+        content_hash=digest,
+        source_uri=source_uri,
+        chunk_count=len(fresh),
+        total_tokens=sum(chunk.token_count for chunk in fresh),
+        language=extracted.language,
+    )
+    db.add(document)
+    try:
+        await db.flush()
+        db.add_all(await chunk_rows(document, fresh, embeddings, embedder.model_id))
+        if audit is not None:
+            db.add(audit(document))
+        await db.commit()
+    except IntegrityError as exc:
+        raise await duplicate_from(db, exc, collection_id, digest) from exc
+    await db.refresh(document)
+    return document
+
+
+async def ingest_bytes(
+    db,
+    embedder: EmbeddingProvider,
+    *,
+    collection_id: int,
+    filename: str,
+    file_bytes: bytes,
+    title: str | None = None,
+    file_type: str | None = None,
+    audit: Callable[[Document], object] | None = None,
+) -> Document:
+    """Check, extract, embed and store a file: what the synchronous upload
+    does, for the ways in that bring bytes without a form (the MCP server's
+    ingest_document). Raises a ValueError subclass for a file that is
+    refused, or the embedder's EmbeddingError."""
+    file_type = check_document(filename, file_bytes, file_type)
+    extracted = await extract_document(filename, file_type, file_bytes)
+    return await store_document(
+        db, embedder, extracted, collection_id=collection_id, title=title, audit=audit
+    )
 
 
 async def _set_status(
@@ -197,50 +482,40 @@ async def run_ingestion(
         raw_text = await extract_text_in_thread(file_bytes, file_type)
 
         await _set_status(job_id, status=IngestionStatus.CHUNKING, progress=15)
-        chunks_data, language = await chunk_text_in_thread(raw_text)
+        chunks_data, language = await chunk_text_in_thread(raw_text, file_type)
         if not chunks_data:
             raise ValueError("Document produced no chunks after processing")
 
-        # Dedup against existing chunks in the same collection.
-        hashes = [hashlib.sha256(c.text.encode("utf-8")).hexdigest() for c in chunks_data]
+        # The same document twice in a collection is refused before anything
+        # is paid for; a chunk another document holds too is stored again,
+        # with that chunk's vector (audit R12).
+        digest = content_hash(raw_text)
+        hashes = chunk_hashes(chunks_data)
+        fresh = fresh_chunks(chunks_data, hashes)
+        embedder = EmbeddingService()
         async with SessionLocal() as db:
-            from sqlalchemy import select
+            await ensure_new_document(db, collection_id, digest)
+            reused = await reusable_embeddings(db, hashes, embedder.model_id)
 
-            existing_q = (
-                select(Chunk.text_hash)
-                .join(Document, Chunk.document_id == Document.id)
-                .where(Document.collection_id == collection_id)
-                .where(Chunk.text_hash.in_(hashes))
-            )
-            skip_hashes = {row[0] for row in (await db.execute(existing_q)).all()}
+        def resolved_share(done: int) -> int:
+            return 25 + int(60 * done / len(fresh))
 
-        fresh = [
-            (cd.index, cd.text, cd.token_count, h)
-            for cd, h in zip(chunks_data, hashes, strict=True)
-            if h not in skip_hashes
-        ]
-        if not fresh:
-            raise ValueError("All chunks already exist in this collection (full duplicate)")
-
+        already = sum(1 for chunk in fresh if chunk.text_hash in reused)
         await _set_status(
             job_id,
             status=IngestionStatus.EMBEDDING,
-            progress=25,
+            progress=resolved_share(already),
             total_chunks=len(fresh),
-            processed_chunks=0,
+            processed_chunks=already,
         )
 
         # Batched embeddings with per-batch progress 25 → 85.
-        embedder = EmbeddingService()
-        embeddings: list[list[float]] = []
-        n = len(fresh)
-        for start in range(0, n, EMBED_BATCH_SIZE):
-            batch_texts = [t for _i, t, _tc, _h in fresh[start : start + EMBED_BATCH_SIZE]]
-            batch_vectors = await embedder.embed_batch(batch_texts)
-            embeddings.extend(batch_vectors)
-            done = min(start + EMBED_BATCH_SIZE, n)
-            pct = 25 + int(60 * done / n)
-            await _set_status(job_id, progress=pct, processed_chunks=done)
+        async def progress(done: int) -> None:
+            await _set_status(job_id, progress=resolved_share(done), processed_chunks=done)
+
+        embeddings = await embed_chunks(
+            fresh, embedder, reused, batch_size=EMBED_BATCH_SIZE, on_batch=progress
+        )
 
         await _set_status(job_id, status=IngestionStatus.PERSISTING, progress=90)
 
@@ -251,14 +526,18 @@ async def run_ingestion(
                 filename=filename,
                 file_type=file_type,
                 raw_text=raw_text,
+                content_hash=digest,
                 chunk_count=len(fresh),
-                total_tokens=sum(tc for _i, _t, tc, _h in fresh),
+                total_tokens=sum(chunk.token_count for chunk in fresh),
                 language=language,
             )
             db.add(document)
-            await db.flush()
-            db.add_all(await chunk_rows(document, fresh, embeddings))
-            await db.commit()
+            try:
+                await db.flush()
+                db.add_all(await chunk_rows(document, fresh, embeddings, embedder.model_id))
+                await db.commit()
+            except IntegrityError as exc:
+                raise await duplicate_from(db, exc, collection_id, digest) from exc
             await db.refresh(document)
             doc_id = document.id
 
@@ -292,9 +571,16 @@ async def run_ingestion(
 
 def job_error_message(exc: BaseException) -> str:
     """A failed job's `error_message`, which the API and its stream return:
-    the extractor's own rejections as they are, why an embedding failed, and
-    for anything else no exception text, which can carry SQL (audit R9)."""
-    if isinstance(exc, UnsupportedFileTypeError | EmptyDocumentError | UnreadableDocumentError):
+    the extractor's own rejections and a duplicate document as they are, why
+    an embedding failed, and for anything else no exception text, which can
+    carry SQL (audit R9)."""
+    if isinstance(
+        exc,
+        UnsupportedFileTypeError
+        | EmptyDocumentError
+        | UnreadableDocumentError
+        | DuplicateDocumentError,
+    ):
         return str(exc)
     if isinstance(exc, EmbeddingError):
         return f"Embedding the document failed: {failure_text(exc)}."
@@ -362,4 +648,5 @@ async def fail_interrupted_jobs() -> int:
             )
         )
         await db.commit()
-    return result.rowcount
+    # An UPDATE's result is a CursorResult, which the stubs do not say.
+    return result.rowcount  # type: ignore[attr-defined]

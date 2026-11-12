@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.db import SessionLocal
+from app.eval.agreement import build_labels, measure_agreement, read_labels, write_labels
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judge_cache import judge_cache_from_settings
 from app.eval.judges import Judge
@@ -17,6 +18,7 @@ from app.eval.rejudge import DatasetMismatchError, items_for, rejudge
 from app.eval.report import (
     diff_failures,
     gate_failures,
+    render_agreement_markdown,
     render_badge_json,
     render_diff_markdown,
     render_markdown,
@@ -24,7 +26,14 @@ from app.eval.report import (
     render_series_markdown,
     threshold_failures,
 )
-from app.eval.schemas import EvalReport, RejudgeSummary, SeriesSummary, TestItem
+from app.eval.schemas import (
+    AgreementSummary,
+    EvalReport,
+    LabelRow,
+    RejudgeSummary,
+    SeriesSummary,
+    TestItem,
+)
 from app.eval.series import summarize
 from app.models import Chunk, Collection
 from app.services.embedder import EmbeddingService
@@ -45,6 +54,7 @@ EXIT_BELOW_THRESHOLD = 3
 # does each time `rejudge` judges a run again, without the RAG model.
 MAX_RUNS = 20
 MAX_REJUDGE_TIMES = 10
+MAX_LABELS = 500
 
 
 def _fraction(value: str) -> float:
@@ -165,7 +175,7 @@ async def run_series(
     print(f"\n=== Series of {runs} runs ===")
     for label, spread in (
         ("Accuracy:          ", summary.accuracy),
-        ("Hallucination rate:", summary.hallucination_rate),
+        ("Unsupported claims:", summary.hallucination_rate),
     ):
         interval = (
             ""
@@ -191,7 +201,10 @@ def print_summary(report: EvalReport, output_path: Path) -> None:
         print(f"Judge verdicts from the cache: {report.judge_cache_hits}")
     print()
     print(f"Accuracy:             {m.accuracy:.2%}")
-    print(f"Hallucination rate:   {m.hallucination_rate:.2%}")
+    scoped = m.in_scope_unsupported()
+    if scoped is not None:
+        print(f"Unsupported claims:   {scoped[0]:.2%} of {scoped[1]} in-scope items (faithfulness)")
+    print(f"Unsupported, all:     {m.hallucination_rate:.2%} (the gates' hallucination rate)")
     print(f"Retrieval precision:  {m.avg_retrieval_precision:.2%}")
     print(f"Retrieval recall:     {m.avg_retrieval_recall:.2%}")
     print(
@@ -205,7 +218,7 @@ def print_summary(report: EvalReport, output_path: Path) -> None:
         print(
             f"  {difficulty:<6}: n={bucket['total']:<3} "
             f"accuracy={bucket['accuracy']:.2%} "
-            f"hallucination={bucket['hallucination_rate']:.2%}"
+            f"unsupported={bucket['hallucination_rate']:.2%}"
         )
     print()
     print("By category:")
@@ -213,7 +226,7 @@ def print_summary(report: EvalReport, output_path: Path) -> None:
         print(
             f"  {category:<14}: n={bucket['total']:<3} "
             f"accuracy={bucket['accuracy']:.2%} "
-            f"hallucination={bucket['hallucination_rate']:.2%}"
+            f"unsupported={bucket['hallucination_rate']:.2%}"
         )
     print()
     print(f"Full report written to: {output_path}")
@@ -278,6 +291,51 @@ async def run_rejudge(
             f"{c.check:<14}: {c.unanimous} of {c.items} items unanimous, "
             f"{c.flipped} of {c.verdicts_compared} new verdicts flipped, {c.skipped} skipped"
         )
+    print(f"Written to: {md_path}")
+    return summary
+
+
+async def run_label(
+    report_path: Path,
+    dataset_path: Path,
+    n: int,
+    seed: int,
+    output: Path | None = None,
+) -> list[LabelRow]:
+    """Write a sample of a run's verdicts for a person to rule on, without
+    what the judge ruled (app/eval/agreement.py). No model is called."""
+    report = _load_report(report_path)
+    items = items_for(report, load_dataset(dataset_path))
+    contexts = await load_contexts({i for r in report.results for i in (r.context_chunk_ids or [])})
+    rows = build_labels(report, items, contexts, n=n, seed=seed)
+    path = output or report_path.parent / f"labels_{report.run_id[:8]}.jsonl"
+    write_labels(path, rows)
+    by_check = {c: sum(r.check == c for r in rows) for c in ("correctness", "hallucination")}
+    print(
+        f"\n{len(rows)} verdicts to rule on ({by_check['correctness']} correctness, "
+        f"{by_check['hallucination']} grounding), written to: {path}"
+    )
+    print('Fill "human" in each line with true or false (see "ask"), then run:')
+    print(f"  python -m app.eval.runner agreement {report_path} {path}")
+    return rows
+
+
+def run_agreement(
+    report_path: Path, labels_path: Path, output: Path | None = None
+) -> AgreementSummary:
+    """Set a person's rulings against the judge's verdicts of the run. No
+    model is called."""
+    report = _load_report(report_path)
+    summary = measure_agreement(report, read_labels(labels_path))
+    md_path = output or labels_path.with_name(f"agreement_{report.run_id[:8]}.md")
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text(render_agreement_markdown(summary), encoding="utf-8")
+    md_path.with_suffix(".json").write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    print("\n=== Judge vs human ===")
+    for c in summary.checks:
+        kappa = "n/a" if c.kappa is None else f"{c.kappa:.2f}"
+        print(f"{c.check:<14}: {c.agree} of {c.labeled} agree, kappa {kappa}")
+    print(f"{summary.unlabeled} rows without a ruling, {summary.unmatched} not matched")
     print(f"Written to: {md_path}")
     return summary
 
@@ -378,10 +436,68 @@ def main() -> None:
         help="Where to write the Markdown; the JSON goes next to it. Default: beside the report.",
     )
 
+    label_parser = sub.add_parser(
+        "label",
+        help="Write a sample of a run's verdicts for a person to rule on, without what the "
+        "judge ruled. Calls no model.",
+    )
+    label_parser.add_argument("report", type=Path)
+    label_parser.add_argument(
+        "--n",
+        type=_up_to(MAX_LABELS),
+        default=50,
+        help=f"How many verdicts to sample (1 to {MAX_LABELS}), half of each check and, "
+        "within a check, half the judge passed and half it failed.",
+    )
+    label_parser.add_argument("--seed", type=int, default=0)
+    label_parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=DEFAULT_DATASET,
+        help="The dataset the run read: the person sees the expected answer and facts.",
+    )
+    label_parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="Where to write the labels (JSON lines); it must not exist. "
+        "Default: beside the report.",
+    )
+
+    agreement_parser = sub.add_parser(
+        "agreement",
+        help="Set a person's rulings (from `label`) against the judge's verdicts of the run: "
+        "agreement, Cohen's kappa and the verdicts they split on. Calls no model.",
+    )
+    agreement_parser.add_argument("report", type=Path)
+    agreement_parser.add_argument("labels", type=Path)
+    agreement_parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="Where to write the Markdown; the JSON goes next to it. Default: beside the labels.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "diff":
         _exit_on(cmd_diff(args), "Worse than the previous run:")
+        return
+    if args.command == "label":
+        try:
+            asyncio.run(run_label(args.report, args.dataset, args.n, args.seed, args.output))
+        except (DatasetMismatchError, FileExistsError) as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            sys.exit(EXIT_ABORTED)
+        return
+    if args.command == "agreement":
+        try:
+            run_agreement(args.report, args.labels, args.output)
+        except ValueError as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            sys.exit(EXIT_ABORTED)
         return
     if args.command == "rejudge":
         try:

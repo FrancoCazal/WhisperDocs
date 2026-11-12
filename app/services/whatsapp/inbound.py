@@ -10,12 +10,17 @@ this process keeps until it ends.
   timeout or a 5xx (`#rp=`) or name a fallback URL. Each message has its
   `MessageSid`, and `SeenMessages` drops a second delivery.
 - **One number's messages are answered one at a time,** in the order the
-  webhook took them (app/agent/thread_lock.py): a `/coleccion` sent before
+  webhook took them (app/agent/thread_lock.py): a `/collection` sent before
   a question must apply to it.
 - **This process's memory,** like the rate limits: the API runs as one
   uvicorn process. A restart forgets the ids it saw, and `stop_replies`
   cancels the turns still running after a grace period.
 - **No phone number in a log line.** The thread id is a UUID5 of the number.
+- **The user's language.** What this module writes itself (the new thread's
+  notice, the apology, the commands' replies) is in English or Spanish, as
+  the user's message is (`reply_language`); a command is in the language of
+  the name it was sent as: `/save` and `/guardar`, `/collection` and
+  `/coleccion`, `/help` and `/ayuda`.
 """
 
 from __future__ import annotations
@@ -41,6 +46,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.metrics import agent_turn_duration_seconds
 from app.models import Collection, Conversation
+from app.services.lang import ReplyLanguage, reply_language
 from app.services.twilio_client import failure_fields, send_whatsapp_message
 from app.services.whatsapp.formatter import format_for_whatsapp
 from app.telemetry import AGENT_WORKFLOW, error_type, workflow
@@ -53,18 +59,60 @@ Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 # the 15 s it waits.
 SEEN_TTL_S = 600.0
 
-NEW_THREAD_DISCLAIMER = (
-    "Iniciamos una conversación nueva. Si querés guardarla, respondé /guardar cuando quieras.\n\n"
-)
-APOLOGY = "Disculpá, tuve un problema. Intentá de nuevo en un momento."
+NEW_THREAD_DISCLAIMER: dict[ReplyLanguage, str] = {
+    "en": "This is a new conversation. To keep it, reply /save at any time.\n\n",
+    "es": "Iniciamos una conversación nueva. Si querés guardarla, respondé /guardar cuando "
+    "quieras.\n\n",
+}
+APOLOGY: dict[ReplyLanguage, str] = {
+    "en": "Sorry, something went wrong. Please try again in a moment.",
+    "es": "Disculpá, tuve un problema. Intentá de nuevo en un momento.",
+}
 
-_HELP_TEXT = (
-    "Comandos disponibles:\n"
-    "/guardar — Guarda esta conversación (no se borrará automáticamente).\n"
-    "/coleccion <nombre> — Cambia la colección activa.\n"
-    "/coleccion todas — Consulta todas las colecciones.\n"
-    "/ayuda — Muestra este mensaje."
-)
+HELP_TEXT: dict[ReplyLanguage, str] = {
+    "en": (
+        "Commands:\n"
+        "/save — Keep this conversation (it is not deleted automatically).\n"
+        "/collection <name> — Switch the active collection.\n"
+        "/collection all — Search every collection.\n"
+        "/help — Show this message."
+    ),
+    "es": (
+        "Comandos disponibles:\n"
+        "/guardar — Guarda esta conversación (no se borrará automáticamente).\n"
+        "/coleccion <nombre> — Cambia la colección activa.\n"
+        "/coleccion todas — Consulta todas las colecciones.\n"
+        "/ayuda — Muestra este mensaje."
+    ),
+}
+SAVED: dict[ReplyLanguage, str] = {
+    "en": "Conversation saved. It will not be deleted automatically.",
+    "es": "Conversación guardada. No se borrará automáticamente.",
+}
+ALL_COLLECTIONS: dict[ReplyLanguage, str] = {
+    "en": "Searching every collection.",
+    "es": "Consultando todas las colecciones.",
+}
+SWITCHED: dict[ReplyLanguage, str] = {
+    "en": "Now searching: {name}. What would you like to know?",
+    "es": "Ahora consultando: {name}. ¿Qué querés saber?",
+}
+NOT_FOUND: dict[ReplyLanguage, str] = {
+    "en": "No collection called '{name}'. Available: {available}.",
+    "es": "No encontré la colección '{name}'. Disponibles: {available}.",
+}
+_NO_COLLECTIONS: dict[ReplyLanguage, str] = {"en": "(none)", "es": "(ninguna)"}
+
+# Each command's names, and the language of each.
+_SAVE: dict[str, ReplyLanguage] = {"/save": "en", "/guardar": "es"}
+_HELP: dict[str, ReplyLanguage] = {"/help": "en", "/ayuda": "es"}
+_COLLECTION: dict[str, ReplyLanguage] = {
+    "/collection ": "en",
+    "/coleccion ": "es",
+    "/colección ": "es",
+}
+# `/collection all`, in either language.
+_EVERY_COLLECTION = frozenset({"all", "todas"})
 
 
 class SeenMessages:
@@ -193,7 +241,7 @@ async def _answer(agent: Any, db: AsyncSession, *, sender: str, body: str, threa
         else:
             turn.outcome(result.get("pending_action"), failure_kind(result.get("metadata") or {}))
     if result is None:
-        await _send(sender, APOLOGY, thread_id)
+        await _send(sender, APOLOGY[reply_language([body])], thread_id)
         return
 
     agent_turn_duration_seconds.labels(action=result.get("pending_action") or "unknown").observe(
@@ -206,31 +254,33 @@ async def _answer(agent: Any, db: AsyncSession, *, sender: str, body: str, threa
     answer = final.content if isinstance(final.content, str) else str(final.content)
     citations = result.get("retrieved_chunks") or []
 
-    formatted = format_for_whatsapp(answer, citations or None)
+    language = reply_language([body])
+    formatted = format_for_whatsapp(answer, citations or None, language=language)
     if is_new_thread:
-        formatted = NEW_THREAD_DISCLAIMER + formatted
+        formatted = NEW_THREAD_DISCLAIMER[language] + formatted
     await _send(sender, formatted, thread_id)
 
 
 async def _handle_slash_command(body: str, conv: Conversation, db: AsyncSession) -> str | None:
-    """Parse slash commands. Returns reply text if handled, None otherwise."""
+    """Parse slash commands. Returns reply text if handled, None otherwise.
+    The reply is in the language of the command's name."""
     lower = body.strip().lower()
 
-    if lower in ("/guardar", "/save"):
+    if lower in _SAVE:
         conv.is_saved = True
         await db.commit()
-        return "Conversación guardada. No se borrará automáticamente."
+        return SAVED[_SAVE[lower]]
 
-    if lower in ("/ayuda", "/help"):
-        return _HELP_TEXT
+    if lower in _HELP:
+        return HELP_TEXT[_HELP[lower]]
 
-    for prefix in ("/coleccion ", "/colección ", "/collection "):
+    for prefix, language in _COLLECTION.items():
         if lower.startswith(prefix):
             name = body.strip()[len(prefix) :].strip()
-            if name.lower() == "todas":
+            if name.lower() in _EVERY_COLLECTION:
                 conv.collection_id = None
                 await db.commit()
-                return "Consultando todas las colecciones."
+                return ALL_COLLECTIONS[language]
 
             cols = (await db.execute(select(Collection))).scalars().all()
             name_map = {c.name.lower(): c for c in cols}
@@ -239,9 +289,9 @@ async def _handle_slash_command(body: str, conv: Conversation, db: AsyncSession)
                 matched = name_map[matches[0]]
                 conv.collection_id = matched.id
                 await db.commit()
-                return f"Ahora consultando: {matched.name}. ¿Qué querés saber?"
-            available = ", ".join(c.name for c in cols) or "(ninguna)"
-            return f"No encontré la colección '{name}'. Disponibles: {available}."
+                return SWITCHED[language].format(name=matched.name)
+            available = ", ".join(c.name for c in cols) or _NO_COLLECTIONS[language]
+            return NOT_FOUND[language].format(name=name, available=available)
 
     return None
 

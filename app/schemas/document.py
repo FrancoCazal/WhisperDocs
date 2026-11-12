@@ -50,6 +50,6 @@ class BulkOpResult(BaseModel):
     succeeded: int
     failed: int
     not_found: list[int] = []
-    # Always empty: a bulk operation is one statement, which succeeds or fails
-    # as a whole (audit R11). Kept so the clients that read it still parse.
+    # Why a document was not moved, by its id: the target collection already
+    # holds its text (audit R12). A delete never fills it.
     errors: dict[int, str] = {}

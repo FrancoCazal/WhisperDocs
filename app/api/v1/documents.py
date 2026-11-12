@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 from collections.abc import AsyncIterator
 
@@ -15,11 +14,11 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.errors import upstream_error
-from app.api.rate_limit import uploads_limit
+from app.api.errors import APIError, upstream_error
+from app.api.rate_limit import questions_limit, uploads_limit
 from app.db import SessionLocal, get_db
 from app.logging_config import get_logger
 from app.models import Chunk, Collection, Document, IngestionJob, IngestionStatus
@@ -33,22 +32,26 @@ from app.schemas.document import (
     DocumentDetail,
     DocumentRead,
 )
+from app.schemas.extraction import ExtractionRequest, ExtractionResponse
 from app.schemas.ingestion_job import IngestionJobCreate, IngestionJobRead
 from app.schemas.pagination import Page
-from app.services import catalog
+from app.services import catalog, extraction
+from app.services.documents import MoveConflictError, delete_documents, move_documents
 from app.services.embedder import EmbeddingError, EmbeddingService, get_embedder
 from app.services.ingestion import (
-    FreshChunk,
-    chunk_rows,
-    chunk_text_in_thread,
+    MAX_DOCUMENT_BYTES,
+    MAX_NAME_LENGTH,
+    DocumentTooLargeError,
+    DuplicateDocumentError,
+    check_document,
     create_job,
-    extract_text_in_thread,
+    extract_document,
     spawn_ingestion,
+    store_document,
 )
 from app.services.text_extractor import (
     EmptyDocumentError,
     UnreadableDocumentError,
-    check_content,
     detect_file_type,
 )
 
@@ -57,11 +60,9 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 MB = 1024 * 1024
-MAX_UPLOAD_BYTES = 10 * MB
+MAX_UPLOAD_BYTES = MAX_DOCUMENT_BYTES
 MAX_BATCH_FILES = 20
 MAX_BATCH_BYTES = 50 * MB
-# `documents.filename`, `documents.title` and their ingestion_jobs columns are String(300).
-MAX_NAME_LENGTH = 300
 _MULTIPART_OVERHEAD = 64 * 1024  # boundaries, part headers and the form fields
 
 # Request body limits, enforced by BodySizeLimitMiddleware before the form is
@@ -72,29 +73,22 @@ BODY_LIMITS = {
     "/documents/upload-batch": MAX_BATCH_BYTES + _MULTIPART_OVERHEAD,
 }
 
-
-class FileTooLargeError(ValueError):
-    pass
+FileTooLargeError = DocumentTooLargeError
 
 
 async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
     """Validate an uploaded file and read it. Returns (filename, file_type, bytes).
 
     Raises a ValueError subclass for every rejection; `_upload_error` maps
-    them to status codes. Reads at most one byte past the limit, so an
-    oversized part is not loaded whole.
+    them to status codes. An unsupported type is refused before the body is
+    read, and at most one byte past the limit is read, so an oversized part
+    is not loaded whole. The checks are `check_document`'s, which every way
+    in makes.
     """
     filename = file.filename or "untitled"
-    if len(filename) > MAX_NAME_LENGTH:
-        raise ValueError(f"Filename is longer than {MAX_NAME_LENGTH} characters")
     file_type = detect_file_type(filename)
     file_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
-    if len(file_bytes) == 0:
-        raise ValueError("Uploaded file is empty")
-    if len(file_bytes) > MAX_UPLOAD_BYTES:
-        raise FileTooLargeError(f"File exceeds maximum size of {MAX_UPLOAD_BYTES // MB} MB")
-    check_content(file_bytes, file_type)
-    return filename, file_type, file_bytes
+    return filename, check_document(filename, file_bytes, file_type), file_bytes
 
 
 def _upload_error(exc: Exception) -> Exception:
@@ -106,6 +100,8 @@ def _upload_error(exc: Exception) -> Exception:
         return upstream_error(exc, "Embedding the document")
     if isinstance(exc, FileTooLargeError):
         code = status.HTTP_413_CONTENT_TOO_LARGE
+    elif isinstance(exc, DuplicateDocumentError):
+        code = status.HTTP_409_CONFLICT
     elif isinstance(exc, (EmptyDocumentError, UnreadableDocumentError)):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     elif isinstance(exc, ValueError):  # includes UnsupportedFileTypeError
@@ -134,57 +130,8 @@ async def _ingest_single(
     embedder: EmbeddingService,
 ) -> Document:
     filename, file_type, file_bytes = await _read_upload(file)
-    raw_text = await extract_text_in_thread(file_bytes, file_type)
-    chunks_data, language = await chunk_text_in_thread(raw_text)
-    if not chunks_data:
-        raise ValueError("Document produced no chunks after processing")
-
-    # Dedup: skip chunks whose hash already exists in this collection.
-    hashes = [hashlib.sha256(c.text.encode("utf-8")).hexdigest() for c in chunks_data]
-    existing_q = (
-        select(Chunk.text_hash)
-        .join(Document, Chunk.document_id == Document.id)
-        .where(Document.collection_id == collection_id)
-        .where(Chunk.text_hash.in_(hashes))
-    )
-    existing_hashes = {row[0] for row in (await db.execute(existing_q)).all()}
-
-    fresh: list[FreshChunk] = [
-        (cd.index, cd.text, cd.token_count, h)
-        for cd, h in zip(chunks_data, hashes, strict=True)
-        if h not in existing_hashes
-    ]
-    skipped = len(chunks_data) - len(fresh)
-    if skipped:
-        logger.info(
-            "chunk_dedup_skipped",
-            skipped=skipped,
-            kept=len(fresh),
-            collection_id=collection_id,
-        )
-
-    if not fresh:
-        raise ValueError("All chunks already exist in this collection (full duplicate)")
-
-    embeddings = await embedder.embed_batch([t for _idx, t, _tc, _h in fresh])
-
-    document = Document(
-        collection_id=collection_id,
-        title=title or filename,
-        filename=filename,
-        file_type=file_type,
-        raw_text=raw_text,
-        chunk_count=len(fresh),
-        total_tokens=sum(tc for _idx, _t, tc, _h in fresh),
-        language=language,
-    )
-    db.add(document)
-    await db.flush()
-
-    db.add_all(await chunk_rows(document, fresh, embeddings))
-    await db.commit()
-    await db.refresh(document)
-    return document
+    extracted = await extract_document(filename, file_type, file_bytes)
+    return await store_document(db, embedder, extracted, collection_id=collection_id, title=title)
 
 
 @router.post(
@@ -311,6 +258,44 @@ async def list_document_chunks(
     return list(result.scalars().all())
 
 
+@router.post(
+    "/{document_id:int}/extract",
+    operation_id="extract_fields",
+    response_model=ExtractionResponse,
+    dependencies=[Depends(questions_limit)],
+)
+async def extract_document_fields(
+    document_id: int,
+    payload: ExtractionRequest,
+    db: AsyncSession = Depends(get_db),
+    embedder: EmbeddingService = Depends(get_embedder),
+) -> ExtractionResponse:
+    """The fields a JSON Schema names, out of the document, each with the
+    passage and the words that state it (audit M-8). One model call, paid
+    for; a field the document does not state is null. Shared with the MCP
+    server's `extract_fields` (`app/services/extraction.py`)."""
+    try:
+        return await extraction.extract_fields(
+            db,
+            embedder,
+            document_id=document_id,
+            json_schema=payload.json_schema,
+            instructions=payload.instructions,
+        )
+    except extraction.DocumentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except extraction.SchemaError as exc:
+        raise APIError(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_schema", f"The schema: {exc}"
+        ) from exc
+    except EmbeddingError as exc:
+        logger.exception("extraction_search_failed", document_id=document_id)
+        raise upstream_error(exc, "Searching the document") from exc
+    except extraction.ExtractionError as exc:
+        logger.exception("extraction_failed", document_id=document_id)
+        raise upstream_error(exc, "Extraction") from exc
+
+
 @router.delete(
     "/{document_id:int}", operation_id="delete_document", status_code=status.HTTP_204_NO_CONTENT
 )
@@ -319,10 +304,7 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     # One statement; the foreign key removes the chunks (audit R11).
-    deleted = await db.scalar(
-        delete(Document).where(Document.id == document_id).returning(Document.id)
-    )
-    if deleted is None:
+    if not await delete_documents(db, [document_id]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     await db.commit()
 
@@ -343,10 +325,7 @@ async def bulk_delete_documents(
     if not payload.document_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_ids is empty")
 
-    deleted = await db.scalars(
-        delete(Document).where(Document.id.in_(payload.document_ids)).returning(Document.id)
-    )
-    found_ids = set(deleted.all())
+    found_ids = await delete_documents(db, payload.document_ids)
     await db.commit()
     return _bulk_result(payload.document_ids, found_ids)
 
@@ -357,7 +336,8 @@ async def bulk_move_documents(
     db: AsyncSession = Depends(get_db),
 ) -> BulkOpResult:
     """Reassign N documents to another collection, in one statement (see
-    `bulk_delete_documents`)."""
+    `bulk_delete_documents`). A document whose text the target already holds
+    stays where it is (`move_documents`)."""
     if not payload.document_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="document_ids is empty")
 
@@ -368,24 +348,25 @@ async def bulk_move_documents(
             detail=f"Target collection {payload.target_collection_id} not found",
         )
 
-    moved = await db.scalars(
-        update(Document)
-        .where(Document.id.in_(payload.document_ids))
-        .values(collection_id=payload.target_collection_id)
-        .returning(Document.id)
-    )
-    found_ids = set(moved.all())
+    try:
+        result = await move_documents(db, payload.document_ids, payload.target_collection_id)
+    except MoveConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     await db.commit()
-    return _bulk_result(payload.document_ids, found_ids)
+    return _bulk_result(payload.document_ids, result.moved, result.errors)
 
 
-def _bulk_result(requested: list[int], found_ids: set[int]) -> BulkOpResult:
-    not_found = [i for i in requested if i not in found_ids]
+def _bulk_result(
+    requested: list[int], found_ids: set[int], errors: dict[int, str] | None = None
+) -> BulkOpResult:
+    errors = errors or {}
+    not_found = [i for i in requested if i not in found_ids and i not in errors]
     return BulkOpResult(
         requested=len(requested),
         succeeded=len(found_ids),
-        failed=len(not_found),
+        failed=len(not_found) + len(errors),
         not_found=not_found,
+        errors=errors,
     )
 
 

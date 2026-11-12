@@ -1,4 +1,5 @@
 from app.models.api_key import ApiKey
+from app.models.audit_log import AuditLog
 from app.models.chunk import Chunk
 from app.models.collection import Collection
 from app.models.conversation import Conversation
@@ -9,6 +10,7 @@ from app.models.saved_note import SavedNote
 
 __all__ = [
     "ApiKey",
+    "AuditLog",
     "Chunk",
     "Collection",
     "Conversation",

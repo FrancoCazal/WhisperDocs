@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { COSINE_HINT, fmtCosine, type AgentCitation } from "@/lib/api";
+import { ChunkPlace } from "@/components/ui-kit/ChunkPlace";
 import {
   Sheet,
   SheetContent,
@@ -60,7 +61,8 @@ export function SourcesSheet({ view, onClose }: { view: SourcesView | null; onCl
                   </span>
                 </div>
                 <div className="label-xs text-text-tertiary mb-2">
-                  CHUNK {c.chunk_index} ·{" "}
+                  CHUNK {c.chunk_index}
+                  <ChunkPlace c={c} /> ·{" "}
                   <span className={cited ? "text-primary-blue" : undefined}>
                     {cited ? "CITED" : "NOT CITED"}
                   </span>

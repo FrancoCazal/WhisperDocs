@@ -11,7 +11,8 @@ from app.db import SessionLocal
 from app.eval.evaluator import EvalAbortedError, RAGEvaluator
 from app.eval.judge_cache import judge_cache_from_settings
 from app.eval.judges import Judge
-from app.eval.schemas import EvalReport, TestItem
+from app.eval.report import run_diff
+from app.eval.schemas import EvalReport, RunDiff, TestItem
 from app.services.embedder import EmbeddingService, get_embedder
 from app.services.llm import llm_service_for
 
@@ -69,7 +70,7 @@ async def run_evaluation(
     return report
 
 
-# The two readers below are plain `def`: FastAPI runs them in its threadpool,
+# The readers below are plain `def`: FastAPI runs them in its threadpool,
 # so reading and parsing reports (~100 KB each) never blocks the event loop.
 @router.get("/results", operation_id="list_eval_results")
 def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
@@ -118,6 +119,21 @@ def list_results(limit: int = Query(default=20, ge=1, le=200)) -> list[dict]:
 )
 def get_result(run_id: str) -> EvalReport:
     """One run in full: every item's answers and judge verdicts."""
+    return _find_report(run_id)
+
+
+@router.get("/diff", operation_id="diff_eval_results", response_model=RunDiff)
+def diff_results(
+    previous: str = Query(description="The earlier run's id."),
+    current: str = Query(description="The later run's id."),
+) -> RunDiff:
+    """Two runs compared, as `runner diff` compares them: what makes the
+    difference hard to read, each setting that changed, the metrics, and the
+    items whose verdicts flipped, with McNemar's exact test per check."""
+    return run_diff(_find_report(previous), _find_report(current))
+
+
+def _find_report(run_id: str) -> EvalReport:
     try:
         canonical = str(uuid.UUID(run_id))
     except ValueError:
@@ -130,4 +146,6 @@ def get_result(run_id: str) -> EvalReport:
             continue
         if report.run_id == canonical:
             return report
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {canonical[:8]} not found"
+    )

@@ -21,6 +21,10 @@ class Citation(BaseModel):
     relevance: float
     # Cosine similarity to the question; None if only full-text search found it.
     cosine: float | None = None
+    # Where the chunk sits (app/models/chunk.py).
+    section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
 
 
 class QueryMetadata(BaseModel):

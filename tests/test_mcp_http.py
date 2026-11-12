@@ -106,11 +106,11 @@ async def test_the_api_key_header_works_too():
 
 @pytest.mark.usefixtures("master")
 async def test_a_stored_key_reaches_its_collections():
-    row = SimpleNamespace(name="claude-code", collection_ids=[3, 5])
+    row = SimpleNamespace(name="claude-code", collection_ids=[3, 5], can_write=False)
     db = _Db(row)
     guard, inner = _guard(db)
 
-    every = SimpleNamespace(name="all", collection_ids=None)
+    every = SimpleNamespace(name="all", collection_ids=None, can_write=True)
     response = await _post(guard, {"Authorization": "Bearer wdk_abc"})
     guard_all, inner_all = _guard(_Db(every))
     await _post(guard_all, {"X-API-Key": "wdk_def"})
@@ -119,7 +119,10 @@ async def test_a_stored_key_reaches_its_collections():
     assert access_of(SimpleNamespace(scope=inner.scopes[0])) == Access(
         "claude-code", frozenset({3, 5})
     )
-    assert access_of(SimpleNamespace(scope=inner_all.scopes[0])) == Access("all", None)
+    # A key made with --write may write (BE-36).
+    assert access_of(SimpleNamespace(scope=inner_all.scopes[0])) == Access(
+        "all", None, can_write=True
+    )
     assert db.lookups == 1
 
 
@@ -219,6 +222,9 @@ def test_a_key_reaches_everything_only_when_asked(argv):
 def test_the_key_command_reads_its_collections():
     args = _parser().parse_args(["create", "k", "--collection", "3", "--collection", "5"])
     every = _parser().parse_args(["create", "k", "--all"])
+    writer = _parser().parse_args(["create", "w", "--collection", "3", "--write"])
 
     assert (args.name, args.collections, args.all) == ("k", [3, 5], False)
     assert (every.collections, every.all) == (None, True)
+    # A key reads only, unless made to write (BE-36).
+    assert (args.write, writer.write) == (False, True)

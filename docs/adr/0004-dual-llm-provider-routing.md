@@ -1,6 +1,6 @@
 # ADR 0004 — Dual LLM provider routing
 
-**Status:** accepted
+**Status:** accepted; defaults amended 2026-11 (every role on Bedrock, below)
 **Date:** 2026-04
 
 ## Context
@@ -71,3 +71,34 @@ provider-agnostic.
   the SSE endpoint.
 - `app/services/llm/pricing.py` carries the static price table — used for
   cost tracking on `query_logs.cost_usd` and in the eval runner.
+
+## Amendment — 2026-11: every default on Bedrock
+
+The per-node routing stays; the defaults move to one provider.
+
+| Node alias | Default model |
+|------------|---------------|
+| `classifier`, `query_rewrite`, `clarification`, `answer_direct`, `summarize` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `rag`, `extraction` | `global.anthropic.claude-sonnet-4-6` |
+| `eval_judge` | `us.amazon.nova-2-lite-v1:0` |
+
+**Why.**
+- **One account runs the app.** With the hot path on Gemini, a clone with
+  only AWS keys sent every classifier call to a provider it had no access
+  to, and every question fell back to a search. Embeddings still need
+  OpenAI.
+- **Sonnet 4.5 can no longer be counted on.** It is Legacy on Bedrock, and
+  Bedrock refuses a Legacy model to an account that has not called it in
+  30 days. Sonnet 4.6 is Active, at the same price. Sonnet 5.5 was not
+  available to the account tried.
+- **The judge keeps another family.** A model judging its own family's
+  answers tends to favour them, so the judge is Amazon Nova, not Haiku. On
+  eight judge cases with a known verdict, Nova 2 Lite ruled all eight right
+  and Haiku 4.5 seven; Nova 2 Lite costs less than either. Nova Premier is
+  past its end of life.
+
+**Trade-off.** One provider's outage now stops every node, where Gemini and
+Bedrock failed apart before. `AGENT_MODEL_*` still moves any node to
+Gemini (`gemini-...`) with `GCP_PROJECT` set, and the model status names a
+failing role (BE-14). Haiku costs about a third more than Gemini Flash per
+token on the hot path, a fraction of a cent per turn.

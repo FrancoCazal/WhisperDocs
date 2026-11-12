@@ -31,6 +31,10 @@ class RetrievedChunk:
     text: str
     relevance: float
     cosine: float | None = None
+    # Where the chunk sits in its document (see app/models/chunk.py).
+    section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
 
 
 def fuse_rrf(
@@ -120,6 +124,9 @@ class VectorRetriever:
                     text=row.text,
                     relevance=cosine,
                     cosine=cosine,
+                    section=row.section,
+                    page_start=row.page_start,
+                    page_end=row.page_end,
                 )
             )
         return chunks
@@ -150,6 +157,9 @@ class VectorRetriever:
                 Document.title.label("document_title"),
                 Chunk.chunk_index,
                 Chunk.text,
+                Chunk.section,
+                Chunk.page_start,
+                Chunk.page_end,
                 distance.label("distance"),
             )
             .join(Document, Chunk.document_id == Document.id)
@@ -195,6 +205,9 @@ class VectorRetriever:
                 d.title AS document_title,
                 c.chunk_index AS chunk_index,
                 c.text AS text,
+                c.section AS section,
+                c.page_start AS page_start,
+                c.page_end AS page_end,
                 ts_rank_cd(c.tsv, q.tsq) AS rank
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
@@ -223,6 +236,9 @@ class VectorRetriever:
                 chunk_index=row["chunk_index"],
                 text=row["text"],
                 relevance=round(float(row["rank"]) / best, 4),
+                section=row["section"],
+                page_start=row["page_start"],
+                page_end=row["page_end"],
             )
             for row in rows
         ]

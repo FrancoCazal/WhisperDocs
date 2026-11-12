@@ -172,7 +172,7 @@ export type DocumentRead = {
   collection_id: number;
   title: string;
   filename: string;
-  file_type: "pdf" | "md" | "txt" | string;
+  file_type: "pdf" | "docx" | "xlsx" | "csv" | "html" | "md" | "txt" | string;
   chunk_count: number;
   total_tokens: number;
   // Chunks whose text reads as an instruction to the model
@@ -183,7 +183,16 @@ export type DocumentRead = {
 
 export type DocumentDetail = DocumentRead & { raw_text: string };
 
-export type Chunk = {
+// Where a chunk sits in its document (app/models/chunk.py): the headings it is
+// under, joined by " › ", and the pages of a PDF's chunk. Missing from a
+// backend older than them and null on chunks stored before.
+export type ChunkLocation = {
+  section?: string | null;
+  page_start?: number | null;
+  page_end?: number | null;
+};
+
+export type Chunk = ChunkLocation & {
   id: number;
   document_id: number;
   chunk_index: number;
@@ -193,7 +202,7 @@ export type Chunk = {
   instruction_flags?: string[];
 };
 
-export type Citation = {
+export type Citation = ChunkLocation & {
   chunk_id: number;
   document_id: number;
   document_title: string;
@@ -291,18 +300,67 @@ export type PromptVersions = {
   judge_prompt_version?: string | null;
 };
 
+// What a run answered and judged with, past its model and prompts
+// (app/eval/schemas.py RunConfig). null: a setting that does not apply, such
+// as a model's default sampling or a step that is off.
+export type RunConfig = Record<string, string | number | boolean | null>;
+
 export type EvalReport = PromptVersions & {
   run_id: string;
   timestamp: string;
   dataset_size: number;
   model: string;
+  // Reports from before the run config have none.
+  config?: RunConfig | null;
+  // Verdicts the judge took from its cache; absent or null when it had none.
+  judge_cache_hits?: number | null;
   metrics: EvalMetrics;
   results: EvalResult[];
 };
 
+// Two runs compared by the API (`GET /eval/diff`), as `runner diff` compares
+// them (app/eval/report.py run_diff).
+export type RunDiff = {
+  previous: string;
+  current: string;
+  // Items both runs answered: same id, same question.
+  common_items: number;
+  // The runs answered the same items, and no other.
+  same_items: boolean;
+  // What makes the difference hard to read; versions and SHAs in backticks.
+  warnings: string[];
+  changed: {
+    setting: string;
+    previous: string | number | boolean | null;
+    current: string | number | boolean | null;
+  }[];
+  // null: that run's report is older than the metric.
+  metrics: { metric: keyof EvalMetrics; previous: number | null; current: number | null }[];
+  // McNemar's exact test over each check's flips.
+  checks: { check: string; worse: number; better: number; p_value: number }[];
+  flips: {
+    item_id: number;
+    check: string;
+    question: string;
+    // The later run's reasoning: why the item passes or fails now.
+    reasoning: string;
+    regression: boolean;
+  }[];
+};
+
 // A judge's verdict. For hallucination, `passed` means grounded. `error`: the
 // judge call failed, so `passed` is false by construction.
-export type JudgeVerdict = { passed: boolean; reasoning: string; error?: boolean };
+export type JudgeVerdict = {
+  passed: boolean;
+  reasoning: string;
+  error?: boolean;
+  // Correctness against required facts: the ones the answer does not state.
+  // Absent in reports from before the judge checked facts.
+  facts_missing?: string[];
+  // Statements that count against the answer: those that contradict a
+  // required fact, or that the context does not support.
+  wrong_claims?: string[];
+};
 
 export type EvalResult = {
   item_id: number;
@@ -852,6 +910,10 @@ export const api = {
 
   evalResults: (limit = 20) => request<EvalRunSummary[]>(`/eval/results?limit=${limit}`),
   getEvalRun: (runId: string) => request<EvalReport>(`/eval/results/${encodeURIComponent(runId)}`),
+  evalDiff: (previous: string, current: string) =>
+    request<RunDiff>(
+      `/eval/diff?previous=${encodeURIComponent(previous)}&current=${encodeURIComponent(current)}`,
+    ),
   runEval: (body: {
     dataset: EvalItem[];
     collection_id: number;

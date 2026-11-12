@@ -63,6 +63,7 @@ _NODE_ALIAS: dict[str, Role] = {
     "answer_direct": "answer_direct",
     "summarize": "summarize",
     "eval_judge": "eval_judge",
+    "extraction": "extraction",
 }
 
 

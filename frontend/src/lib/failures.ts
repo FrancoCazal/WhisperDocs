@@ -46,6 +46,7 @@ export const ROLES: Record<string, { label: string; effect: string }> = {
   answer_direct: { label: "DIRECT ANSWERS", effect: "DIRECT ANSWERS FAIL" },
   summarize: { label: "COMPACTING", effect: "LONG THREADS STAY UNCOMPACTED" },
   eval_judge: { label: "EVAL JUDGE", effect: "EVAL RUNS FAIL" },
+  extraction: { label: "EXTRACTION", effect: "FIELD EXTRACTION FAILS" },
   embedding: { label: "EMBEDDING", effect: "SEARCHES AND UPLOADS FAIL" },
 };
 

@@ -1,10 +1,10 @@
 name: Eval suite
 
 # Manual only: a run calls paid model APIs. It needs the secrets
-# OPENAI_API_KEY, GCP_PROJECT, GCP_SA_KEY_JSON, AWS_ACCESS_KEY_ID and
-# AWS_SECRET_ACCESS_KEY. The variables GCP_LOCATION, AWS_REGION,
-# AGENT_EVAL_MIN_ACCURACY and AGENT_EVAL_MAX_HALLUCINATION_RATE are read when
-# set.
+# OPENAI_API_KEY, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; GCP_PROJECT and
+# GCP_SA_KEY_JSON only when a model role is set to Gemini. The variables
+# GCP_LOCATION, AWS_REGION, AGENT_EVAL_MIN_ACCURACY and
+# AGENT_EVAL_MAX_HALLUCINATION_RATE are read when set.
 on:
   workflow_dispatch:
     inputs:

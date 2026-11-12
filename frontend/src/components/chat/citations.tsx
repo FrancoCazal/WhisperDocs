@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { fmtCosine, type AgentCitation } from "@/lib/api";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { ChunkPlace } from "@/components/ui-kit/ChunkPlace";
 
 const CITATION_RE = /\[(\d+)\]/g;
 
@@ -58,7 +59,8 @@ export function interleaveCitations(
               className="w-[460px] max-h-[300px] overflow-auto bg-surface-container border border-border-subtle"
             >
               <div className="label-xs text-text-tertiary mb-2">
-                {c.document_title} · CHUNK {c.chunk_index} · {fmtCosine(c.cosine)}
+                {c.document_title} · CHUNK {c.chunk_index}
+                <ChunkPlace c={c} /> · {fmtCosine(c.cosine)}
               </div>
               <div className="body-sm text-text-secondary whitespace-pre-wrap">
                 {c.text_preview ?? "(no preview)"}

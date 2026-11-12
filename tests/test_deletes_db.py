@@ -15,7 +15,7 @@ import os
 
 import httpx
 import pytest
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.config import settings
@@ -164,7 +164,7 @@ async def test_bulk_delete_is_one_statement(api):
     assert await _chunks(session, [kept]) == 2
 
 
-async def test_bulk_move_is_one_statement(api):
+async def test_bulk_move_reads_no_text_and_moves_in_one_statement(api):
     client, session, statements = api
     _, (a, b, kept) = await _collection(session, "bulk-move-from", 3)
     target, _ = await _collection(session, "bulk-move-to", 0)
@@ -186,8 +186,39 @@ async def test_bulk_move_is_one_statement(api):
         "not_found": [missing],
         "errors": {},
     }
-    assert [s.split()[0] for s in statements if "documents" in s] == ["UPDATE"]
+    on_documents = [s for s in statements if "documents" in s]
+    # It reads ids and text hashes to check the target (audit R12), never a
+    # document's text or its chunks, and moves them in one UPDATE.
+    assert [s.split()[0] for s in on_documents] == ["SELECT", "SELECT", "UPDATE"]
+    assert not any("raw_text" in s for s in on_documents)
+    assert _reads(statements, "chunks") == []
     assert no_target.status_code == 404
     moved = await session.scalars(select(Document.id).where(Document.collection_id == target))
     assert sorted(moved.all()) == sorted([a, b])
     assert await _chunks(session, [a, b]) == 4
+
+
+async def test_a_document_whose_text_the_target_holds_stays_where_it_is(api):
+    client, session, _ = api
+    source, (a, b) = await _collection(session, "move-dup-from", 2)
+    other, (c,) = await _collection(session, "move-dup-other", 1)
+    target, (held,) = await _collection(session, "move-dup-to", 1)
+    # a has the text the target holds; b and c, from two collections, share
+    # one the target lacks: the first moves, the second stays.
+    for ids, digest in (([a, held], "h" * 64), ([b, c], "k" * 64)):
+        await session.execute(
+            update(Document).where(Document.id.in_(ids)).values(content_hash=digest)
+        )
+    await session.flush()
+
+    r = await client.post(
+        "/documents/bulk-move", json={"document_ids": [a, b, c], "target_collection_id": target}
+    )
+
+    body = r.json()
+    assert (r.status_code, body["succeeded"], body["failed"], body["not_found"]) == (200, 1, 2, [])
+    assert set(body["errors"]) == {str(a), str(c)}
+    assert "move-dup-to-0" in body["errors"][str(a)]
+    assert f"Document {b}, also in this request" in body["errors"][str(c)]
+    places = dict((await session.execute(select(Document.id, Document.collection_id))).all())
+    assert (places[a], places[b], places[c]) == (source, target, other)

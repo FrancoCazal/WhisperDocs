@@ -30,6 +30,17 @@ _PRICING: dict[str, Pricing] = {
     # $2/$10, geographic profiles such as `us.` $2.20/$11.
     "global.anthropic.claude-sonnet-5-5": Pricing(2.00, 10.00),
     "us.anthropic.claude-sonnet-5-5": Pricing(2.20, 11.00),
+    # Claude Sonnet 4.6, Active on Bedrock while 4.5 is Legacy: an account
+    # that has not called 4.5 in 30 days is refused it. Global profile, from
+    # LiteLLM's Bedrock table, read on 2026-11-12.
+    "global.anthropic.claude-sonnet-4-6": Pricing(3.00, 15.00),
+    # Amazon Nova on Bedrock (us cross-region inference profiles), candidates
+    # for an eval judge of another family than the Claude that answers. From
+    # LiteLLM's Bedrock table, read on 2026-11-12: aws.amazon.com/nova/pricing
+    # renders its table by script — confirm there. Nova Premier is not here:
+    # Bedrock still lists it, and answers that it reached its end of life.
+    "us.amazon.nova-2-lite-v1:0": Pricing(0.30, 2.50),
+    "us.amazon.nova-pro-v1:0": Pricing(0.80, 3.20),
     # OpenAI embeddings: input only. From the model's page on
     # developers.openai.com, read on 2026-11-08.
     "text-embedding-3-small": Pricing(0.02, 0.00),

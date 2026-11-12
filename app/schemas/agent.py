@@ -22,6 +22,11 @@ class AgentCitation(BaseModel):
     # Cosine similarity to the question; None if only full-text search found it.
     cosine: float | None = None
     text_preview: str | None = None
+    # Where the chunk sits (app/models/chunk.py); missing from citations
+    # stored before.
+    section: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
 
 
 class AgentTurnMetadata(BaseModel):

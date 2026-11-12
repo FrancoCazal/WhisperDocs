@@ -75,6 +75,8 @@ class _FakeSession:
 
 
 class _FakeEmbedder:
+    model_id = "fake-embedding"
+
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] * settings.embedding_dimension for _ in texts]
 
@@ -154,7 +156,9 @@ async def test_each_way_in_flags_the_chunks_and_counts_them(way_in, log, monkeyp
 async def test_a_plain_document_logs_nothing(log):
     document = Document(id=7, filename="plain.md", language="en")
 
-    rows = await ingestion.chunk_rows(document, [(0, PARAGRAPH, 40, "h")], [[0.0]])
+    rows = await ingestion.chunk_rows(
+        document, [ingestion.FreshChunk(0, PARAGRAPH, 40, "h")], [[0.0]], "fake-embedding"
+    )
 
     assert rows[0].instruction_flags == []
     assert document.flagged_chunks == 0

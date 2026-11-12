@@ -31,7 +31,15 @@ from app.services.retriever import RetrievedChunk
 ROOT = Path(__file__).resolve().parent.parent
 SECRET = "Incorrect API key provided: sk-..."
 EMBEDDING = [0.1, 0.2]
-TOOLS = {"search_documents", "ask_documents", "list_collections", "list_documents"}
+READS = {
+    "search_documents",
+    "ask_documents",
+    "extract_fields",
+    "list_collections",
+    "list_documents",
+}
+WRITES = {"ingest_document", "delete_document", "move_document"}
+TOOLS = READS | WRITES
 
 
 def _chunk(i: int) -> RetrievedChunk:
@@ -153,7 +161,7 @@ def _without_latency(result: dict) -> dict:
     return {**result, "metadata": {**result["metadata"], "latency_ms": 0}}
 
 
-async def test_the_tools_are_few_typed_and_read_only(backend):
+async def test_the_tools_are_few_typed_and_say_what_they_change(backend):
     async with Client(backend.server()) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
 
@@ -161,13 +169,26 @@ async def test_the_tools_are_few_typed_and_read_only(backend):
     for tool in tools.values():
         assert tool.output_schema is not None, tool.name
         assert tool.description and tool.title
-        assert tool.annotations.read_only_hint is True
         assert tool.annotations.open_world_hint is False
-    # ask_documents pays a model call and logs it each time.
-    assert [n for n, t in tools.items() if not t.annotations.idempotent_hint] == ["ask_documents"]
+    assert {n for n, t in tools.items() if t.annotations.read_only_hint} == READS
+    # Deleting is the one change that cannot be undone (BE-36).
+    assert [n for n, t in tools.items() if t.annotations.destructive_hint] == ["delete_document"]
+    # ask_documents and extract_fields pay a model call and differ each time;
+    # ingest_document adds a document, then refuses the same one.
+    assert sorted(n for n, t in tools.items() if not t.annotations.idempotent_hint) == [
+        "ask_documents",
+        "extract_fields",
+        "ingest_document",
+    ]
     for name in ("search_documents", "ask_documents"):
         assert tools[name].input_schema["properties"]["top_k"]["maximum"] == 20
     assert tools["list_documents"].input_schema["properties"]["limit"]["maximum"] == 100
+    # The confirmation is the user's to give, not an argument the model fills.
+    for name in ("delete_document", "move_document"):
+        assert set(tools[name].input_schema["properties"]) <= {
+            "document_id",
+            "target_collection_id",
+        }
 
 
 async def test_search_documents_returns_what_post_retrieve_returns(backend):

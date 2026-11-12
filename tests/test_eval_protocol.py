@@ -183,11 +183,14 @@ def test_the_config_records_the_settings_that_change_a_run(monkeypatch):
         judge_model=NEW_GEMINI,
         judge_temperature=0.0,
         judge_cache=True,
+        collection_chunks=95,
+        collection_hash="c" * 12,
     )
 
     assert config.git_sha == "abc123"
     assert config.dataset_hash == dataset_hash(items)
     assert (config.collection_id, config.top_k, config.concurrency) == (3, 5, 4)
+    assert (config.collection_chunks, config.collection_hash) == (95, "c" * 12)
     assert config.rag_temperature == 0.0
     assert config.judge_temperature is None
     assert config.judge_reasoning == settings.gemini_thinking_level
@@ -347,6 +350,27 @@ def test_the_diff_warns_on_uncommitted_code_and_on_an_old_report():
     md = render_diff_markdown(_report([_result(1, True)]), dirty)
     assert "> The current run had uncommitted changes on top of `aaaaaaaaaaaa`" in md
     assert "> A report is older than the run config" in md
+
+
+def test_the_diff_warns_when_the_runs_searched_different_chunks():
+    """A reseed with another chunker changes what a run reads (audit M-7);
+    the same chunks, or a report that did not record them, say nothing."""
+    old = _config(collection_chunks=71, collection_hash="111111111111")
+    new = _config(collection_chunks=95, collection_hash="222222222222")
+    prev, curr = _report([_result(1, True)], old), _report([_result(1, True)], new)
+
+    md = render_diff_markdown(prev, curr)
+
+    assert (
+        "> The runs searched different chunks (71 chunks `111111111111` → 95 chunks `222222222222`)"
+    ) in md
+    assert _row(md, "collection_chunks") == "| collection_chunks | `71` | `95` |"
+    # A warning, not a refusal: the gate seeds once and compares base and head
+    # over the same chunks.
+    assert diff_failures(prev, curr, max_accuracy_drop=0.1, max_hallucination_rise=0.1) == []
+    for before in (old, _config()):
+        same = render_diff_markdown(_report([_result(1, True)], before), prev)
+        assert "searched different chunks" not in same
 
 
 def test_runs_over_different_datasets_are_not_compared():

@@ -105,9 +105,38 @@ async def test_a_new_number_gets_a_thread_and_an_answer(session, sent, caplog):
     ]
     ((to, body),) = sent
     assert to == sender
-    assert body.startswith(inbound.NEW_THREAD_DISCLAIMER)
+    # The notice is in the language of the message.
+    assert body.startswith(inbound.NEW_THREAD_DISCLAIMER["es"])
     assert body.endswith("Respuesta")
     assert number not in caplog.text
+
+
+async def test_an_english_message_gets_the_notice_and_the_commands_in_english(session, sent):
+    sender = f"whatsapp:+{_number()}"
+    name = f"contracts-{uuid.uuid4().hex[:8]}"
+    collection = Collection(name=name)
+    session.add(collection)
+    await session.flush()
+
+    @asynccontextmanager
+    async def sessions():
+        yield session
+
+    await inbound.spawn_reply(_Agent(), sender=sender, body="What does it say?", sessions=sessions)
+    await inbound.spawn_reply(
+        _Agent(), sender=sender, body=f"/collection {name}", sessions=sessions
+    )
+    await inbound.spawn_reply(_Agent(), sender=sender, body="/save", sessions=sessions)
+
+    notice, switched, saved = (body for _to, body in sent)
+    assert notice == inbound.NEW_THREAD_DISCLAIMER["en"] + "Respuesta"
+    assert "/save" in notice
+    assert switched == f"Now searching: {name}. What would you like to know?"
+    assert saved == inbound.SAVED["en"]
+    conv = await session.scalar(
+        select(Conversation).where(Conversation.thread_id == whatsapp_thread_id(sender))
+    )
+    assert (conv.collection_id, conv.is_saved) == (collection.id, True)
 
 
 async def test_a_collection_switch_applies_to_the_question_sent_right_after(session, sent):
@@ -145,8 +174,11 @@ async def test_a_failed_turn_gets_an_apology(session, sent):
         yield session
 
     await inbound.spawn_reply(_Failing(), sender=sender, body="¿Qué dice?", sessions=sessions)
+    await inbound.spawn_reply(
+        _Failing(), sender=sender, body="What does it say?", sessions=sessions
+    )
 
-    assert sent == [(sender, inbound.APOLOGY)]
+    assert sent == [(sender, inbound.APOLOGY["es"]), (sender, inbound.APOLOGY["en"])]
 
 
 async def test_a_database_error_quotes_none_of_its_values():

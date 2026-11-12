@@ -15,6 +15,9 @@ const CITATION = {
   relevance: 0.03,
   cosine: 0.82,
   text_preview: "RAG retrieves passages from your documents and answers from them.",
+  section: "RAG: fundamentals › Basic architecture",
+  page_start: 3,
+  page_end: 4,
 };
 const ANSWER = "RAG answers from retrieved passages [1].";
 
@@ -127,10 +130,13 @@ test("a question streams an answer whose citation opens its source", async ({ pa
   const citation = page.getByRole("button", { name: "Source 1: rag-fundamentals.md" });
   await citation.hover();
   await expect(page.getByText("CLICK FOR ALL SOURCES")).toBeVisible();
+  // The hover names the pages and the section the passage comes from.
+  await expect(page.getByText(/CHUNK 2 · PP\. 3–4 · § RAG: fundamentals › Basic/)).toBeVisible();
   await citation.click();
   const sources = page.getByRole("dialog");
   await expect(sources).toContainText("rag-fundamentals.md");
   await expect(sources).toContainText("RAG retrieves passages from your documents");
+  await expect(sources).toContainText("PP. 3–4 · § RAG: fundamentals › Basic architecture");
 
   expect(sent).toEqual([
     expect.objectContaining({ message: "What is RAG?", thread_id: null, document_id: null }),

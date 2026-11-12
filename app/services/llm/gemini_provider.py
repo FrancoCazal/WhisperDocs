@@ -1,15 +1,14 @@
-import json
-import re
 import time
 from collections.abc import AsyncIterator
 from typing import TypeVar
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.config import settings
 from app.services.llm.base import LLMResponse, LLMStreamDelta, extract_text
+from app.services.llm.base import salvage_structured as _salvage_structured
+from app.services.llm.base import to_lc_messages as _to_lc_messages
 from app.services.llm.model_policy import accepts_custom_sampling, reasoning_level
 
 T = TypeVar("T", bound=BaseModel)
@@ -18,20 +17,6 @@ T = TypeVar("T", bound=BaseModel)
 # layer keyed on `google.api_core` exceptions, which the google-genai SDK does
 # not raise, so it never retried anything.
 _GEMINI_MAX_RETRIES = 2
-
-
-def _to_lc_messages(system: str, messages: list[dict]) -> list:
-    lc: list = [SystemMessage(content=system)]
-    for m in messages:
-        role = m["role"]
-        content = m["content"]
-        if role == "user":
-            lc.append(HumanMessage(content=content))
-        elif role == "assistant":
-            lc.append(AIMessage(content=content))
-        elif role == "system":
-            lc.append(SystemMessage(content=content))
-    return lc
 
 
 class GeminiProvider:
@@ -168,42 +153,3 @@ class GeminiProvider:
             model=model,
             latency_ms=latency,
         )
-
-
-_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(.*?)\s*```", re.DOTALL)
-
-
-def _salvage_structured(text: str, response_model: type[T]) -> T | None:
-    """Best-effort recovery when Gemini's `with_structured_output` returned
-    `parsed=None` but the raw text still carries JSON.
-
-    Common shapes:
-      1. Markdown-fenced: ```json\n{...}\n```
-      2. Prose preamble + JSON object literal
-      3. Trailing commentary after JSON
-
-    Returns None if nothing salvageable. Caller raises the original error.
-    """
-    if not text:
-        return None
-
-    candidates: list[str] = []
-
-    fence = _FENCE_RE.search(text)
-    if fence:
-        candidates.append(fence.group(1).strip())
-
-    # Greedy outermost {...} block — handles "Here is the JSON: {...}" preamble.
-    first = text.find("{")
-    last = text.rfind("}")
-    if first != -1 and last != -1 and last > first:
-        candidates.append(text[first : last + 1])
-
-    candidates.append(text.strip())
-
-    for c in candidates:
-        try:
-            return response_model.model_validate_json(c)
-        except (ValidationError, ValueError, json.JSONDecodeError):
-            continue
-    return None

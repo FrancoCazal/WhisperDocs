@@ -27,6 +27,7 @@ from app.logging_config import configure_logging, get_logger
 from app.mcp.http import MCP_PATH, McpOverHttp
 from app.services.ingestion import fail_interrupted_jobs, stop_ingestions
 from app.services.llm import validate_agent_models
+from app.services.reranker import LocalCrossEncoderReranker, get_reranker
 from app.services.whatsapp.inbound import stop_replies
 from app.telemetry import configure_tracing
 from app.api.v1 import (
@@ -79,6 +80,12 @@ async def lifespan(app: FastAPI):
     app.state.checkpointer = checkpointer
     app.state.agent = build_agent_graph().compile(checkpointer=checkpointer)
     start_pruning(checkpointer)
+    # The cross-encoder loads here, when it is on, and not on the first
+    # question, which waited for it (audit R16). A missing `rerank` extra
+    # stops the start instead of failing every search.
+    reranker = get_reranker()
+    if isinstance(reranker, LocalCrossEncoderReranker):
+        await asyncio.to_thread(reranker.load)
     # Keep what startup allocated (modules, the compiled graph, about 300k
     # objects) out of the collector. A full collection holds the GIL, so it
     # pauses the event loop while it scans. A long PDF parse triggers several,

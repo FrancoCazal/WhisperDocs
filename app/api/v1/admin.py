@@ -1,7 +1,12 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.db import get_db
+from app.schemas.audit import AuditLogRead
 from app.schemas.model_status import ModelStatusRead
+from app.schemas.pagination import Page
+from app.services import audit
 from app.services.model_status import model_status
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -27,6 +32,7 @@ async def get_settings() -> dict:
             "answer_direct": {"model": a.model_answer_direct, "temperature": a.temp_answer_direct},
             "summarize": {"model": a.model_summarize, "temperature": a.temp_summarize},
             "eval_judge": {"model": a.model_eval_judge, "temperature": a.temp_eval_judge},
+            "extraction": {"model": a.model_extraction, "temperature": a.temp_extraction},
         },
         "retrieval": {
             "top_k": a.retrieval_top_k,
@@ -50,3 +56,15 @@ async def get_model_status() -> dict:
     here, so it costs nothing to poll. A role with no call since the API
     started is "unknown"."""
     return {"since": model_status.since, "roles": model_status.snapshot()}
+
+
+@router.get("/audit-log", operation_id="list_audit_log", response_model=Page[AuditLogRead])
+async def list_audit_log(
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: int | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> Page[AuditLogRead]:
+    """The calls that wrote through the MCP server, newest first: who, which
+    tool, on which document and collection, and how each ended (done,
+    declined, cancelled, refused, failed)."""
+    return await audit.list_entries(db, limit=limit, cursor=cursor)
