@@ -77,10 +77,10 @@ jobs:
 
     steps:
       - name: Check out the head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check out the base
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha || inputs.base }}
           path: base

@@ -58,7 +58,7 @@ jobs:
       LOG_JSON: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The key comes in through the environment. A `${{ }}` expression is
       # pasted into the script before the shell runs it, so a key holding a
