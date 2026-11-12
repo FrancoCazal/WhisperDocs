@@ -174,6 +174,14 @@ Fixes from the November 2026 audit, and a review of the frontend.
     Wilson interval, Cohen's kappa, what a person says of each kind of
     verdict, and the verdicts they split on. Neither calls a model, and
     `label` never overwrites a labels file.
+- The eval results of 2026-11-12, in `eval/reports/2026-11-12_series/`: five
+  runs of one config at commit `a1eaf5f`, on the English golden set, with
+  Claude Sonnet 4.6 answering and Nova 2 Lite judging. Accuracy averaged
+  97.6% (96% to 98%), with no unsupported claim on the 41 in-scope items
+  and one over all 50 (#44, a refusal the judge faulted), at about $0.010
+  per answer. The README's "Last full run" describes the failures (#19
+  misses a document in retrieval; #37 passed four of five) and keeps the
+  April run, in Spanish, as the run before.
 - Uploads take DOCX, XLSX, CSV and HTML (`.htm` too), besides PDF, Markdown
   and plain text (audit M-7). Each comes out as headings and markdown
   tables: DOCX paragraphs, headings, list items and tables in order; each
@@ -335,8 +343,8 @@ Fixes from the November 2026 audit, and a review of the frontend.
   for Sonnet 4.5 (Legacy on Bedrock, end of life on 2027-04-08). They get
   the effort in `BEDROCK_CLAUDE_EFFORT` (default `low`), room in
   `max_tokens` for their thinking, and structured output as a JSON schema,
-  since Sonnet 5.5 rejects a forced tool call. The defaults stay on Sonnet
-  4.5 until the eval has run on 5.5.
+  since Sonnet 5.5 rejects a forced tool call. The defaults do not use it:
+  Bedrock does not offer Sonnet 5.5 to every account.
 - Models: every role runs on Bedrock by default, so one AWS account runs
   every model (the embeddings are OpenAI's). Claude Haiku 4.5 takes the
   hot path (classifier, query rewrite, clarification, direct answers,

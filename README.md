@@ -568,12 +568,12 @@ scoring those items as failures. A finished run exits 3 when its accuracy is bel
 unsupported-claim rate (all items) above 10% (`AGENT_EVAL_MIN_ACCURACY`,
 `AGENT_EVAL_MAX_HALLUCINATION_RATE`, or
 `--min-accuracy` and `--max-hallucination`), so a script or CI job fails on a regression. The
-five full runs of 2026-04-28 scored 88-96% and 2-6%.
+five runs of 2026-11-12 scored 96-98% and 2% (see [Last full run](#last-full-run)).
 
 The `Eval suite` workflow runs it from GitHub Actions, by hand only, since it calls paid APIs:
-`smoke` (10 items) or `full`. It needs the provider secrets (`OPENAI_API_KEY`, `GCP_PROJECT`,
-`GCP_SA_KEY_JSON`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`); the reports go to the run's
-artifacts.
+`smoke` (10 items) or `full`. It needs the secrets `OPENAI_API_KEY`, `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, and `GCP_PROJECT` and `GCP_SA_KEY_JSON` only when a model role is set
+to Gemini; the reports go to the run's artifacts.
 
 ### How the judge rules
 
@@ -637,8 +637,10 @@ version, from `app/eval/judges.py`.
 accuracy is more than 10 points below the previous one's, or its hallucination rate more than
 10 points above (`AGENT_EVAL_MAX_ACCURACY_DROP`, `AGENT_EVAL_MAX_HALLUCINATION_RISE`, or
 `--max-accuracy-drop` and `--max-hallucination-rise`). Five 50-item runs of one configuration
-spread 8 and 4 points. The diff names both prompt versions and warns when the judge's changed;
-so does COMPARE on the Evaluation page.
+spread 8 and 4 points in April 2026 (Spanish set, the earlier judge, before the eval
+temperature and the judge cache existed), and 2 and 0 points on 2026-11-12 (temperature 0,
+judge cache on). The diff names both prompt versions and
+warns when the judge's changed; so does COMPARE on the Evaluation page.
 
 The `Prompt gate` workflow does this on a pull request that changes `prompts.py`, the agent's
 schemas or `app/services/rag.py`: it answers the golden set with the base's code and with the
@@ -686,42 +688,94 @@ Dataset: JSONL at `eval/golden/queries.jsonl`. Each in-scope item carries `requi
 
 ### Last full run
 
-| Metric | Value |
+A series of five runs of one config (`runner run --runs 5`) on 2026-11-12, at commit `a1eaf5f`
+with no uncommitted changes, over the English golden set and corpus in this repo:
+
+| Metric | Mean of the 5 runs (min – max) |
 |---|---|
-| Answer accuracy (LLM judge) | 96% (48/50) |
-| Unsupported-claim rate, in-scope items (faithfulness) | 7.3% (3/41) |
-| Unsupported-claim rate, all items (the gates' hallucination rate) | 6% (3/50) |
-| Retrieval precision@k / recall@k | 91.5% / 92.1% (40 of the 41 in-scope queries) |
-| Out-of-scope queries refused by the RAG prompt | 9/9 |
-| Single-turn RAG latency p50 / p95 | 5.9 s / 9.1 s |
-| Generation cost (RAG model only) | $0.63 for the 50 queries, about $0.013 per answer |
+| Answer accuracy (LLM judge) | 97.6% (96% – 98%); 95% interval of the mean 96.5% – 98.7% |
+| Unsupported-claim rate, in-scope items (faithfulness) | 0% (0/41) in every run |
+| Unsupported-claim rate, all items (the gates' hallucination rate) | 2% (1/50) in every run |
+| Retrieval precision@5 / recall@5, all 41 in-scope queries | 91.7% / 93.5% in every run |
+| Out-of-scope queries refused by the RAG prompt | 9/9 in every run |
+| Single-turn RAG latency p50 / p95, 4 answers at a time | 3.2 – 4.1 s / 6.6 – 7.1 s (18.1 s in the first run) |
+| Generation cost (RAG model only) | $0.51 per run of 50 queries, about $0.010 per answer |
 
-Run `b2b0899a` on 2026-04-28, with Claude Sonnet 4.5 on Bedrock for generation. The full
-report, including the five failing cases, is in
-[`eval/reports/2026-04-28_b2b0899a.md`](eval/reports/2026-04-28_b2b0899a.md). Caveats:
+The config: Claude Sonnet 4.6 (`global.anthropic.claude-sonnet-4-6`) answers at temperature 0;
+Amazon Nova 2 Lite (`us.amazon.nova-2-lite-v1:0`) judges at temperature 0; embeddings from
+`text-embedding-3-small`; hybrid retrieval with k = 5, reranker and MMR off; the "Eval Golden"
+collection with 95 chunks (collection hash `5a8b4f0e2a17`); prompts `174c82cd74ed`, judge prompts
+`93eab2f5c59a`, dataset `97f503443f4f`. The
+[series summary](eval/reports/2026-11-12_series/series_2026-11-12T14-14-12.md) and the five
+reports, in Markdown and in JSON with every answer and verdict, are in
+[`eval/reports/2026-11-12_series/`](eval/reports/2026-11-12_series/).
 
-- It used the original Spanish version of the seed corpus and the golden set. This repo ships
-  the English translation, which is why the questions in that report are in Spanish; a run
-  against this repo measures the translated set.
-- It is one run of a stochastic pipeline. The seven full runs that day, made while tuning the
-  engine, ranged from 80% to 96% accuracy.
-- It predates this snapshot by three weeks and has not been re-run against it.
-- It was judged by the earlier judge, which ruled before it reasoned and compared each answer
-  with the expected one as a whole. The judge in this repo checks facts (see
-  [How the judge rules](#how-the-judge-rules)), so its verdicts are not comparable with these,
-  and it has not been run yet.
-- The three unsupported claims are claims the retrieved context did not back, not necessarily
-  false ones: #38's answer explains how SQL injection works, which the documents do not.
-- The cost per answer is the Sonnet generation call alone. A chat turn also pays the
-  Gemini Flash classifier, the query rewrite on follow-ups and the query embedding. The
-  chat footer prices the generation too; the turn's trace carries the total
-  (`whisperdocs.cost_usd`, see [Tracing](#tracing)).
+| Run | Accuracy | Unsupported, all items | Latency p50 / p95 | Cost | Verdicts from the judge cache (of 100) |
+|---|---|---|---|---|---|
+| `866e3b28` | 98% | 2% | 4.1 s / 18.1 s | $0.514 | 0 |
+| `9c01b948` | 98% | 2% | 3.9 s / 6.6 s | $0.514 | 34 |
+| `acd84be0` | 98% | 2% | 4.1 s / 6.7 s | $0.512 | 48 |
+| `5bc0eeb3` | 98% | 2% | 3.4 s / 7.1 s | $0.514 | 50 |
+| `6e9781e4` | 96% | 2% | 3.2 s / 6.8 s | $0.515 | 56 |
 
-That run averaged retrieval only over queries with a non-zero precision or recall, which
-dropped the one in-scope query that retrieved no chunk from its expected source; over all 41
-the figures are 89.3% and 89.8%. That query, #23, was mislabeled: the fact it asks about is in
-two documents and the golden set listed only one. It now lists both, and
-[`app/eval/metrics.py`](app/eval/metrics.py) averages over every in-scope query.
+What failed:
+
+- **#19** ("How do you create an index on a large PostgreSQL table without blocking writes?")
+  failed in all five runs, from retrieval. `CREATE INDEX CONCURRENTLY` is in
+  `alembic-migrations.md`, in the chunk that holds its "Non-blocking migrations" and "Concurrent
+  indexes" sections. The five chunks retrieved all came from the other expected source,
+  `postgresql-indexing.md`, and none of them mentions `CONCURRENTLY`. The model said the
+  documents do not cover non-blocking index creation, which is right for that context.
+- **#44** ("What is the meaning of life?", out of scope) was refused in all five runs, and the
+  grounding check failed it every time: it is the one unsupported claim of each run. The refusal
+  names what the documents cover ("semantic search, embeddings, RAG systems, and pgvector"), and
+  the judge counted that as a claim the context does not back. The chunks it was given come from
+  `pgvector.md`, `semantic-search-and-embeddings.md` and `rag-fundamentals.md`, so this reads as
+  a false positive of the judge. No human has checked it.
+- **#37** ("How are chunking quality, embedding model, and retrieval precision related?")
+  passed four of five. The model wrote a different answer in each run, even at temperature 0,
+  and the fifth left out a required fact: the query and the documents must use the same
+  embedding model.
+
+Caveats:
+
+- The spread is narrow partly by construction. The model answers at temperature 0, and the
+  judge cache gives an answer it has seen the verdict it got before (34 to 56 of each run's 100
+  verdicts after the first run). So the five runs measure how much the answers vary, not how
+  much the judge does. `runner rejudge` measures the judge (see
+  [Comparing runs](#comparing-runs)); it has not been run on this series.
+- The judge's verdicts have not been checked against human labels (`runner label` and
+  `runner agreement`).
+- Like every run, it measures the single-turn RAG path. The classifier, the query rewrite and
+  the conversation history are not in it.
+- The first run's p95 is 18.1 s because its first four answers, the first batch at
+  concurrency 4, took 17 to 21 s. The later runs did not repeat it, which points to a cold
+  start.
+- The cost per answer is the Sonnet generation call alone. A chat turn also pays the Haiku
+  classifier, the query rewrite on follow-ups and the query embedding. The chat footer prices
+  the generation too; the turn's trace carries the total (`whisperdocs.cost_usd`, see
+  [Tracing](#tracing)).
+
+#### The run before: April, Spanish version
+
+Run `b2b0899a` on 2026-04-28 scored 96% accuracy (48/50) and 6% unsupported claims over all
+items (3/50; 7.3%, 3/41, in scope), with Claude Sonnet 4.5 for generation, $0.013 per answer
+and a p50 / p95 of 5.9 s / 9.1 s. Its report is in
+[`eval/reports/2026-04-28_b2b0899a.md`](eval/reports/2026-04-28_b2b0899a.md). It is not
+comparable with the series above:
+
+- It used the original Spanish version of the seed corpus and the golden set, which is why the
+  questions in that report are in Spanish, and the chunker from before the one by sections.
+- The earlier judge scored it: it ruled before it reasoned and compared each answer with the
+  expected one as a whole. The judge now checks facts (see
+  [How the judge rules](#how-the-judge-rules)).
+- It was one run. The seven full runs that day, made while tuning the engine, ranged from 80%
+  to 96% accuracy.
+- It averaged retrieval only over queries with a non-zero precision or recall, which dropped
+  #23, the one in-scope query that retrieved no chunk from its expected source; over all 41 the
+  figures are 89.3% and 89.8%. #23 was mislabeled: the fact it asks about is in two documents
+  and the golden set listed only one. It now lists both, and
+  [`app/eval/metrics.py`](app/eval/metrics.py) averages over every in-scope query.
 
 ### A/B: measure reranker + MMR lift
 
@@ -761,8 +815,10 @@ Smaller chunks trade recall for precision. The vector leg's precision went from 
 95.6%, but on three questions whose answer spans two documents (#9, #28, #37) the main
 document's extra chunks now fill the top 5 and push the second one out; #36 found its third.
 Five chunks are also fewer tokens than before (about 1,500, from 2,300). At k = 8, about the
-same tokens as five chunks before, the hybrid gives 85.7% precision and 97.2% recall. Whether
-the change helps the answers is the full eval's to say.
+same tokens as five chunks before, the hybrid gives 85.7% precision and 97.2% recall. The
+[last full run](#last-full-run) answered from these 95 chunks; no full run on the old chunks
+with the same models exists, so it does not isolate the chunker. #37, one of the three, is the
+item whose verdict changed between its runs.
 
 ---
 
