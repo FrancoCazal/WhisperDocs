@@ -82,7 +82,7 @@ Fixes from the November 2026 audit, and a review of the frontend.
   null, a required one is listed in `missing`, and a value whose quote is not
   in the document word for word is listed in `unverified`. A document over
   12k tokens is searched for the fields. One call to `AGENT_MODEL_EXTRACTION`
-  (Sonnet 4.5 by default), a new model role in the model status.
+  (Sonnet 4.6 by default), a new model role in the model status.
 - An MCP connector (audit M-6): `python -m app.connectors.mcp_sync` reads an
   MCP server's resources (over stdio or Streamable HTTP) into a collection.
   Each document keeps its resource's URI (`documents.source_uri`, migration
@@ -335,8 +335,9 @@ Fixes from the November 2026 audit, and a review of the frontend.
   502 with its `kind`, where a generation failure used to be a bare 500. An
   error the routes did not handle is a 500 the browser can read, and it no
   longer surfaces as a CORS error.
-- Models: the hot-path nodes and the eval judge run on `gemini-3.8-flash`,
-  since `gemini-2.5-flash` was retired on 2026-10-20. Sampling parameters are
+- Models: `gemini-3.8-flash` replaced `gemini-2.5-flash`, retired on
+  2026-10-20, on the hot path and the eval judge, until every role moved to
+  Bedrock (below). Sampling parameters are
   sent per model, and startup fails on a model ID that cannot be routed.
 - Claude 4.7 and later run on Bedrock through Converse, which serves
   Claude Sonnet 5.5 (`global.anthropic.claude-sonnet-5-5`), the replacement
