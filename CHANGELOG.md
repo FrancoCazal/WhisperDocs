@@ -337,6 +337,16 @@ Fixes from the November 2026 audit, and a review of the frontend.
   `max_tokens` for their thinking, and structured output as a JSON schema,
   since Sonnet 5.5 rejects a forced tool call. The defaults stay on Sonnet
   4.5 until the eval has run on 5.5.
+- Models: every role runs on Bedrock by default, so one AWS account runs
+  every model (the embeddings are OpenAI's). Claude Haiku 4.5 takes the
+  hot path (classifier, query rewrite, clarification, direct answers,
+  summary), Claude Sonnet 4.6 the answers and the extraction, and Amazon
+  Nova 2 Lite judges the eval, of another family than the Claude it judges.
+  Sonnet 4.5, the answering model before, is Legacy, and Bedrock refuses a
+  Legacy model to an account that has not called it in 30 days. With the
+  hot path on Gemini, a clone with only AWS keys sent every classifier call
+  to a provider it could not reach. `AGENT_MODEL_*` still moves a node to
+  Gemini. ADR 0004 has an amendment.
 - `pricing.py` prices Claude Sonnet 4.6 (global profile) and Amazon Nova 2
   Lite and Nova Pro, so every role can run on Bedrock with known costs. A
   Legacy model is refused to an account that has not called it in 30 days,

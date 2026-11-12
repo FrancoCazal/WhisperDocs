@@ -12,7 +12,7 @@
 
 ![System overview dashboard](media/whisperdocs1.png)
 
-**Stack** · FastAPI · PostgreSQL + pgvector · LangGraph · Gemini + AWS Bedrock (Claude) · OpenAI Embeddings · Twilio · React + TanStack Router · structlog · Prometheus · OpenTelemetry + Langfuse
+**Stack** · FastAPI · PostgreSQL + pgvector · LangGraph · AWS Bedrock (Claude, Nova) · OpenAI Embeddings · Twilio · React + TanStack Router · structlog · Prometheus · OpenTelemetry + Langfuse
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows, and data model. Decision records live under [`docs/adr/`](docs/adr/).
 
@@ -22,7 +22,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 
 - **Intent-routed RAG agent, single pass (LangGraph)** — a classifier sends each turn down one path: search, clarify, direct answer or out-of-scope. Search rewrites the question, retrieves once and generates; there is no loop or second retrieval, by design. 7 nodes in an explicit state graph (compaction and summary keep long threads bounded), each testable in isolation; `AsyncPostgresSaver` handles persistence.
 - **Hybrid retrieval** — vector cosine via pgvector + Postgres full-text search (OR over the question's stemmed terms, per-document language, accent-insensitive, ranked by `ts_rank_cd`), fused with Reciprocal Rank Fusion. Optional cross-encoder rerank (`bge-reranker-base`) + document-level MMR for diversity.
-- **Multi-provider routing** — Gemini 3.8 Flash for cheap hot-path nodes (classifier, query rewrite, direct answers); AWS Bedrock Claude for grounded RAG generation. Provider auto-detected from model ID; startup fails on a model ID that can't be routed.
+- **Per-node model routing** — Claude Haiku 4.5 for the cheap hot-path nodes (classifier, query rewrite, clarification, direct answers), Claude Sonnet 4.6 for grounded RAG generation, and Amazon Nova 2 Lite as the eval judge, of another family than the model it judges. All on AWS Bedrock by default, so one AWS account runs every model; Gemini models route to Vertex AI when a node is set to one. The provider comes from the model ID, and startup fails on an ID that can't be routed.
 - **Token-level SSE streaming** — `astream_events` v2 + custom event dispatch. Frontend renders tokens as they arrive, with progress markers per node.
 - **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE. Parsing runs off the event loop, and a job cut short by a restart ends as `failed`, not stuck.
 - **Seven formats, citations that say where** — PDF, DOCX, XLSX, CSV, HTML, Markdown and plain text, all extracted to one shape (headings, markdown tables, page breaks). Chunks follow the document's sections and keep tables whole or repeat their header; each citation names its section and, for a PDF, its pages.
@@ -92,11 +92,13 @@ Postgres (with pgvector) runs in the compose stack; no host install needed. `DAT
 | Required | Why |
 |---|---|
 | `OPENAI_API_KEY` | Embeddings (`text-embedding-3-small`) — no fallback. |
-| **One generation provider:** `GCP_PROJECT` *(Vertex AI / Gemini)* **or** `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` *(Bedrock Claude)* | Agent nodes route by model ID. Default config uses Gemini for hot-path nodes and Bedrock for RAG generation; override via `AGENT_MODEL_*` env vars to consolidate on one provider. |
+| `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` *(Bedrock)* | Every model role by default: Claude Haiku 4.5 and Sonnet 4.6, and Amazon Nova 2 Lite for the eval judge. Agent nodes route by model ID; `AGENT_MODEL_*` moves a node to Gemini (`GCP_PROJECT`) or to another Bedrock model. |
 
 Twilio, reranker, and MMR are all optional. Without Twilio the WhatsApp channel just stays inert; the chat UI works.
 
-> **Gemini auth tip**: Vertex AI uses Application Default Credentials. Run `gcloud auth application-default login` on the host — `docker-compose.yml` mounts the resulting ADC file into the API container.
+> **Bedrock access**: Bedrock refuses a model marked Legacy to an account that has not called it in the last 30 days, and some models need their access asked for. If a call fails with "Access denied", pick an Active model (`aws bedrock list-foundation-models`) and set it in `AGENT_MODEL_*`.
+
+> **Gemini auth tip** (only with a node on Gemini): Vertex AI uses Application Default Credentials. Run `gcloud auth application-default login` on the host — `docker-compose.yml` mounts the resulting ADC file into the API container.
 
 ### Local dev
 
@@ -133,11 +135,11 @@ DB_PORT=5442                     # the compose database's port on the host; chan
 OPENAI_API_KEY=sk-...
 
 # Generation providers
-GCP_PROJECT=...                  # Gemini via Vertex AI; auth via `gcloud auth application-default login`
-GCP_LOCATION=global              # gemini-3.8-flash is served from global, us or eu only
-AWS_ACCESS_KEY_ID=...
+AWS_ACCESS_KEY_ID=...            # Bedrock: every model role by default
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=us-east-1
+GCP_PROJECT=...                  # only for a node set to Gemini; auth via `gcloud auth application-default login`
+GCP_LOCATION=global              # gemini-3.8-flash is served from global, us or eu only
 
 # Optional
 API_KEY=...                      # required in X-API-Key; unset = open API (see Security posture)

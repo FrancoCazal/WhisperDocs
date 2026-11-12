@@ -46,8 +46,8 @@ graph TB
     MMR[MMR diversity]
     Embedder[OpenAI Embeddings]
     LLM[LLM Provider Abstraction]
-    Bedrock[Bedrock Claude]
-    Gemini[Gemini 2.5 Flash]
+    Bedrock[Bedrock: Claude Haiku 4.5, Sonnet 4.6, Nova 2 Lite]
+    Gemini[Vertex AI Gemini, optional]
     Ingestion[Async Ingestion Worker]
     Pricing[pricing.py]
   end
@@ -120,7 +120,7 @@ sequenceDiagram
     G->>LLM: summarize history
     LLM-->>G: summary
   end
-  G->>LLM: classifier (Gemini)
+  G->>LLM: classifier (Haiku 4.5)
   LLM-->>G: AgentAction { search_docs | ask_clarification | answer_direct | out_of_scope }
   Note over G: classifier fails → search_docs (answers only from the documents)
   alt action == search_docs
@@ -645,20 +645,28 @@ class LLMProvider(Protocol):
 
 | Alias | Default model | Provider |
 |-------|---------------|----------|
-| `classifier` | `gemini-3.8-flash` | Gemini |
-| `query_rewrite` | `gemini-3.8-flash` | Gemini |
-| `clarification` | `gemini-3.8-flash` | Gemini |
-| `answer_direct` | `gemini-3.8-flash` | Gemini |
-| `rag` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Bedrock |
+| `classifier` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
+| `query_rewrite` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
+| `clarification` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
+| `answer_direct` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
+| `rag` | `global.anthropic.claude-sonnet-4-6` | Bedrock |
 | `summarize` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Bedrock |
-| `eval_judge` | `gemini-3.8-flash` | Gemini |
-| `extraction` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Bedrock |
+| `eval_judge` | `us.amazon.nova-2-lite-v1:0` | Bedrock |
+| `extraction` | `global.anthropic.claude-sonnet-4-6` | Bedrock |
+
+Every default is on Bedrock, so one AWS account runs every model; the
+embeddings are OpenAI's. The judge is Amazon Nova, of another family than the
+Claude it judges. A `gemini-...` ID routes to Vertex AI. See the amendment to
+[ADR 0004](docs/adr/0004-dual-llm-provider-routing.md).
 
 Override per node via `AGENT_MODEL_<ALIAS>` env vars. Model rules live in
 `app/services/llm/model_policy.py`:
 
 - **Sampling.** `temperature` is sent only to models that accept it. Gemini 3+
   and Claude 4.7+ use fixed sampling, so `AGENT_TEMP_*` has no effect on them.
+- **Legacy models.** Bedrock refuses a model marked Legacy to an account that
+  has not called it in the last 30 days. Sonnet 4.5, the answering model
+  before, is Legacy; Sonnet 4.6 is Active.
 - **Gemini 3.** `GEMINI_THINKING_LEVEL` (default `low`) sets `thinking_level`.
   `gemini-3.8-flash` is served from the `global`, `us` and `eu` locations
   only, so `GCP_LOCATION` defaults to `global`.
@@ -943,7 +951,7 @@ Postgres (the compose database)
   POST /api/v1/agent/chat                  FastAPI's span       SERVER
     invoke_workflow whisperdocs-agent      the turn             INTERNAL
       check_compaction, decide_action, …   one per graph node   INTERNAL
-        chat gemini-3.8-flash              a model call         CLIENT
+        chat us.anthropic.claude-haiku…    a model call         CLIENT
         embeddings text-embedding-3-small  an embedding request CLIENT
         retrieval                          the pipeline         INTERNAL
   ```
