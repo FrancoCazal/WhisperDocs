@@ -337,6 +337,14 @@ Fixes from the November 2026 audit, and a review of the frontend.
   `max_tokens` for their thinking, and structured output as a JSON schema,
   since Sonnet 5.5 rejects a forced tool call. The defaults stay on Sonnet
   4.5 until the eval has run on 5.5.
+- `pricing.py` prices Claude Sonnet 4.6 (global profile) and Amazon Nova 2
+  Lite and Nova Pro, so every role can run on Bedrock with known costs. A
+  Legacy model is refused to an account that has not called it in 30 days,
+  so one that has not used Sonnet 4.5 lately cannot get it; Sonnet 4.6 is
+  Active. Nova 2 Lite is a judge of another family than the Claude that
+  answers: on eight judge cases with a known verdict it ruled all eight
+  right, as Nova Pro did, and Haiku 4.5 seven. Nova Premier is listed, and
+  refused as past its end of life.
 - Full-text retrieval ORs the question's terms with per-document language
   and accent-insensitive matching. Before, it matched 5 of 41 golden
   questions; now it matches all 41.
