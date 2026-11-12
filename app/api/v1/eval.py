@@ -65,7 +65,7 @@ async def run_evaluation(
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{report.timestamp.strftime('%Y-%m-%dT%H-%M-%S')}_{report.run_id[:8]}.json"
-    (RESULTS_DIR / filename).write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    (RESULTS_DIR / filename).write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     return report
 

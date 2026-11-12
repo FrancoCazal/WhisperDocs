@@ -140,7 +140,8 @@ async def run_eval(
     results_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{report.timestamp.strftime('%Y-%m-%dT%H-%M-%S')}_{report.run_id[:8]}"
     output_path = results_dir / f"{stem}.json"
-    output_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    # A final newline, as pre-commit's end-of-file-fixer asks of a published report.
+    output_path.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     if write_markdown:
         md_path = results_dir / f"{stem}.md"
@@ -169,7 +170,9 @@ async def run_series(
     summary = summarize(reports)
     results_dir.mkdir(parents=True, exist_ok=True)
     stem = f"series_{summary.timestamp.strftime('%Y-%m-%dT%H-%M-%S')}"
-    (results_dir / f"{stem}.json").write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    (results_dir / f"{stem}.json").write_text(
+        summary.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
     md_path = results_dir / f"{stem}.md"
     md_path.write_text(render_series_markdown(summary), encoding="utf-8")
     print(f"\n=== Series of {runs} runs ===")
