@@ -531,7 +531,9 @@ other machine, set `API_KEY`.
 Reproducible evaluation against a 50-query golden set covering all seed fixtures.
 
 ```bash
-# Seed the eval corpus (idempotent).
+# Seed the eval corpus. A file the collection holds already is skipped, so a collection
+# seeded before keeps its chunks: after a change to extraction or chunking, delete it
+# first (the Collections page), then seed it again.
 python -m scripts.seed_eval
 
 # Run the suite — resolves collection by name; writes JSON + Markdown.
@@ -652,7 +654,8 @@ the judge can rule the other way on the same answer. So:
   (temperature, effort or thinking level), the embedding model, the reranker and MMR. The
   Markdown report shows it, with the 95% Wilson interval of the accuracy and the hallucination
   rate: 48 right out of 50 is 86.5% to 98.9%. A diff warns when two runs searched different
-  chunks: a collection seeded again with another chunker, or with documents added or changed.
+  chunks: a collection deleted and seeded again with another chunker, or with documents added
+  or changed.
 - **Eval temperature.** A run answers at `AGENT_EVAL_RAG_TEMPERATURE` (0), not at the chat's
   0.3. Claude 4.7+ and Gemini 3+ take no temperature, so for them it changes nothing.
 - **Judge cache.** The judge keeps its verdicts in `eval/cache/judge.jsonl`
@@ -740,16 +743,24 @@ how many questions each returns rows for, plus precision@k and recall@k. The onl
 one embedding per question, cached. Toggle `RERANKER_ENABLED` / `MMR_ENABLED` to A/B them for
 free.
 
-On the English golden set (k = 5, reranker and MMR off):
+On the English golden set (k = 5, reranker and MMR off, the same query embeddings for each row):
 
 | | Full-text rows (in-scope) | Hybrid precision@5 | Hybrid recall@5 |
 |---|---|---|---|
 | Before the full-text rework | 5 / 41 | 89.3% | 93.5% |
 | After | 41 / 41 | 89.8% | 95.9% |
+| Chunks by section (95 chunks, median 305 tokens, from 71 of 467) | 41 / 41 | 91.7% | 93.5% |
 
 Before, the full-text leg ANDed every word of the question and almost never matched, so the
 hybrid was vector-only in practice. Details, and why MMR at the default λ costs precision, in
 [ADR 0003](docs/adr/0003-hybrid-retrieval-rrf.md).
+
+Smaller chunks trade recall for precision. The vector leg's precision went from 89.8% to
+95.6%, but on three questions whose answer spans two documents (#9, #28, #37) the main
+document's extra chunks now fill the top 5 and push the second one out; #36 found its third.
+Five chunks are also fewer tokens than before (about 1,500, from 2,300). At k = 8, about the
+same tokens as five chunks before, the hybrid gives 85.7% precision and 97.2% recall. Whether
+the change helps the answers is the full eval's to say.
 
 ---
 
@@ -757,11 +768,11 @@ hybrid was vector-only in practice. Details, and why MMR at the default λ costs
 
 ```bash
 uv run pytest -q
-# 778 passed, 83 skipped
+# 794 passed, 84 skipped
 
 # Database tests (full-text, HNSW, job cleanup) against a real Postgres, migrated with `alembic upgrade head`:
 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5442/whisperdocs_test uv run pytest -q
-# 861 passed
+# 878 passed
 ```
 
 Layered: unit (`tests/agent/` — nodes against `FakeProvider` + mocked retriever), service (`tests/test_reranker.py`, `test_mmr.py`, `test_chunker.py`, `test_document_formats.py`, `test_retrieval_fusion.py`, `test_ingestion_offloop.py`, `test_ingestion_jobs.py`, `test_extraction.py`, `test_mcp_sync.py`), API (`tests/test_upload_limits.py`: the app over ASGI, database and embedder replaced), MCP (`tests/test_mcp.py`: an in-memory MCP client, and the stdio process; `test_mcp_http.py`: the key check in front of `/mcp`), database (`tests/test_retrieval_db.py`, `test_mcp_db.py`, `test_mcp_http_db.py`, `test_mcp_writes_db.py`, `test_mcp_sync_db.py`, `test_extraction_db.py` and one test in `test_ingestion_jobs.py`, skipped without `TEST_DATABASE_URL`). No test reaches a model or embedding API, even with credentials in `.env`: `tests/conftest.py` fails any test that resolves a host other than this machine or the test database.

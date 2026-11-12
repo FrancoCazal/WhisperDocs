@@ -4,7 +4,9 @@ Usage:
     python -m scripts.seed_eval                            # collection name "Eval Golden"
     python -m scripts.seed_eval --collection-name MyName
 
-Idempotent: skips files already ingested in the target collection (by filename).
+Idempotent: skips files already ingested in the target collection (by filename),
+so it does not chunk them again. After a change to extraction or chunking,
+delete the collection first.
 Prints the resolved collection_id on stdout — pipe into the runner:
 
     COLL_ID=$(python -m scripts.seed_eval --quiet)

@@ -260,9 +260,10 @@ sibling sections merged into one chunk are listed, "Doc › A, B") and
 `page_start`/`page_end` (migration 0020). Retrieval returns them, and every
 citation carries them: `/agent/chat` and its stream, `/query`, `/retrieve`,
 the MCP tools, and the document page's chunks. Chunks stored before have
-none until their document is uploaded again, and an eval collection seeded
-before reads the old chunks: seed it again before comparing a run with one
-from before. Each report records how many chunks its collection held and a
+none until their document is uploaded again. An eval collection seeded
+before keeps the old chunks too, since `seed_eval` skips the files a
+collection holds: delete the collection and seed it again before comparing
+a run with one from before. Each report records how many chunks its collection held and a
 hash of their texts (`collection_chunks`, `collection_hash`), and a diff
 warns when two runs searched different chunks.
 

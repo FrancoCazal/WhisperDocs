@@ -265,7 +265,9 @@ Fixes from the November 2026 audit, and a review of the frontend.
   made on the text, so none splits a character or drifts a token past its
   separator. There is no overlap between paragraphs, only inside one cut in
   two. The eval corpus goes from 71 chunks of median 467 tokens to 95 of
-  median 305: seed the eval collection again before a run. A report records
+  median 305. A collection seeded before keeps its old chunks, since
+  `seed_eval` skips the files it holds: delete it and seed it again before
+  a run. A report records
   how many chunks its collection held and a hash of their texts, and a diff
   warns when two runs searched different chunks.
 - "Hallucination rate" is called what it measures (audit E5): the unsupported-claim
@@ -359,6 +361,14 @@ Fixes from the November 2026 audit, and a review of the frontend.
 - Answers written without the model (no documents, a failure, out of scope)
   take the language of the user's message, and the generation prompts ask for
   answers in that language. Summary headings are fixed, in English.
+- WhatsApp's own texts (a new thread's notice, the apology for a failed
+  turn, the commands' replies) take the language of the user's message too;
+  they were always in Spanish. A command answers in the language of the name
+  it was sent as: `/save`, `/collection NAME`, `/collection all` and `/help`,
+  or `/guardar`, `/coleccion`, `/coleccion todas` and `/ayuda`.
+- The classifier's prompt is in English, as the other prompts are, with a
+  few Spanish examples so it still routes either language. It moves
+  `PROMPT_VERSION`.
 - The query rewrite no longer calls the model on a conversation's first
   message, where there is nothing to resolve.
 
