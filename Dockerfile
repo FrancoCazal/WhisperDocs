@@ -9,7 +9,7 @@
 
 # ---------- build ----------
 # A literal base image, which Dependabot can update.
-FROM python:3.12-slim AS build
+FROM python:3.15-slim AS build
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_COMPILE_BYTECODE=1 \
@@ -40,7 +40,7 @@ ARG EXTRAS=""
 RUN uv sync --frozen --no-install-project ${EXTRAS} --extra dev
 
 # ---------- what both images share ----------
-FROM python:3.12-slim AS base
+FROM python:3.15-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
