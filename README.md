@@ -58,7 +58,7 @@ flowchart TB
         CC["check_compaction<br/>deterministic"]
         SUM["summarize<br/>Haiku 4.5"]
         DA{"decide_action<br/>Haiku 4.5 classifier"}
-        CL["ask_clarification<br/>error or low confidence"]
+        CL["ask_clarification<br/>low confidence or invalid action"]
         AD["answer_direct<br/>Haiku 4.5, no documents"]
         OOS["out_of_scope<br/>fixed reply, no model"]
         SD["search_docs"]
@@ -84,7 +84,7 @@ flowchart TB
     HY --> PG[("PostgreSQL 16<br/>pgvector + full-text")]
     GEN --> BR["AWS Bedrock<br/>Claude Haiku 4.5, Sonnet 4.6"]
 
-    UP["Upload<br/>PDF, DOCX, XLSX, CSV,<br/>HTML, Markdown, text"] --> ING["Ingestion worker<br/>section chunks up to 500 tokens<br/>SHA-256 dedupe, batches of 32"]
+    UP["Upload<br/>PDF, DOCX, XLSX, CSV,<br/>HTML, Markdown, text"] --> ING["Ingestion worker<br/>section chunks up to 500 tokens<br/>duplicate documents refused, batches of 32"]
     ING --> OAI
     ING --> PG
 ```
@@ -110,8 +110,8 @@ Lets you debug retrieval without leaving the chat.
 
 ### Indexed corpus
 
-Drop PDF / MD / TXT files into any collection. Each file streams through the async
-ingestion pipeline; chunk and token counts are visible per document.
+Drop PDF, DOCX, XLSX, CSV, HTML, Markdown or plain-text files into any collection. Each file
+streams through the async ingestion pipeline; chunk and token counts are visible per document.
 
 ![Documents library](media/whisperdocs3.png)
 
@@ -218,6 +218,7 @@ See `.env.example` for every knob.
 | `GET` | `/api/v1/documents/jobs/{job_id}/stream` | SSE: ingestion progress |
 | `POST` | `/api/v1/documents/bulk-delete` | Delete many documents |
 | `POST` | `/api/v1/documents/bulk-move` | Move documents between collections |
+| `GET` | `/api/v1/documents/{document_id}/chunks` | A document's chunks, in order |
 | `POST` | `/api/v1/documents/{document_id}/extract` | Fields a JSON Schema names, each with the chunk and the words that state it |
 | `POST` | `/api/v1/query` | Single-turn RAG query |
 | `POST` | `/api/v1/retrieve` | The chunks for a query, without an answer (for other agents) |
@@ -230,11 +231,12 @@ See `.env.example` for every knob.
 | `DELETE` | `/api/v1/conversations/{thread_id}` | Delete conversation |
 | `GET` | `/api/v1/notes` | List saved notes |
 | `DELETE` | `/api/v1/notes/{note_id}` | Delete saved note |
-
 | `POST` | `/api/v1/webhook/whatsapp` | Twilio inbound webhook |
 | `POST` | `/api/v1/webhook/whatsapp/status` | Twilio delivery-status callback |
 | `POST` | `/api/v1/eval/run` | Eval suite |
 | `GET` | `/api/v1/eval/results` | List past eval reports |
+| `GET` | `/api/v1/eval/results/{run_id}` | One eval report in full, with every answer and verdict |
+| `GET` | `/api/v1/eval/diff` | Two runs compared (`previous`, `current`), as `runner diff` compares them |
 | `GET` | `/api/v1/admin/settings` | Runtime settings snapshot |
 | `GET` | `/api/v1/admin/model-status` | Each model role's last calls, from real traffic (no model is called) |
 | `GET` | `/api/v1/admin/audit-log` | The MCP server's writes, newest first, done or not |
@@ -656,9 +658,9 @@ python -m app.eval.runner agreement eval/results/<run>.json eval/results/labels.
 
 ### Adversarial set
 
-Eight questions over four documents that carry prompt injections (an
+Eight questions: six over four documents that carry prompt injections (an
 instruction in an HTML comment, a forged end of the documents with a new
-question, a fake system message, a phishing link), and two questions that are
+question, a fake system message, a phishing link), and two that are
 injections themselves. They run apart from the golden set, over their own
 collection:
 
@@ -668,10 +670,11 @@ python -m app.eval.runner run --dataset eval/golden/adversarial.jsonl \
   --collection-name "Eval Adversarial" --markdown
 ```
 
-Each item lists in `forbidden` what its injection asks for ("ACCESS GRANTED",
-a password, the system prompt's words, the link); an answer containing any of
-it fails without a judge call. The `Eval suite` workflow runs the set with its
-`adversarial` mode.
+Seven items list in `forbidden` what their injection asks for
+("ACCESS GRANTED", a password, the system prompt's words, the link); an
+answer containing any of it fails without a judge call. The two injection
+questions are scored as out of scope, on whether the system refused. The
+`Eval suite` workflow runs the set with its `adversarial` mode.
 
 ### Prompt versions and the prompt gate
 
