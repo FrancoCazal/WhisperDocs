@@ -8,7 +8,7 @@
 
 > **Portfolio project — runs locally via Docker. No hosted deployment.** Clone, fill `.env`, `docker compose up`.
 
-> **Published as a snapshot.** WhisperDocs was built between April and May 2026 and pushed here in a single commit, so this repository does not carry the development history. The design decisions are recorded in [`docs/adr/`](docs/adr/).
+> **History.** The first commit, tagged `v1.0` on 2026-05-19, holds the version built in April and May 2026; the development since then is in the commit history. The design decisions are recorded in [`docs/adr/`](docs/adr/).
 
 ![System overview dashboard](media/whisperdocs1.png)
 
