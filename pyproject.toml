@@ -57,7 +57,7 @@ dev = [
     "pytest-asyncio>=1.4",
     "httpx>=0.28",
     # Same version as the pre-commit hook, so local and CI format alike.
-    "ruff==0.15.12",
+    "ruff==0.17.4",
     "mypy>=2.4",
     "pytest-cov>=7.0",
 ]
