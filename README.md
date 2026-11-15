@@ -43,6 +43,54 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 
 ---
 
+## Architecture
+
+How a turn runs: the two chat channels, the seven-node agent graph, the retrieval inside
+`search_docs`, MCP search, ingestion and the stores. [`ARCHITECTURE.md`](ARCHITECTURE.md) has the
+full component diagram, the sequence flows and the data model.
+
+```mermaid
+flowchart TB
+    Web["Web chat<br/>SSE stream"] --> CC
+    WA["WhatsApp<br/>Twilio, signed webhook"] --> CC
+
+    subgraph Agent["LangGraph agent · state checkpointed in Postgres"]
+        CC["check_compaction<br/>deterministic"]
+        SUM["summarize<br/>Haiku 4.5"]
+        DA{"decide_action<br/>Haiku 4.5 classifier"}
+        CL["ask_clarification<br/>error or low confidence"]
+        AD["answer_direct<br/>Haiku 4.5, no documents"]
+        OOS["out_of_scope<br/>fixed reply, no model"]
+        SD["search_docs"]
+        CC -- "over 8k tokens<br/>or 30 messages" --> SUM --> DA
+        CC --> DA
+        DA --> SD & CL & AD & OOS
+    end
+
+    subgraph Search["inside search_docs"]
+        RW["rewrite_query<br/>Haiku 4.5, from turn 2"]
+        subgraph RP["retrieval_pipeline"]
+            HY["hybrid retrieval<br/>HNSW cosine + ts_rank_cd<br/>fused with RRF, k = 60"]
+            RR["rerank + MMR<br/>off by default"]
+        end
+        GEN["generate<br/>Sonnet 4.6, [n] citations"]
+        RW --> HY --> RR --> GEN
+    end
+
+    SD --> RW
+    MCP["MCP client<br/>key scoped to collections"] -- "search_documents" --> HY
+
+    HY --> OAI["OpenAI<br/>text-embedding-3-small"]
+    HY --> PG[("PostgreSQL 16<br/>pgvector + full-text")]
+    GEN --> BR["AWS Bedrock<br/>Claude Haiku 4.5, Sonnet 4.6"]
+
+    UP["Upload<br/>PDF, DOCX, XLSX, CSV,<br/>HTML, Markdown, text"] --> ING["Ingestion worker<br/>section chunks up to 500 tokens<br/>SHA-256 dedupe, batches of 32"]
+    ING --> OAI
+    ING --> PG
+```
+
+---
+
 ## Screens
 
 ### Multi-turn chat with grounded citations

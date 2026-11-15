@@ -65,6 +65,7 @@ graph TB
   Webhook --> Graph
   Graph --> Compaction --> Summarize
   Compaction --> Classifier
+  Summarize --> Classifier
   Classifier --> Search
   Classifier --> Clarify
   Classifier --> Direct
