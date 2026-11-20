@@ -95,23 +95,27 @@ flowchart TB
 
 ### Multi-turn chat with grounded citations
 
-Inline `[n]` citations resolve to the source documents pulled by the retrieval pipeline.
-Per-turn metadata footer shows latency, input/output tokens, model, and USD cost.
+Inline `[n]` citations resolve to the chunks the retrieval pipeline returned. Under each answer,
+the turn's trace lists the steps it took (memory check, intent classification, retrieval and
+generation) with their time, and the footer shows the generation's latency, input/output tokens,
+model and USD cost.
 
 ![Chat answer with citations](media/whisperdocs2.png)
 
 ### Retrieval transparency
 
-Every turn exposes the chunks that were actually retrieved — text, source document, and
-relevance: the fused RRF score scaled to 0–1, or the cross-encoder score when reranking is on.
-Lets you debug retrieval without leaving the chat.
+Every turn exposes the chunks that were actually retrieved, in retrieval order: their text,
+source document and section, cosine similarity to the question (`—` when only full-text
+search found the chunk), and which ones the answer cites. Lets you debug retrieval without
+leaving the chat.
 
 ![Retrieved chunks side panel](media/whisperdocs4.png)
 
 ### Indexed corpus
 
 Drop PDF, DOCX, XLSX, CSV, HTML, Markdown or plain-text files into any collection. Each file
-streams through the async ingestion pipeline; chunk and token counts are visible per document.
+streams through the async ingestion pipeline; chunk and token counts are visible per document,
+and a document whose chunks read as instructions to the model is marked as flagged.
 
 ![Documents library](media/whisperdocs3.png)
 
