@@ -12,7 +12,7 @@
 
 ![System overview dashboard](media/whisperdocs1.png)
 
-**Stack** · FastAPI · PostgreSQL + pgvector · LangGraph · AWS Bedrock (Claude, Nova) · OpenAI Embeddings · Twilio · React + TanStack Router · structlog · Prometheus · OpenTelemetry + Langfuse
+**Stack** · FastAPI · PostgreSQL + pgvector · LangGraph · AWS Bedrock (Claude, Nova) · OpenAI Embeddings · Twilio · TypeScript + React 19 + TanStack Start · structlog · Prometheus · OpenTelemetry + Langfuse
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows, and data model. Decision records live under [`docs/adr/`](docs/adr/).
 
@@ -24,6 +24,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for component diagrams, sequence flows,
 - **Hybrid retrieval** — vector cosine via pgvector + Postgres full-text search (OR over the question's stemmed terms, per-document language, accent-insensitive, ranked by `ts_rank_cd`), fused with Reciprocal Rank Fusion. Optional cross-encoder rerank (`bge-reranker-base`) + document-level MMR for diversity.
 - **Per-node model routing** — Claude Haiku 4.5 for the cheap hot-path nodes (classifier, query rewrite, clarification, direct answers), Claude Sonnet 4.6 for grounded RAG generation, and Amazon Nova 2 Lite as the eval judge, of another family than the model it judges. All on AWS Bedrock by default, so one AWS account runs every model; Gemini models route to Vertex AI when a node is set to one. The provider comes from the model ID, and startup fails on an ID that can't be routed.
 - **Token-level SSE streaming** — `astream_events` v2 + custom event dispatch. Frontend renders tokens as they arrive, with progress markers per node.
+- **TypeScript frontend** — React 19 in strict TypeScript, about 9,700 lines: the streaming chat with citations and each turn's trace, the retrieved chunks, the documents with their ingestion progress, and the eval reports with the diff between two runs. It reads the API's event streams with its own parser, and has unit and browser tests in CI (see [Frontend](#frontend)).
 - **Async ingestion with progress** — `IngestionJob` row + asyncio worker. Per-stage progress (extracting → chunking → embedding → persisting). Frontend bar updates over SSE. Parsing runs off the event loop, and a job cut short by a restart ends as `failed`, not stuck.
 - **Seven formats, citations that say where** — PDF, DOCX, XLSX, CSV, HTML, Markdown and plain text, all extracted to one shape (headings, markdown tables, page breaks). Chunks follow the document's sections and keep tables whole or repeat their header; each citation names its section and, for a PDF, its pages.
 - **Eval suite (50-query golden set)** — single-turn retrieval + generation path. LLM-as-judge for correctness + faithfulness (unsupported claims), retrieval precision/recall@k, latency p50/p95, generation cost USD. Diff between runs for regression detection.
@@ -118,6 +119,56 @@ streams through the async ingestion pipeline; chunk and token counts are visible
 and a document whose chunks read as instructions to the model is marked as flagged.
 
 ![Documents library](media/whisperdocs3.png)
+
+---
+
+## Frontend
+
+The web app in `frontend/` is written in TypeScript, in strict mode: about 9,700 lines, tests
+included.
+
+**Stack** · TypeScript · React 19 · TanStack Start (SPA mode), Router and Query · Tailwind
+CSS 4 · Radix UI + shadcn/ui · Vite · Vitest · Playwright
+
+| Page | What it shows |
+|------|---------------|
+| System overview | The corpus counts, the latest queries with their tokens, the latest eval runs and the collections |
+| Chat | Multi-turn threads; the answer streams token by token, with `[n]` citations, the retrieved chunks and the turn's trace |
+| Query | One question against a collection, without a thread, with the chunks it retrieved |
+| Documents | Upload, per-stage ingestion progress, a document's chunks, and the documents flagged as instructions |
+| Collections | The namespaces documents are indexed under |
+| Evaluation | A run's report, its results per question, and the diff between two runs |
+| History | The query log, with latency, tokens, cost and a link to each turn's trace |
+| Settings | The API's URL, health and key, and the model of each agent node |
+
+What the TypeScript does beyond rendering:
+
+- **Event streams, parsed by hand.** `src/lib/api.ts` reads `text/event-stream` responses with
+  an async generator over `fetch`'s body, not `EventSource`, so the request can be a `POST`
+  with the API key in a header. It handles CRLF, LF and CR line ends, a line split between two
+  chunks, keep-alive comments and a message cut off by the end of the stream.
+- **Typed events.** Each message is checked and narrowed into a discriminated union
+  (`AgentStreamEvent`: `thread`, `node_start`, `node_end`, `token`, `reset`, `final`, `error`;
+  `IngestionJobEvent`: `progress`, `complete`, `error`). A message of a shape the frontend does
+  not know is skipped, not cast.
+- **Server state in TanStack Query.** Lists are paged, a failed request shows a retry in place,
+  and the routes are file-based and typed by TanStack Router.
+- **Eval runs side by side.** The API compares two runs; `src/lib/evalDiff.ts` turns its answer
+  into a delta per metric, each with its unit and whether higher is better.
+
+```bash
+cd frontend
+npm ci
+npm run dev          # http://localhost:5173, against the API on :8000
+npm run typecheck    # tsc --noEmit
+npm run lint         # eslint, with Prettier as a rule
+npm test             # Vitest: 50 tests in 8 files
+npm run test:e2e     # Playwright: 11 tests in 5 files, in the installed Chrome
+```
+
+The browser tests play the backend with `page.route`, the event streams included, so they
+need no API, no database and no model. The Docker image builds the app with Node 22 and
+serves the static files with nginx as a non-root user; no Node process runs in production.
 
 ---
 
@@ -901,6 +952,9 @@ CI (`.github/workflows/tests.yml`) runs, on every push to `main` and every pull 
   about 87%, since the database tests are skipped). Locally: `uv run pytest --cov`. The
   default tracer does not see an MCP tool's code after its first `await` under the SDK's
   in-memory client, which undercounts the tools; `COVERAGE_CORE=sysmon` measures 92.3%.
+- the frontend, in its own job on Node 22: `tsc --noEmit`, eslint with Prettier, the build,
+  the Vitest unit tests and the Playwright browser tests, whose traces are kept when one fails
+  (see [Frontend](#frontend)).
 
 Dependabot proposes weekly updates for Python, npm, GitHub Actions and Docker images.
 
@@ -927,7 +981,8 @@ app/
   eval/           Evaluation framework (runner, judge, evaluator, report, metrics)
 alembic/          DB migrations
 fixtures/seed-docs/   Curated corpus for the eval suite
-frontend/         React + TanStack Router + shadcn/ui
+frontend/         TypeScript + React 19 + TanStack Start, Router and Query,
+                  Tailwind 4, shadcn/ui; Vitest and Playwright (e2e/)
 tests/            Pytest
 docs/adr/         Architecture Decision Records
 ```

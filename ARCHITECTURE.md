@@ -11,7 +11,7 @@ were chosen.
 ```mermaid
 graph TB
   subgraph Client
-    UI[React + TanStack Router]
+    UI[TypeScript + React + TanStack Router]
     WApp[WhatsApp]
     MCPClient[MCP client]
   end
